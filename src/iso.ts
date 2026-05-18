@@ -34,3 +34,26 @@ export function drawTile(container: Container, col: number, row: number, biome: 
   tile.y = y;
   container.addChild(tile);
 }
+
+export function drawStateOverlay(
+  container: Container,
+  col: number,
+  row: number,
+  color: number,
+  alpha: number
+): Graphics {
+  const { x, y } = gridToScreen(col, row);
+
+  const tile = new Graphics();
+  tile.moveTo(0, -TILE_HEIGHT / 2);
+  tile.lineTo(TILE_WIDTH / 2, 0);
+  tile.lineTo(0, TILE_HEIGHT / 2);
+  tile.lineTo(-TILE_WIDTH / 2, 0);
+  tile.closePath();
+  tile.fill({ color, alpha });
+
+  tile.x = x;
+  tile.y = y;
+  container.addChild(tile);
+  return tile;
+}
