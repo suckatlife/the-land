@@ -9,7 +9,7 @@ const app = new Application();
 await app.init({
   width: window.innerWidth,
   height: window.innerHeight,
-  background: '#e8e2d4',  // soft warm off-white, "paper" feel
+  background: '#e8e2d4',
   resolution: window.devicePixelRatio || 1,
   autoDensity: true,
   antialias: true,
@@ -17,31 +17,104 @@ await app.init({
 
 document.body.appendChild(app.canvas);
 
-// A container holds the whole world. We move this around to "pan" the view.
 const world = new Container();
 app.stage.addChild(world);
 
-// Center the world on screen. The middle tile of a 48×48 grid is (24, 24),
-// which in iso coords sits at screen (0, 24*TILE_HEIGHT) = (0, 768).
-// We offset the world container so that middle lands at viewport center.
-world.x = window.innerWidth / 2;
-world.y = window.innerHeight / 2 - (GRID_SIZE * TILE_HEIGHT) / 2;
+function centerWorld() {
+  world.x = window.innerWidth / 2;
+  world.y = window.innerHeight / 2 - (GRID_SIZE * TILE_HEIGHT) / 2;
+}
+centerWorld();
 
-// Generate biomes and draw tiles.
-const biomeMap = generateBiomeMap(GRID_SIZE, GRID_SIZE);
+// --- Seed management ---
 
-// IMPORTANT: draw in (row, col) order so closer tiles cover farther ones.
-// In iso, "closer to viewer" = higher row + col. Row-major top-to-bottom
-// works because Pixi draws in insertion order.
-for (let row = 0; row < GRID_SIZE; row++) {
-  for (let col = 0; col < GRID_SIZE; col++) {
-    drawTile(world, col, row, biomeMap[row][col]);
+// Read seed from URL, then localStorage, then generate a random one.
+function getInitialSeed(): string {
+  const fromUrl = new URLSearchParams(window.location.search).get('seed');
+  if (fromUrl) return fromUrl;
+  const fromStorage = localStorage.getItem('theLand:seed');
+  if (fromStorage) return fromStorage;
+  return randomSeed();
+}
+
+function randomSeed(): string {
+  // 6 hex chars is plenty for dev — readable, short.
+  return Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, '0');
+}
+
+function saveSeed(seed: string) {
+  localStorage.setItem('theLand:seed', seed);
+  // Also reflect in URL so you can copy-paste / bookmark.
+  const url = new URL(window.location.href);
+  url.searchParams.set('seed', seed);
+  window.history.replaceState({}, '', url);
+}
+
+let currentSeed = getInitialSeed();
+saveSeed(currentSeed);
+
+// --- Render the world ---
+
+function renderWorld(seed: string) {
+  world.removeChildren();
+  const biomeMap = generateBiomeMap(GRID_SIZE, GRID_SIZE, seed);
+  for (let row = 0; row < GRID_SIZE; row++) {
+    for (let col = 0; col < GRID_SIZE; col++) {
+      drawTile(world, col, row, biomeMap[row][col]);
+    }
   }
 }
 
-// Optional: handle window resize so it stays centered.
+renderWorld(currentSeed);
+
+// --- HUD: seed display + reroll button ---
+
+const hud = document.createElement('div');
+hud.style.cssText = `
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 12px;
+  background: rgba(255,255,255,0.7);
+  padding: 6px 10px;
+  border-radius: 4px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  user-select: none;
+`;
+hud.innerHTML = `
+  <span>seed: <strong id="seed-label"></strong></span>
+  <button id="reroll" style="cursor:pointer">reroll</button>
+  <button id="copy" style="cursor:pointer">copy</button>
+`;
+document.body.appendChild(hud);
+
+const seedLabel = document.getElementById('seed-label')!;
+const rerollBtn = document.getElementById('reroll')!;
+const copyBtn = document.getElementById('copy')!;
+
+function updateHud() {
+  seedLabel.textContent = currentSeed;
+}
+updateHud();
+
+rerollBtn.addEventListener('click', () => {
+  currentSeed = randomSeed();
+  saveSeed(currentSeed);
+  renderWorld(currentSeed);
+  updateHud();
+});
+
+copyBtn.addEventListener('click', async () => {
+  await navigator.clipboard.writeText(currentSeed);
+  copyBtn.textContent = 'copied!';
+  setTimeout(() => (copyBtn.textContent = 'copy'), 1000);
+});
+
+// --- Resize ---
 window.addEventListener('resize', () => {
   app.renderer.resize(window.innerWidth, window.innerHeight);
-  world.x = window.innerWidth / 2;
-  world.y = window.innerHeight / 2 - (GRID_SIZE * TILE_HEIGHT) / 2;;
+  centerWorld();
 });
