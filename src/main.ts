@@ -153,6 +153,70 @@ function cardinalDesc(row: number, col: number): string {
   return parts.length ? parts.join(' ') : 'central';
 }
 
+// The "voice" of an omen follows the leading civilization's era — neolithic
+// worlds read auguries, modern ones read instruments.
+type EraBucket = 'ancient' | 'middle' | 'late';
+function dominantEraBucket(world: SimWorld): EraBucket {
+  let bestCount = -1;
+  let bestEra: Era = 'neolithic';
+  for (const civ of world.civs.values()) {
+    if (civ.phase === 'dead') continue;
+    const n = civStats.tileCounts.get(civ.id) || 0;
+    if (n > bestCount) { bestCount = n; bestEra = civ.era; }
+  }
+  const rank = ['neolithic', 'classical', 'medieval', 'industrial', 'modern', 'post'].indexOf(bestEra);
+  return rank <= 1 ? 'ancient' : rank <= 3 ? 'middle' : 'late';
+}
+
+// Omen lines: [type][stage 1-3][era bucket]. Stage 1 is a murmur, stage 3 is
+// imminent. Specificity over explanation — the line should feel overheard.
+const OMEN_LINES: Record<string, Record<EraBucket, string[]>[]> = {
+  plague: [
+    { ancient: ['The rats come boldly into the granaries now.', 'The birds have gone quiet around the wells.'],
+      middle:  ['Sickness lingers in the river towns longer than it should.', 'The gravediggers report unusual custom.'],
+      late:    ['The clinics log anomalies and file them away.', 'Something is moving through the livestock, the bulletins say.'] },
+    { ancient: ['Fever crosses from village to village, faster than walking.', 'The healers burn herbs day and night, and still the coughing spreads.'],
+      middle:  ['Quarantine flags appear in the harbor towns.', 'The physicians argue about causes. The bells toll oftener.'],
+      late:    ['The hospitals stop publishing their numbers.', 'Quiet directives close the ports, one by one.'] },
+    { ancient: ['The auguries fail. The priests have no more answers.', 'Whole households sleep and do not wake.'],
+      middle:  ['The dead-carts run by daylight now.', 'The bells have stopped tolling. There are too many.'],
+      late:    ['The broadcasts repeat yesterday’s reassurances.', 'The last bulletins contradict each other.'] },
+  ],
+  asteroid: [
+    { ancient: ['A new star hangs low in the evening sky.', 'The stargazers argue about a light that was not there before.'],
+      middle:  ['Astronomers note an irregular body in their tables.', 'A wandering star troubles the almanacs.'],
+      late:    ['A survey flags an object on a poor trajectory.', 'The deep-sky networks log an approach. Probability low, they say.'] },
+    { ancient: ['The new star is brighter now. It does not move like the others.', 'Strange dusks; the omens are read in falling dust.'],
+      middle:  ['The comet grows. Pamphlets call it judgment.', 'The observatories track the visitor nightly. The court is not told.'],
+      late:    ['The deflection windows close, one by one.', 'The object brightens. The models converge unpleasantly.'] },
+    { ancient: ['The star can be seen by day.', 'Children point at the sky. The old ones look away.'],
+      middle:  ['The light casts shadows at midnight.', 'The astronomers have stopped publishing their tables.'],
+      late:    ['The sky is wrong, and everyone can see it.', 'The final projections are not released.'] },
+  ],
+  flood: [
+    { ancient: ['The tide does not go all the way out.', 'Salt creeps into the low wells.'],
+      middle:  ['The harbor steps are wet where they used to be dry.', 'The dike-reeves report seepage in strange places.'],
+      late:    ['The gauges drift above their averages.', 'The insurers quietly redraw the coastal maps.'] },
+    { ancient: ['The marsh birds have gone. The elders watch the waterline.', 'The fishing huts stand in water at noon.'],
+      middle:  ['The spring tides top the old marks, two hands and rising.', 'The millponds back up; the sluices groan.'],
+      late:    ['The pumping stations run day and night.', 'The barometers fall, and go on falling.'] },
+    { ancient: ['The sea is in the streets at high tide.', 'The low fields shine with standing water.'],
+      middle:  ['The sea wall weeps at every joint.', 'Carts leave the low quarters loaded with everything.'],
+      late:    ['The evacuation routes are published, too late to read.', 'The sea stands above the datum and does not recede.'] },
+  ],
+  earthquake: [
+    { ancient: ['The dogs will not settle at night.', 'The well water has gone cloudy.'],
+      middle:  ['Miners report knocking in the deep galleries.', 'Hairline cracks walk up the cathedral wall.'],
+      late:    ['The seismographs record a murmur, repeating.', 'Small quakes cluster along the old fault.'] },
+    { ancient: ['Small tremors crack the new plaster.', 'Birds rise from the hills all at once, for no reason.'],
+      middle:  ['Chandeliers swing in still air.', 'The mine shafts are abandoned below the third level.'],
+      late:    ['The arrays light up nightly now. The models disagree only on when.', 'The gas lines are shut across the lowlands, as a precaution.'] },
+    { ancient: ['The ground hums. The standing stones lean.', 'Springs run warm that always ran cold.'],
+      middle:  ['The masons refuse to work on the towers.', 'The bells ring themselves, faintly, at night.'],
+      late:    ['The ground sings in the instruments’ range. Then it stops.', 'The seismographs go silent. The silence is wrong.'] },
+  ],
+};
+
 function narrateEvent(ev: SimEvent, world: SimWorld): string {
   switch (ev.kind) {
     case 'civ_born': {
@@ -210,10 +274,58 @@ function narrateEvent(ev: SimEvent, world: SimWorld): string {
     case 'colony_founded': {
       const civ = world.civs.get(ev.civId);
       if (!civ) return '';
+      if (ev.desperate) {
+        return pick([
+          `Refugees of ${civ.name} raise shelters on a far shore.`,
+          `The exiles of ${civ.name} make landfall, and look back at the smoke.`,
+        ]);
+      }
+      // Routine colonies are frequent; narrate only some so the log keeps quiet.
+      if (Math.random() > 0.3) return '';
       return pick([
         `${civ.name} plants a colony across the sea.`,
         `Sailors of ${civ.name} make landfall on a distant shore.`,
         `${civ.name} reaches beyond the waves.`,
+      ]);
+    }
+    case 'omen': {
+      const bucket = dominantEraBucket(world);
+      return pick(OMEN_LINES[ev.catastropheType][ev.stage - 1][bucket]);
+    }
+    case 'spared': {
+      const civ = world.civs.get(ev.civId);
+      if (!civ) return '';
+      switch (ev.catastropheType) {
+        case 'plague':     return pick([`The sickness passes ${civ.name} by.`, `In ${civ.name}, the fires are lit for the dead of others.`]);
+        case 'asteroid':   return pick([`The fire falls short of ${civ.name}.`, `In ${civ.name}, the impact is a light on the horizon.`]);
+        case 'flood':      return pick([`The waters stop at the borders of ${civ.name}.`, `${civ.name} keeps its feet dry, this time.`]);
+        case 'earthquake': return pick([`In ${civ.name}, only the dishes rattled.`, `The cracks reach toward ${civ.name} and stop.`]);
+      }
+      return '';
+    }
+    case 'rally': {
+      const civ = world.civs.get(ev.civId);
+      if (!civ) return '';
+      return pick([
+        `Against the run of fate, ${civ.name} steadies.`,
+        `${civ.name} does not fall. Not this year.`,
+        `Some stubbornness in ${civ.name} refuses the end.`,
+      ]);
+    }
+    case 'last_flight': {
+      const civ = world.civs.get(ev.civId);
+      if (!civ) return '';
+      return pick([
+        `The last ships of ${civ.name} put to sea.`,
+        `${civ.name} sends its children seaward while it still can.`,
+      ]);
+    }
+    case 'refuge_founded': {
+      const civ = world.civs.get(ev.civId);
+      if (!civ) return '';
+      return pick([
+        `The ships of ${ev.parentName} make landfall. They name the place ${civ.name}, not knowing home is gone.`,
+        `${civ.name} is founded by sailors of ${ev.parentName}, who will wait for word that never comes.`,
       ]);
     }
     case 'breakaway': {
@@ -240,6 +352,8 @@ function narrateEvent(ev: SimEvent, world: SimWorld): string {
     }
     case 'capital_moved': {
       const civ = world.civs.get(ev.civId);
+      // Tiny civs shuffling capitals is bookkeeping, not story.
+      if (civ && (civStats.tileCounts.get(civ.id) || 0) < 30) return '';
       const civName = civ?.name ?? ev.newCapitalName;
       return pick([
         `With ${ev.oldCapitalName} fallen, the seat of ${civName} passes to ${ev.newCapitalName}.`,
@@ -301,7 +415,7 @@ function narrateEvent(ev: SimEvent, world: SimWorld): string {
 }
 
 // --- Event log ---
-interface LogEntry { text: string; ts: number; variant?: 'catastrophe'; }
+interface LogEntry { text: string; ts: number; variant?: 'catastrophe' | 'omen' | 'relief'; }
 const eventLog: LogEntry[] = [];
 const LOG_MAX = 5;
 const LOG_LIFETIME_MS = 22000;
@@ -315,11 +429,26 @@ logPanel.style.cssText = `
 `;
 document.body.appendChild(logPanel);
 
+// Event kinds that always get a log line. Everything else yields if the log
+// was written recently — suspense needs stretches of quiet between beats.
+const PRIORITY_EVENTS = new Set<SimEvent['kind']>([
+  'omen', 'catastrophe', 'spared', 'rally', 'last_flight', 'refuge_founded',
+  'civ_died', 'civ_declining',
+]);
+const LOG_QUIET_MS = 4500;
+let lastLogPushTs = 0;
+
 function pushLogEvents(evs: SimEvent[]) {
   for (const ev of evs) {
+    const now = Date.now();
+    if (!PRIORITY_EVENTS.has(ev.kind) && now - lastLogPushTs < LOG_QUIET_MS) continue;
     const text = narrateEvent(ev, simWorld);
     if (!text) continue;
-    const variant = ev.kind === 'catastrophe' ? 'catastrophe' as const : undefined;
+    lastLogPushTs = now;
+    const variant = ev.kind === 'catastrophe' ? 'catastrophe' as const
+      : ev.kind === 'omen' ? 'omen' as const
+      : (ev.kind === 'spared' || ev.kind === 'rally') ? 'relief' as const
+      : undefined;
     eventLog.unshift({ text, ts: Date.now(), variant });
   }
   if (eventLog.length > LOG_MAX) eventLog.length = LOG_MAX;
@@ -335,9 +464,16 @@ function updateEventLog() {
     const opacity = age < LOG_FADE_AFTER_MS
       ? 0.88
       : 0.88 * (1 - (age - LOG_FADE_AFTER_MS) / (LOG_LIFETIME_MS - LOG_FADE_AFTER_MS));
-    const bg = e.variant === 'catastrophe' ? 'rgba(55,12,12,0.92)' : 'rgba(245,238,220,0.84)';
-    const fg = e.variant === 'catastrophe' ? '#e8c8a0' : '#3a3020';
-    return `<div style="background:${bg};padding:4px 10px;border-radius:2px;
+    const bg = e.variant === 'catastrophe' ? 'rgba(55,12,12,0.92)'
+      : e.variant === 'omen' ? 'rgba(38,34,48,0.90)'
+      : e.variant === 'relief' ? 'rgba(228,238,222,0.88)'
+      : 'rgba(245,238,220,0.84)';
+    const fg = e.variant === 'catastrophe' ? '#e8c8a0'
+      : e.variant === 'omen' ? '#b8aed0'
+      : e.variant === 'relief' ? '#3a4a34'
+      : '#3a3020';
+    const style = e.variant === 'omen' ? 'font-style:italic;' : '';
+    return `<div style="background:${bg};padding:4px 10px;border-radius:2px;${style}
       font-family:Georgia,'Times New Roman',serif;font-size:12px;line-height:1.5;color:${fg};
       opacity:${opacity.toFixed(2)};">${e.text}</div>`;
   }).join('');
@@ -902,7 +1038,9 @@ function updateLabels() {
 
     const count = tileCounts.get(civ.id) || 0;
     const t = Math.min(1, Math.max(0, (count - LABEL.tileCountMin) / (LABEL.tileCountMax - LABEL.tileCountMin)));
-    const targetOpacity = LABEL.minOpacity + t * (LABEL.maxOpacity - LABEL.minOpacity);
+    // A declining civ's name dims — the light going out is visible jeopardy.
+    const phaseDim = civ.phase === 'declining' ? 0.55 : 1.0;
+    const targetOpacity = (LABEL.minOpacity + t * (LABEL.maxOpacity - LABEL.minOpacity)) * phaseDim;
     const fontSize = Math.round(LABEL.minFontSize + t * (LABEL.maxFontSize - LABEL.minFontSize));
     const labelText = civ.name;
 

@@ -11,15 +11,23 @@ export function eraRank(e: Era): number {
   return ERAS_ORDERED.indexOf(e);
 }
 
+export type CatastropheType = 'plague' | 'asteroid' | 'flood' | 'earthquake';
+
 export type SimEvent =
   | { kind: 'civ_born'; civId: number }
   | { kind: 'civ_declining'; civId: number }
   | { kind: 'civ_died'; civId: number }
-  | { kind: 'colony_founded'; civId: number }
+  | { kind: 'colony_founded'; civId: number; desperate: boolean }
   | { kind: 'breakaway'; newCivId: number; parentId: number }
-  | { kind: 'catastrophe'; centerRow: number; centerCol: number; affectedCivIds: number[]; severity: number; catastropheType: 'plague' | 'asteroid' | 'flood' | 'earthquake' }
+  | { kind: 'catastrophe'; centerRow: number; centerCol: number; affectedCivIds: number[]; severity: number; catastropheType: CatastropheType }
   | { kind: 'city_fell'; civId: number; cityName: string; prominence: number; wasCapital: boolean }
-  | { kind: 'capital_moved'; civId: number; oldCapitalName: string; newCapitalName: string };
+  | { kind: 'capital_moved'; civId: number; oldCapitalName: string; newCapitalName: string }
+  // Suspense events:
+  | { kind: 'omen'; stage: 1 | 2 | 3; catastropheType: CatastropheType; severity: number }
+  | { kind: 'refuge_founded'; civId: number; parentName: string }
+  | { kind: 'spared'; civId: number; catastropheType: CatastropheType }
+  | { kind: 'rally'; civId: number }
+  | { kind: 'last_flight'; civId: number };
 
 export type BiomeChange = { row: number; col: number };
 
@@ -139,6 +147,8 @@ export interface Civ {
   maxSize: number;
   name: string;
   cities: CivCity[];
+  hasRallied: boolean;
+  hasFled: boolean;
 }
 
 export interface NameMemory {
@@ -156,6 +166,15 @@ export interface Expedition {
   dirCol: number;
   age: number;
   trail: Array<{ row: number; col: number }>;
+  desperate: boolean;
+}
+
+// The catastrophe that pressure is building toward — rolled when pressure
+// crosses brewingThreshold so omens can foreshadow the right kind of doom.
+export interface BrewingCatastrophe {
+  type: CatastropheType;
+  severity: number;
+  omenStage: number; // 0 = none fired yet; counts up through omenStages
 }
 
 // --- Tunable knobs ---
@@ -215,7 +234,7 @@ export const SIM = {
   nameMemoryRadius: 8,
 
   // Ocean routes / colonization.
-  expeditionLaunchChance: 0.05,
+  expeditionLaunchChance: 0.012,
 expeditionMinVitality: 0.5,      // slightly lower bar
 expeditionMinSize: 18,           // smaller civs can colonize
 expeditionSpeed: 0.23,            // travel faster (cross gaps before dying)
@@ -225,17 +244,41 @@ expeditionLaunchCityRadius: 11,  // launch coast must be within this radius (× 
 
   // Breakaway colonies.
   breakawayMinSize: 30,
-  breakawayChance: 0.01,
+  breakawayChance: 0.004,
   breakawayWeakParentBonus: 3.0,
+
+  // Rallies — a declining civ with good fortune can pull back to stable, once.
+  // Uncertainty needs both outcomes possible; keep rare (~1 in 10 declines).
+  rallyChance: 0.0002,
+  rallyMinFortune: 0.1,
+
+  // Last flight — a declining civ may send one final expedition seaward.
+  lastFlightChance: 0.00005,
+  lastFlightMinSize: 12,
 };
 
 export const CATASTROPHE = {
   // Pressure accumulation
   pressureBuildBase:           0.00005,
-  pressureSettledWeight:       0.00015,
+  pressureSettledWeight:       0.00013,
   pressureEraWeight:           0.00010,
   pressureTimeSinceLastWeight: 0.00008,
   pressureFireThreshold:       1.0,
+
+  // Pressure-build noise — a slow random-walk multiplier on the build rate so
+  // catastrophe cadence isn't a metronome (gaps of calm, sudden worsenings).
+  pressureNoiseStep:           0.02,
+  pressureNoiseRevert:         0.01,
+  pressureNoiseMax:            0.8,    // multiplier walks within [0.2, 1.8]
+
+  // Brewing + omens — the coming catastrophe's type and severity are rolled
+  // when pressure crosses brewingThreshold; omen events fire at each stage.
+  brewingThreshold:            0.50,
+  omenStages:                  [0.62, 0.80, 0.93],
+
+  // Near-miss narration: untouched civs with capital within this factor of the
+  // blast radius are 'spared' (the fire passed them by).
+  sparedRadiusFactor:          1.6,
 
   // Severity — Math.pow(random, severitySkew); higher skew = rarer big events
   severitySkew:                2,
@@ -283,7 +326,7 @@ export const CITY = {
   prominenceDensityRadius:  8,     // radius of same-civ tiles counted for density bonus
   prominenceDensityWeight:  2.0,   // multiplier for density contribution to growth
   nameLabelThreshold:       0.5,   // prominence at which a city earns a name label
-  cityFallNarrateThreshold: 0.35,  // prominence at which a city fall is narrated (capitals always narrated)
+  cityFallNarrateThreshold: 0.55,  // prominence at which a city fall is narrated (capitals always narrated)
 };
 
 const CIV_COLORS = [
@@ -302,6 +345,8 @@ export interface SimWorld {
   expeditions: Expedition[];
   catastrophePressure: number;
   lastCatastropheTick: number;
+  pressureNoise: number;
+  brewing: BrewingCatastrophe | null;
 }
 
 export function createSimWorld(width: number, height: number): SimWorld {
@@ -321,6 +366,8 @@ export function createSimWorld(width: number, height: number): SimWorld {
     expeditions: [],
     catastrophePressure: 0,
     lastCatastropheTick: 0,
+    pressureNoise: 1.0,
+    brewing: null,
   };
 }
 
@@ -478,6 +525,8 @@ function spawnCiv(world: SimWorld, row: number, col: number): Civ {
     maxSize,
     name,
     cities: [{ row, col, prominence: 1.0, name: generateName(era), foundedTick: world.tick }],
+    hasRallied: false,
+    hasFled: false,
   };
   world.civs.set(civ.id, civ);
   const t = world.tiles[row][col];
@@ -609,19 +658,34 @@ function chooseExpeditionDirection(
   return { dirRow: dr / len, dirCol: dc / len };
 }
 
-function maybeLaunchExpeditions(world: SimWorld, biomes: Biome[][], tileCounts: Map<number, number>) {
+function maybeLaunchExpeditions(world: SimWorld, biomes: Biome[][], tileCounts: Map<number, number>, events: SimEvent[]) {
   for (const civ of world.civs.values()) {
     if (civ.phase === 'dead') continue;
-    if (effectiveStrength(civ) < SIM.expeditionMinVitality) continue;
-    if ((tileCounts.get(civ.id) || 0) < SIM.expeditionMinSize) continue;
     if (world.expeditions.some((e) => e.civId === civ.id)) continue;
-    if (Math.random() > SIM.expeditionLaunchChance) continue;
+
+    // Last flight: a declining civ too weak for a normal expedition may send
+    // one final voyage — desperate, narrated as flight rather than ambition.
+    let desperate = false;
+    if (effectiveStrength(civ) >= SIM.expeditionMinVitality) {
+      if ((tileCounts.get(civ.id) || 0) < SIM.expeditionMinSize) continue;
+      if (Math.random() > SIM.expeditionLaunchChance) continue;
+    } else if (civ.phase === 'declining' && !civ.hasFled) {
+      if ((tileCounts.get(civ.id) || 0) < SIM.lastFlightMinSize) continue;
+      if (Math.random() > SIM.lastFlightChance) continue;
+      desperate = true;
+    } else {
+      continue;
+    }
 
     const coast = findCoastalTile(world, biomes, civ);
     if (!coast) continue;
     const dir = chooseExpeditionDirection(world, biomes, coast.row, coast.col, civ.id);
     if (!dir) continue;
 
+    if (desperate) {
+      civ.hasFled = true;
+      events.push({ kind: 'last_flight', civId: civ.id });
+    }
     world.expeditions.push({
       civId: civ.id,
       row: coast.row,
@@ -630,6 +694,7 @@ function maybeLaunchExpeditions(world: SimWorld, biomes: Biome[][], tileCounts: 
       dirCol: dir.dirCol,
       age: 0,
       trail: [{ row: coast.row, col: coast.col }],
+      desperate,
     });
   }
 }
@@ -638,7 +703,8 @@ function advanceExpeditions(world: SimWorld, biomes: Biome[][], changed: Array<{
   const surviving: Expedition[] = [];
   for (const exp of world.expeditions) {
     const civ = world.civs.get(exp.civId);
-    if (!civ || civ.phase === 'dead') continue;
+    // Desperate voyages persist after their nation dies — the refugees don't know.
+    if (!civ || (civ.phase === 'dead' && !exp.desperate)) continue;
 
     exp.age++;
     exp.row += exp.dirRow * SIM.expeditionSpeed;
@@ -665,12 +731,45 @@ function advanceExpeditions(world: SimWorld, biomes: Biome[][], changed: Array<{
         if (biomes[tr][tc] === 'water') continue;
         const target = world.tiles[tr][tc];
         if (target.civId !== exp.civId && (target.state === 'wild' || target.state === 'ruin')) {
-          target.state = 'cleared';
-          target.civId = exp.civId;
-          target.ruinEra = null;
-          target.lastChangedTick = world.tick;
-          changed.push({ row: tr, col: tc });
-          events.push({ kind: 'colony_founded', civId: exp.civId });
+          if (civ.phase === 'dead' && exp.desperate) {
+            // Landfall after the homeland died: the refugees found a successor
+            // nation carrying the old name forward.
+            const newId = world.nextCivId++;
+            const refuge: Civ = {
+              id: newId,
+              originRow: tr,
+              originCol: tc,
+              birthTick: world.tick,
+              phase: 'rising',
+              vitality: 0.4,
+              phaseAge: 0,
+              phaseDuration: rollPhaseDuration('rising'),
+              color: CIV_COLORS[(newId - 2 + CIV_COLORS.length * 100) % CIV_COLORS.length],
+              constitution: 0.6 + Math.random() * 0.6,
+              fortune: 0,
+              era: civ.era,
+              maxSize: Math.round(SIM.minAmbition + Math.pow(Math.random(), SIM.ambitionSkew) * (SIM.maxAmbition - SIM.minAmbition)),
+              name: evolveName(civ.name, civ.era),
+              cities: [{ row: tr, col: tc, prominence: 0.5, name: generateName(civ.era), foundedTick: world.tick }],
+              hasRallied: false,
+              hasFled: true,
+            };
+            world.civs.set(newId, refuge);
+            world.nameMemory.push({ row: tr, col: tc, name: refuge.name, lastEra: civ.era });
+            target.state = 'cleared';
+            target.civId = newId;
+            target.ruinEra = null;
+            target.lastChangedTick = world.tick;
+            changed.push({ row: tr, col: tc });
+            events.push({ kind: 'refuge_founded', civId: newId, parentName: civ.name });
+          } else {
+            target.state = 'cleared';
+            target.civId = exp.civId;
+            target.ruinEra = null;
+            target.lastChangedTick = world.tick;
+            changed.push({ row: tr, col: tc });
+            events.push({ kind: 'colony_founded', civId: exp.civId, desperate: exp.desperate });
+          }
           break;
         }
       }
@@ -769,6 +868,8 @@ function maybeBreakaway(world: SimWorld, changed: Array<{ row: number; col: numb
         maxSize: Math.round(SIM.minAmbition + Math.pow(Math.random(), SIM.ambitionSkew) * (SIM.maxAmbition - SIM.minAmbition)),
         name: newName,
         cities: [{ row: cap.row, col: cap.col, prominence: 0.6, name: generateName(civ.era), foundedTick: world.tick }],
+        hasRallied: false,
+        hasFled: false,
       };
       world.civs.set(newId, newCiv);
       events.push({ kind: 'breakaway', newCivId: newId, parentId: civ.id });
@@ -797,8 +898,9 @@ function reconcileCities(world: SimWorld, events: SimEvent[]) {
         surviving.push(city);
       } else {
         if (i === 0) capitalLost = true;
-        // Capitals always narrated; secondary cities only above threshold.
-        if (i === 0 || city.prominence >= CITY.cityFallNarrateThreshold) {
+        // Living civs: capitals always narrated, secondaries above threshold.
+        // Dead civs' cities crumble silently — their fall was already the story.
+        if (civ.phase !== 'dead' && (i === 0 || city.prominence >= CITY.cityFallNarrateThreshold)) {
           events.push({ kind: 'city_fell', civId: civ.id, cityName: city.name, prominence: city.prominence, wasCapital: i === 0 });
         }
       }
@@ -874,6 +976,16 @@ function maybefoundCities(world: SimWorld, tileCounts: Map<number, number>) {
 
 // --- Catastrophe ---
 
+function rollCatastropheSeverity(): number {
+  // Skewed distribution — mostly low, rarely high.
+  return Math.pow(Math.random(), CATASTROPHE.severitySkew);
+}
+
+function rollCatastropheType(): CatastropheType {
+  const roll = Math.random();
+  return roll < 0.25 ? 'plague' : roll < 0.5 ? 'asteroid' : roll < 0.75 ? 'flood' : 'earthquake';
+}
+
 export function applyCatastrophe(
   world: SimWorld,
   biomes: Biome[][],
@@ -882,11 +994,13 @@ export function applyCatastrophe(
   biomeChanged: BiomeChange[],
   events: SimEvent[]
 ) {
-  // Roll severity on a skewed distribution — mostly low, rarely high.
-  const severity = Math.pow(Math.random(), CATASTROPHE.severitySkew);
-  const roll = Math.random();
-  const catastropheType: 'plague' | 'asteroid' | 'flood' | 'earthquake' =
-    roll < 0.25 ? 'plague' : roll < 0.5 ? 'asteroid' : roll < 0.75 ? 'flood' : 'earthquake';
+  // Use the brewing catastrophe (pre-rolled when pressure crossed the omen
+  // threshold) so the disaster that arrives is the one foreshadowed. Manual
+  // triggers and edge cases with no brewing state roll fresh.
+  const brewing = world.brewing;
+  world.brewing = null;
+  const severity = brewing ? brewing.severity : rollCatastropheSeverity();
+  const catastropheType = brewing ? brewing.type : rollCatastropheType();
 
   // Knowledge-loss tier.
   const isMinor  = severity < CATASTROPHE.severityModerateThreshold;
@@ -1093,6 +1207,24 @@ export function applyCatastrophe(
   }
 
   events.push({ kind: 'catastrophe', centerRow, centerCol, affectedCivIds, severity, catastropheType });
+
+  // Near-misses: untouched living civs whose capital sat close to the blast.
+  // The two closest get narrated — relief is half of suspense.
+  if (severity >= CATASTROPHE.severityModerateThreshold) {
+    const nearMisses = living
+      .filter(civ => !affectedCivIds.includes(civ.id))
+      .map(civ => {
+        const dr = civ.originRow - centerRow, dc = civ.originCol - centerCol;
+        return { civ, dist: Math.sqrt(dr * dr + dc * dc) };
+      })
+      .filter(({ dist }) => dist <= radius * CATASTROPHE.sparedRadiusFactor)
+      .sort((a, b) => a.dist - b.dist)
+      .slice(0, 2);
+    for (const { civ } of nearMisses) {
+      events.push({ kind: 'spared', civId: civ.id, catastropheType });
+    }
+  }
+
   reconcileCities(world, events);
 }
 
@@ -1137,6 +1269,14 @@ export function step(
       events.push({ kind: 'civ_declining', civId: civ.id });
     } else if (prevPhase !== 'dead' && civ.phase === 'dead') {
       events.push({ kind: 'civ_died', civId: civ.id });
+    }
+    // Rally: a declining civ with the wind at its back can pull out of the
+    // dive — once. The viewer should never be certain a decline is fatal.
+    if (civ.phase === 'declining' && !civ.hasRallied
+        && civ.fortune >= SIM.rallyMinFortune && Math.random() < SIM.rallyChance) {
+      civ.hasRallied = true;
+      enterPhase(civ, 'stable');
+      events.push({ kind: 'rally', civId: civ.id });
     }
   }
 
@@ -1311,7 +1451,7 @@ export function step(
   }
 
   // Ocean routes.
-  maybeLaunchExpeditions(world, biomes, civTileCounts);
+  maybeLaunchExpeditions(world, biomes, civTileCounts, events);
   advanceExpeditions(world, biomes, changed, events);
 
   // Breakaway check — only every 15 ticks to limit flood-fill cost.
@@ -1327,14 +1467,48 @@ export function step(
   }
 
   // Catastrophe pressure accumulates each tick; fires when threshold is crossed.
+  // The build rate is modulated by a slow random walk so cadence isn't a
+  // metronome — stretches of calm, then a quickening.
+  world.pressureNoise += (Math.random() * 2 - 1) * CATASTROPHE.pressureNoiseStep
+    - (world.pressureNoise - 1) * CATASTROPHE.pressureNoiseRevert;
+  if (world.pressureNoise < 1 - CATASTROPHE.pressureNoiseMax) world.pressureNoise = 1 - CATASTROPHE.pressureNoiseMax;
+  if (world.pressureNoise > 1 + CATASTROPHE.pressureNoiseMax) world.pressureNoise = 1 + CATASTROPHE.pressureNoiseMax;
+
   const settledFraction = landTiles > 0 ? settledTiles / landTiles : 0;
   const avgEraRankNorm = eraRankCount > 0 ? eraRankSum / eraRankCount / (ERAS_ORDERED.length - 1) : 0;
   const timeFactor = Math.min(1, (world.tick - world.lastCatastropheTick) / 5000);
-  world.catastrophePressure +=
+  world.catastrophePressure += (
     CATASTROPHE.pressureBuildBase +
     settledFraction * CATASTROPHE.pressureSettledWeight +
     avgEraRankNorm * CATASTROPHE.pressureEraWeight +
-    timeFactor * CATASTROPHE.pressureTimeSinceLastWeight;
+    timeFactor * CATASTROPHE.pressureTimeSinceLastWeight
+  ) * world.pressureNoise;
+
+  // Once pressure commits to a direction, the coming catastrophe takes shape;
+  // omens fire as it nears.
+  if (!world.brewing && world.catastrophePressure >= CATASTROPHE.brewingThreshold) {
+    world.brewing = { type: rollCatastropheType(), severity: rollCatastropheSeverity(), omenStage: 0 };
+  }
+  if (world.brewing) {
+    // Omen depth predicts magnitude: a minor event gets only the stage-1
+    // murmur, severe ones escalate through all three. The viewer learns that
+    // stage-3 language means something big — and a lone omen that fizzles
+    // reads as the world muttering, not the narrator crying wolf.
+    const maxNarratedStage = world.brewing.severity >= CATASTROPHE.severitySevereThreshold ? 3
+      : world.brewing.severity >= CATASTROPHE.severityModerateThreshold ? 2 : 1;
+    while (world.brewing.omenStage < CATASTROPHE.omenStages.length
+        && world.catastrophePressure >= CATASTROPHE.omenStages[world.brewing.omenStage]) {
+      world.brewing.omenStage++;
+      if (world.brewing.omenStage <= maxNarratedStage) {
+        events.push({
+          kind: 'omen',
+          stage: world.brewing.omenStage as 1 | 2 | 3,
+          catastropheType: world.brewing.type,
+          severity: world.brewing.severity,
+        });
+      }
+    }
+  }
   if (world.catastrophePressure >= CATASTROPHE.pressureFireThreshold) {
     applyCatastrophe(world, biomes, elevation, changed, biomeChanges, events);
   }

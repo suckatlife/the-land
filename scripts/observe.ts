@@ -28,6 +28,7 @@ const lives = new Map<number, CivLife>();
 const catastrophes: Array<{ tick: number; type: string; severity: number; affected: number[] }> = [];
 let pressureSamples: Array<{ tick: number; p: number }> = [];
 let eventCount = 0;
+const kindCounts = new Map<string, number>();
 
 for (const c of world.civs.values()) lives.set(c.id, { born: 0, name: c.name, peak: 1 });
 
@@ -44,6 +45,7 @@ for (let t = 0; t < TICKS; t++) {
 
   for (const ev of events) {
     eventCount++;
+    kindCounts.set(ev.kind, (kindCounts.get(ev.kind) ?? 0) + 1);
     switch (ev.kind) {
       case 'civ_born': {
         const c = world.civs.get(ev.civId)!;
@@ -73,6 +75,21 @@ for (let t = 0; t < TICKS; t++) {
       case 'capital_moved':
         console.log(`${mmss(world.tick)}  CAP MOVED  ${civName(world, ev.civId)}: ${ev.oldCapitalName} -> ${ev.newCapitalName}`);
         break;
+      case 'omen':
+        console.log(`${mmss(world.tick)}  ~~ OMEN ${ev.stage}  ${ev.catastropheType} (sev ${ev.severity.toFixed(2)} brewing)`);
+        break;
+      case 'spared':
+        console.log(`${mmss(world.tick)}  SPARED     ${civName(world, ev.civId)} (${ev.catastropheType})`);
+        break;
+      case 'rally':
+        console.log(`${mmss(world.tick)}  RALLY      ${civName(world, ev.civId)}`);
+        break;
+      case 'last_flight':
+        console.log(`${mmss(world.tick)}  LASTFLIGHT ${civName(world, ev.civId)}`);
+        break;
+      case 'refuge_founded':
+        console.log(`${mmss(world.tick)}  REFUGE     ${civName(world, ev.civId)} from ${ev.parentName}`);
+        break;
       case 'catastrophe': {
         catastrophes.push({ tick: world.tick, type: ev.catastropheType, severity: ev.severity, affected: ev.affectedCivIds });
         const tier = ev.severity >= CATASTROPHE.severitySevereThreshold ? 'SEVERE' : ev.severity >= CATASTROPHE.severityModerateThreshold ? 'moderate' : 'minor';
@@ -85,6 +102,7 @@ for (let t = 0; t < TICKS; t++) {
 
 console.log('\n===== SUMMARY =====');
 console.log(`seed=${seed} ticks=${TICKS} (${mmss(TICKS)} of viewing)  events=${eventCount}`);
+console.log('By kind: ' + [...kindCounts.entries()].sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k}=${n}`).join(' '));
 console.log(`\nCatastrophes: ${catastrophes.length}`);
 let last = 0;
 for (const c of catastrophes) {
