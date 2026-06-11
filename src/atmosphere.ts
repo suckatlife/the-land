@@ -7,7 +7,7 @@
 
 import { Container, Graphics, Sprite, Texture, BlurFilter } from 'pixi.js';
 import { gridToScreen, lerpColor } from './iso';
-import type { CatastropheType } from './sim';
+import type { CatastropheType, Era } from './sim';
 
 // --- The taste block ------------------------------------------------------
 
@@ -52,7 +52,47 @@ export const ATMOS = {
 
   // How far the sky leans toward the brewing catastrophe's hue at full dread
   // (0 = sky ignores dread, 1 = sky fully becomes the dread color).
-  dreadSkyBlend: 0.55,
+  dreadSkyBlend: 0.8,
+
+  weather: {
+    cloudCount: 7,          // drifting cloud-shadow patches over the land
+    fogCount: 3,            // larger, slower mist banks
+    baseWind: 9,            // drift speed, world px/s, in calm
+    windDreadBoost: 2.4,    // wind multiplier at full dread (the storm gathers)
+    shadowAlpha: 0.11,      // cloud shadow strength in calm (multiply)
+    shadowAlphaDread: 0.24, // cloud shadow strength at full dread
+    shadowTint: 0x4a5668,   // cool grey-blue shadow color
+    fogAlpha: 0.09,         // mist bank strength (normal blend, pale wash)
+    fogTint: 0xf4f1e8,      // warm paper-white mist
+  },
+
+  season: {
+    // One "year" of palette drift. The cast leans the glaze + sky; biomeTint
+    // tints the terrain layer itself (autumn ambers the land, winter pales it);
+    // fogMult scales mist density.
+    cycleSeconds: 1200,
+    startT: 0.06,
+    keyframes: [
+      { t: 0.00, cast: 0xdfe8d8, castAmount: 0.10, biomeTint: 0xfdfff6, fogMult: 1.1 },  // spring
+      { t: 0.25, cast: 0xf2e2b8, castAmount: 0.12, biomeTint: 0xfff6e2, fogMult: 0.7 },  // summer
+      { t: 0.50, cast: 0xd8c49a, castAmount: 0.15, biomeTint: 0xf0dcc0, fogMult: 1.25 }, // autumn
+      { t: 0.75, cast: 0xc7d2dc, castAmount: 0.18, biomeTint: 0xdde4ec, fogMult: 1.5 },  // winter
+    ],
+  },
+
+  era: {
+    // The air of an age — keyed by the leading civilization's era and eased
+    // slowly. `air`/`amount` lean the glaze; fogMult scales the mist.
+    easeSeconds: 30,
+    moods: {
+      neolithic:  { air: 0xf6f0de, amount: 0.06, fogMult: 0.85 }, // primordial clarity
+      classical:  { air: 0xf2e9d2, amount: 0.05, fogMult: 0.90 },
+      medieval:   { air: 0xe8e0cc, amount: 0.06, fogMult: 1.00 },
+      industrial: { air: 0x99938a, amount: 0.15, fogMult: 1.40 }, // soot and steam
+      modern:     { air: 0xc9cdd1, amount: 0.11, fogMult: 1.10 }, // washed, exhausted
+      post:       { air: 0xbfa9c9, amount: 0.10, fogMult: 1.05 }, // faintly synthetic
+    } as Record<Era, { air: number; amount: number; fogMult: number }>,
+  },
 
   scar: {
     // Most live scars kept; oldest evicted beyond this.
@@ -152,16 +192,79 @@ interface Scar {
   recede: boolean; // flood silt creeps back
 }
 
+// Soft blobby cloud mass on a canvas — overlapping radial gradients. Each
+// texture is reused by several sprites at different scales/flips.
+function makeCloudTexture(rand: () => number): Texture {
+  const w = 320, h = 180;
+  const cv = document.createElement('canvas');
+  cv.width = w; cv.height = h;
+  const ctx = cv.getContext('2d')!;
+  const blobs = 9 + Math.floor(rand() * 6);
+  for (let i = 0; i < blobs; i++) {
+    const bx = w * (0.18 + rand() * 0.64);
+    const by = h * (0.30 + rand() * 0.40);
+    const br = 28 + rand() * 55;
+    const grad = ctx.createRadialGradient(bx, by, 0, bx, by, br);
+    grad.addColorStop(0, 'rgba(255,255,255,0.40)');
+    grad.addColorStop(0.6, 'rgba(255,255,255,0.18)');
+    grad.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(bx - br, by - br, br * 2, br * 2);
+  }
+  return Texture.from(cv);
+}
+
+// Drift bounds in world coordinates — the diamond plus a margin so clouds
+// enter and leave gracefully.
+const DRIFT = { minX: -1850, maxX: 1850, minY: -250, maxY: 1800 };
+
+interface Drifter {
+  sp: Sprite;
+  speedMult: number; // individual variation on the shared wind
+  baseAlpha: number; // individual variation on the layer alpha
+}
+
+interface SeasonState { cast: number; castAmount: number; biomeTint: number; fogMult: number }
+
+function sampleSeason(t: number): SeasonState {
+  const keys = ATMOS.season.keyframes;
+  let k0 = keys[keys.length - 1];
+  let k1 = keys[0];
+  let span = 1 - k0.t + k1.t;
+  let local = t >= k0.t ? t - k0.t : t + 1 - k0.t;
+  for (let i = 0; i < keys.length - 1; i++) {
+    if (t >= keys[i].t && t < keys[i + 1].t) {
+      k0 = keys[i]; k1 = keys[i + 1];
+      span = k1.t - k0.t;
+      local = t - k0.t;
+      break;
+    }
+  }
+  const u = smoothstep(span > 0 ? local / span : 0);
+  return {
+    cast: lerpColor(k0.cast, k1.cast, u),
+    castAmount: k0.castAmount + (k1.castAmount - k0.castAmount) * u,
+    biomeTint: lerpColor(k0.biomeTint, k1.biomeTint, u),
+    fogMult: k0.fogMult + (k1.fogMult - k0.fogMult) * u,
+  };
+}
+
 export interface Atmosphere {
   skyLayer: Sprite;
   glazeLayer: Graphics;
   scarLayer: Container;
-  update(deltaMS: number, dread: number, dreadSkyColor: number | null): void;
+  cloudShadowLayer: Container;
+  fogLayer: Container;
+  // biomeLayer is tinted seasonally; attach it once after scene construction.
+  attach(layers: { biomeLayer: Container }): void;
+  update(deltaMS: number, dread: number, dreadSkyColor: number | null, dominantEra: Era): void;
   addScar(type: CatastropheType, row: number, col: number, radiusTiles: number, severity: number): void;
   clearScars(): void;
   layout(width: number, height: number): void;
   timeOfDay(): number;
-  setTimeOfDay(t: number): void; // scrub the day cycle (debug/tuning)
+  setTimeOfDay(t: number): void;   // scrub the day cycle (debug/tuning)
+  seasonOfYear(): number;
+  setSeasonOfYear(t: number): void; // scrub the season cycle (debug/tuning)
 }
 
 export function createAtmosphere(): Atmosphere {
@@ -178,7 +281,44 @@ export function createAtmosphere(): Atmosphere {
 
   const scarLayer = new Container();
 
+  // Weather: cloud shadows (multiply, over land+buildings) and mist banks
+  // (pale wash, under labels). All drift along a shared, slowly-wandering wind.
+  const cloudShadowLayer = new Container();
+  const fogLayer = new Container();
+  const weatherRand = mulberry32(0x9e3779b9);
+  const cloudTextures = [makeCloudTexture(weatherRand), makeCloudTexture(weatherRand), makeCloudTexture(weatherRand)];
+  const cloudShadows: Drifter[] = [];
+  const fogBanks: Drifter[] = [];
+  let windAngle = weatherRand() * Math.PI * 2;
+
+  function spawnDrifter(layer: Container, list: Drifter[], scaleMin: number, scaleMax: number) {
+    const sp = new Sprite(cloudTextures[Math.floor(weatherRand() * cloudTextures.length)]);
+    sp.anchor.set(0.5);
+    const s = scaleMin + weatherRand() * (scaleMax - scaleMin);
+    sp.scale.set(s * (weatherRand() < 0.5 ? -1 : 1), s * 0.8);
+    sp.x = DRIFT.minX + weatherRand() * (DRIFT.maxX - DRIFT.minX);
+    sp.y = DRIFT.minY + weatherRand() * (DRIFT.maxY - DRIFT.minY);
+    layer.addChild(sp);
+    list.push({ sp, speedMult: 0.6 + weatherRand() * 0.8, baseAlpha: 0.7 + weatherRand() * 0.6 });
+  }
+  for (let i = 0; i < ATMOS.weather.cloudCount; i++) {
+    spawnDrifter(cloudShadowLayer, cloudShadows, 2.2, 4.6);
+  }
+  for (let i = 0; i < ATMOS.weather.fogCount; i++) {
+    spawnDrifter(fogLayer, fogBanks, 5.5, 9.0);
+  }
+  for (const d of cloudShadows) {
+    d.sp.tint = ATMOS.weather.shadowTint;
+    d.sp.blendMode = 'multiply';
+  }
+  for (const d of fogBanks) {
+    d.sp.tint = ATMOS.weather.fogTint;
+  }
+
+  let attachedBiomeLayer: Container | null = null;
   let dayT = ATMOS.day.startT;
+  let seasonT = ATMOS.season.startT;
+  let eraAirCur = { air: 0xffffff, amount: 0, fogMult: 1 };
   let lastSkyTop = -1;
   let lastSkyHorizon = -1;
   let nowMs = 0; // scar clock — advances with update() so pause freezes fades
@@ -203,14 +343,24 @@ export function createAtmosphere(): Atmosphere {
     glazeLayer.rect(0, 0, width, height).fill(0xffffff);
   }
 
-  function update(deltaMS: number, dread: number, dreadSkyColor: number | null) {
+  function update(deltaMS: number, dread: number, dreadSkyColor: number | null, dominantEra: Era) {
     nowMs += deltaMS;
+    const dt = deltaMS / 1000;
     dayT = (dayT + deltaMS / (ATMOS.day.cycleSeconds * 1000)) % 1;
+    seasonT = (seasonT + deltaMS / (ATMOS.season.cycleSeconds * 1000)) % 1;
     const day = sampleDay(dayT);
+    const season = sampleSeason(seasonT);
 
-    // The sky leans toward the brewing hue as dread rises.
-    let top = day.skyTop;
-    let horizon = day.skyHorizon;
+    // The air of the age eases slowly toward the leading era's mood.
+    const mood = ATMOS.era.moods[dominantEra];
+    const eraK = Math.min(1, dt / ATMOS.era.easeSeconds);
+    eraAirCur.air = lerpColor(eraAirCur.air, mood.air, eraK);
+    eraAirCur.amount += (mood.amount - eraAirCur.amount) * eraK;
+    eraAirCur.fogMult += (mood.fogMult - eraAirCur.fogMult) * eraK;
+
+    // Sky: day palette, leaned by season cast, then by the brewing hue.
+    let top = lerpColor(day.skyTop, season.cast, season.castAmount * 0.5);
+    let horizon = lerpColor(day.skyHorizon, season.cast, season.castAmount * 0.6);
     if (dreadSkyColor != null && dread > 0.01) {
       const lean = dread * ATMOS.dreadSkyBlend;
       top = lerpColor(top, dreadSkyColor, lean);
@@ -228,8 +378,37 @@ export function createAtmosphere(): Atmosphere {
       redrawSky(top, horizon);
     }
 
-    glazeLayer.tint = day.glaze;
-    glazeLayer.alpha = Math.min(ATMOS.day.glazeCap, day.glazeAlpha);
+    // Glaze: time-of-day light, cast by season, hazed by the era's air.
+    let glazeColor = lerpColor(day.glaze, season.cast, season.castAmount);
+    glazeColor = lerpColor(glazeColor, eraAirCur.air, eraAirCur.amount);
+    const glazeAlpha = day.glazeAlpha + season.castAmount * 0.5 + eraAirCur.amount * 0.5;
+    glazeLayer.tint = glazeColor;
+    glazeLayer.alpha = Math.min(ATMOS.day.glazeCap, glazeAlpha);
+
+    // The land itself drifts with the season (ambered autumns, pale winters).
+    if (attachedBiomeLayer) attachedBiomeLayer.tint = season.biomeTint;
+
+    // Weather drift: a shared wind that wanders slowly and rises with dread.
+    windAngle += (weatherRand() - 0.5) * dt * 0.15;
+    const windSpeed = ATMOS.weather.baseWind * (1 + dread * (ATMOS.weather.windDreadBoost - 1));
+    const wx = Math.cos(windAngle) * windSpeed;
+    const wy = Math.sin(windAngle) * windSpeed * 0.5; // iso-flattened drift
+    // Mist thickens at dawn and dusk, with the season and with the era's air.
+    const dawnDusk = 1 + 0.7 * Math.pow(Math.abs(Math.cos(dayT * Math.PI * 2)), 10);
+    const fogStrength = ATMOS.weather.fogAlpha * season.fogMult * eraAirCur.fogMult * dawnDusk;
+    const shadowStrength = ATMOS.weather.shadowAlpha
+      + (ATMOS.weather.shadowAlphaDread - ATMOS.weather.shadowAlpha) * dread;
+    const advance = (d: Drifter, alpha: number) => {
+      d.sp.x += wx * d.speedMult * dt;
+      d.sp.y += wy * d.speedMult * dt;
+      if (d.sp.x > DRIFT.maxX + 600) { d.sp.x = DRIFT.minX - 500; d.sp.y = DRIFT.minY + weatherRand() * (DRIFT.maxY - DRIFT.minY); }
+      if (d.sp.x < DRIFT.minX - 600) { d.sp.x = DRIFT.maxX + 500; d.sp.y = DRIFT.minY + weatherRand() * (DRIFT.maxY - DRIFT.minY); }
+      if (d.sp.y > DRIFT.maxY + 500) { d.sp.y = DRIFT.minY - 400; d.sp.x = DRIFT.minX + weatherRand() * (DRIFT.maxX - DRIFT.minX); }
+      if (d.sp.y < DRIFT.minY - 500) { d.sp.y = DRIFT.maxY + 400; d.sp.x = DRIFT.minX + weatherRand() * (DRIFT.maxX - DRIFT.minX); }
+      d.sp.alpha = alpha * d.baseAlpha;
+    };
+    for (const d of cloudShadows) advance(d, shadowStrength);
+    for (const d of fogBanks) advance(d, fogStrength);
 
     // Scar fade envelopes.
     for (let i = scars.length - 1; i >= 0; i--) {
@@ -334,9 +513,12 @@ export function createAtmosphere(): Atmosphere {
   }
 
   return {
-    skyLayer, glazeLayer, scarLayer,
+    skyLayer, glazeLayer, scarLayer, cloudShadowLayer, fogLayer,
+    attach: (layers: { biomeLayer: Container }) => { attachedBiomeLayer = layers.biomeLayer; },
     update, addScar, clearScars, layout,
     timeOfDay: () => dayT,
     setTimeOfDay: (t: number) => { dayT = ((t % 1) + 1) % 1; },
+    seasonOfYear: () => seasonT,
+    setSeasonOfYear: (t: number) => { seasonT = ((t % 1) + 1) % 1; },
   };
 }

@@ -158,7 +158,7 @@ function cardinalDesc(row: number, col: number): string {
 // The "voice" of an omen follows the leading civilization's era — neolithic
 // worlds read auguries, modern ones read instruments.
 type EraBucket = 'ancient' | 'middle' | 'late';
-function dominantEraBucket(world: SimWorld): EraBucket {
+function dominantEra(world: SimWorld): Era {
   let bestCount = -1;
   let bestEra: Era = 'neolithic';
   for (const civ of world.civs.values()) {
@@ -166,7 +166,10 @@ function dominantEraBucket(world: SimWorld): EraBucket {
     const n = civStats.tileCounts.get(civ.id) || 0;
     if (n > bestCount) { bestCount = n; bestEra = civ.era; }
   }
-  const rank = ['neolithic', 'classical', 'medieval', 'industrial', 'modern', 'post'].indexOf(bestEra);
+  return bestEra;
+}
+function dominantEraBucket(world: SimWorld): EraBucket {
+  const rank = ['neolithic', 'classical', 'medieval', 'industrial', 'modern', 'post'].indexOf(dominantEra(world));
   return rank <= 1 ? 'ancient' : rank <= 3 ? 'middle' : 'late';
 }
 
@@ -511,8 +514,13 @@ world.addChild(simLayer);
 world.addChild(atmos.scarLayer);
 world.addChild(buildingLayer);
 world.addChild(expeditionLayer);
+// Cloud shadows fall on land and buildings; markers and labels stay above.
+world.addChild(atmos.cloudShadowLayer);
 world.addChild(cityMarkersContainer);
+// Mist banks veil everything but the text.
+world.addChild(atmos.fogLayer);
 world.addChild(labelLayer);
+atmos.attach({ biomeLayer });
 app.stage.addChild(atmos.skyLayer);
 app.stage.addChild(world);
 app.stage.addChild(atmos.glazeLayer);
@@ -539,8 +547,10 @@ centerWorld();
 // tint plus a vignette, both hued by the kind of doom that is brewing. The
 // viewer should half-notice the light going wrong before the first omen line.
 const DREAD = {
-  tintMaxAlpha:     0.85,
-  vignetteMaxAlpha: 0.90,
+  // Ground multiply is gentler now that the sky carries the brewing color
+  // (ATMOS.dreadSkyBlend) and the wind/cloud-shadows rise with dread too.
+  tintMaxAlpha:     0.55,
+  vignetteMaxAlpha: 0.80,
   easeIn:           0.006,   // per-frame fraction — dread creeps in
   easeOut:          0.0015,  // and drains away slower than it broke
   sevFloor:         0.22,    // dread ceiling for a near-zero-severity fizzle
@@ -1540,9 +1550,9 @@ app.ticker.add((ticker) => {
     }
   }
   updateAtmosphere(ticker.deltaMS);
-  // Sky + glaze + scar fades. The sky leans toward the last dread hue while
-  // curDread eases, so it releases smoothly after a catastrophe fires.
-  atmos.update(ticker.deltaMS, curDread, curHue.vignette);
+  // Sky + glaze + weather + scar fades. The sky leans toward the last dread
+  // hue while curDread eases, so it releases smoothly after a catastrophe.
+  atmos.update(ticker.deltaMS, curDread, curHue.vignette, dominantEra(simWorld));
   audio.setDread(curDread);
   frameCount++;
   // Ease per-civ saturation toward era target; refresh tints for any civ mid-transition.
