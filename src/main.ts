@@ -2,6 +2,7 @@ import { Application, Assets, Container, Graphics, Sprite, Text, TextStyle, Text
 import { generateBiomeMap, BIOME_COLORS } from './biomes';
 import { drawTile, drawStateOverlayPersistent, redrawOverlay, redrawBiomeTile, lerpColor, TILE_HEIGHT, gridToScreen, rgbToHsl, hslToRgb } from './iso';
 import { createSimWorld, step, tileOverlayColor, seedInitialCivs, applyCatastrophe, CATASTROPHE, CITY, nearestCityDist, type SimWorld, type Civ, type SimEvent, type Era, type TileOverlay, type BiomeChange, type CatastropheType } from './sim';
+import * as audio from './audio';
 
 const ERA_TINT: Record<string, string> = {
   neolithic: '#8a7a5a',   // earthy brown
@@ -1487,9 +1488,15 @@ app.ticker.add((ticker) => {
   }
   pushLogEvents(frameEvents);
   for (const ev of frameEvents) {
-    if (ev.kind === 'catastrophe') triggerImpact(ev.catastropheType, ev.severity);
+    if (ev.kind === 'catastrophe') {
+      triggerImpact(ev.catastropheType, ev.severity);
+      audio.impact(ev.severity);
+    } else if (ev.kind === 'omen' && ev.stage === 3) {
+      audio.omenBell();
+    }
   }
   updateAtmosphere(ticker.deltaMS);
+  audio.setDread(curDread);
   frameCount++;
   // Ease per-civ saturation toward era target; refresh tints for any civ mid-transition.
   easeCivSatMults();
@@ -1674,6 +1681,7 @@ hud.innerHTML = `
   <button id="pause" style="cursor:pointer">pause</button>
   <button id="catastrophe" style="cursor:pointer;color:#a03020">catastrophe</button>
   <button id="skip" style="cursor:pointer;color:#607080">skip 5k</button>
+  <button id="sound" style="cursor:pointer;color:#888" title="ambient sound">sound: off</button>
   <span>tick: <strong id="tick-label">0</strong></span>
   <span>civs: <strong id="civ-label">0</strong></span>
   <span>eras: <strong id="era-label">—</strong></span>
@@ -1768,6 +1776,11 @@ document.getElementById('reroll')!.addEventListener('click', () => {
 });
 document.getElementById('reset-sim')!.addEventListener('click', () => {
   resetSimOnly();
+});
+const soundBtn = document.getElementById('sound')!;
+soundBtn.addEventListener('click', () => {
+  audio.setEnabled(!audio.isEnabled());
+  soundBtn.textContent = audio.isEnabled() ? 'sound: on' : 'sound: off';
 });
 const pauseBtn = document.getElementById('pause')!;
 pauseBtn.addEventListener('click', () => {
