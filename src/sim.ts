@@ -128,6 +128,10 @@ export interface Civ {
   phase: CivPhase;
   vitality: number;
   phaseAge: number;
+  // Ticks this phase lasts — rolled ONCE on phase entry. (Re-rolling per tick
+  // collapses the distribution to its minimum: every civ then lives the same
+  // shortest-possible life. That bug ran for weeks before this run caught it.)
+  phaseDuration: number;
   color: number;
   constitution: number;
   fortune: number;
@@ -167,8 +171,12 @@ export const SIM = {
 
   risingDuration: 1200,
   stableDuration: 2000,
-  decliningDuration: 800,
+  decliningDuration: 1500,
   phaseVariation: 0.6,
+  // Long-tail golden ages: some civs' stable phase runs several times longer,
+  // giving the world old empires a viewer can learn by name.
+  stableLongTailChance: 0.15,
+  stableLongTailMult: 3.5,
 
   vitalityRising: 0.9,
   vitalityStable: 0.7,
@@ -462,6 +470,7 @@ function spawnCiv(world: SimWorld, row: number, col: number): Civ {
     phase: 'rising',
     vitality: 0.4,
     phaseAge: 0,
+    phaseDuration: rollPhaseDuration('rising'),
     color: CIV_COLORS[(world.nextCivId - 2) % CIV_COLORS.length],
     constitution,
     fortune: 0,
@@ -480,6 +489,25 @@ function spawnCiv(world: SimWorld, row: number, col: number): Civ {
 }
 
 // --- Phase + fortune transitions ---
+
+export function rollPhaseDuration(phase: CivPhase): number {
+  const base = phase === 'rising' ? SIM.risingDuration
+    : phase === 'stable' ? SIM.stableDuration
+    : phase === 'declining' ? SIM.decliningDuration
+    : Infinity;
+  if (base === Infinity) return Infinity;
+  let d = base * (1 + (Math.random() * 2 - 1) * SIM.phaseVariation);
+  if (phase === 'stable' && Math.random() < SIM.stableLongTailChance) {
+    d *= SIM.stableLongTailMult;
+  }
+  return d;
+}
+
+export function enterPhase(civ: Civ, phase: CivPhase) {
+  civ.phase = phase;
+  civ.phaseAge = 0;
+  civ.phaseDuration = rollPhaseDuration(phase);
+}
 
 function advanceCivPhase(civ: Civ, tileCount: number) {
   civ.phaseAge++;
@@ -502,19 +530,12 @@ function advanceCivPhase(civ: Civ, tileCount: number) {
   const lerpRate = civ.phase === 'dead' ? SIM.vitalityLerp * 0.25 : SIM.vitalityLerp;
   civ.vitality += (target - civ.vitality) * lerpRate;
 
-  function vary(base: number): number {
-    return base * (1 + (Math.random() * 2 - 1) * SIM.phaseVariation);
-  }
-
-  if (civ.phase === 'rising' && civ.phaseAge > vary(SIM.risingDuration)) {
-    civ.phase = 'stable';
-    civ.phaseAge = 0;
-  } else if (civ.phase === 'stable' && civ.phaseAge > vary(SIM.stableDuration)) {
-    civ.phase = 'declining';
-    civ.phaseAge = 0;
-  } else if (civ.phase === 'declining' && civ.phaseAge > vary(SIM.decliningDuration)) {
-    civ.phase = 'dead';
-    civ.phaseAge = 0;
+  if (civ.phase === 'rising' && civ.phaseAge > civ.phaseDuration) {
+    enterPhase(civ, 'stable');
+  } else if (civ.phase === 'stable' && civ.phaseAge > civ.phaseDuration) {
+    enterPhase(civ, 'declining');
+  } else if (civ.phase === 'declining' && civ.phaseAge > civ.phaseDuration) {
+    enterPhase(civ, 'dead');
   }
 }
 
@@ -740,6 +761,7 @@ function maybeBreakaway(world: SimWorld, changed: Array<{ row: number; col: numb
         phase: 'rising',
         vitality: 0.5,
         phaseAge: 0,
+        phaseDuration: rollPhaseDuration('rising'),
         color: CIV_COLORS[(newId - 2 + CIV_COLORS.length * 100) % CIV_COLORS.length],
         constitution: 0.6 + Math.random() * 0.6,
         fortune: 0,
@@ -1064,8 +1086,7 @@ export function applyCatastrophe(
     const scaledHit = CATASTROPHE.vitalityHit * (0.3 + severity * 0.7);
     civ.vitality = Math.max(0.05, civ.vitality - scaledHit);
     if (civ.phase === 'rising' || civ.phase === 'stable') {
-      civ.phase = 'declining';
-      civ.phaseAge = 0;
+      enterPhase(civ, 'declining');
       events.push({ kind: 'civ_declining', civId: civ.id });
     }
     affectedCivIds.push(civ.id);

@@ -91,6 +91,16 @@ for (const c of catastrophes) {
   console.log(`  ${mmss(c.tick)} ${c.type} sev=${c.severity.toFixed(2)} (gap ${mmss(c.tick - last)}) affected=${c.affected.length}`);
   last = c.tick;
 }
+const spans = [...lives.values()].filter(l => l.died != null).map(l => l.died! - l.born).sort((a, b) => a - b);
+if (spans.length) {
+  const q = (p: number) => spans[Math.min(spans.length - 1, Math.floor(p * spans.length))];
+  console.log(`\nLifespans (n=${spans.length}): min ${mmss(spans[0])}  p25 ${mmss(q(0.25))}  median ${mmss(q(0.5))}  p75 ${mmss(q(0.75))}  max ${mmss(spans[spans.length - 1])}`);
+}
+const windows = [...lives.values()].filter(l => l.died != null && l.declining != null).map(l => l.died! - l.declining!).sort((a, b) => a - b);
+if (windows.length) {
+  const q = (p: number) => windows[Math.min(windows.length - 1, Math.floor(p * windows.length))];
+  console.log(`Dying windows (n=${windows.length}): min ${mmss(windows[0])}  median ${mmss(q(0.5))}  max ${mmss(windows[windows.length - 1])}`);
+}
 console.log(`\nCiv lives (declining->died gap is the visible "dying window"):`);
 for (const [, l] of lives) {
   const decl = l.declining != null && l.died != null ? mmss(l.died - l.declining) : l.declining != null ? 'declining...' : '—';
