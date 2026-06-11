@@ -1,7 +1,7 @@
 import { Application, Assets, Container, Graphics, Sprite, Text, TextStyle, Texture } from 'pixi.js';
 import { generateBiomeMap, BIOME_COLORS } from './biomes';
 import { drawTile, drawStateOverlayPersistent, redrawOverlay, redrawBiomeTile, lerpColor, TILE_HEIGHT, gridToScreen, rgbToHsl, hslToRgb } from './iso';
-import { createSimWorld, step, tileOverlayColor, seedInitialCivs, applyCatastrophe, CATASTROPHE, CITY, nearestCityDist, type SimWorld, type Civ, type SimEvent, type Era, type TileOverlay, type BiomeChange } from './sim';
+import { createSimWorld, step, tileOverlayColor, seedInitialCivs, applyCatastrophe, CATASTROPHE, CITY, nearestCityDist, type SimWorld, type Civ, type SimEvent, type Era, type TileOverlay, type BiomeChange, type CatastropheType } from './sim';
 
 const ERA_TINT: Record<string, string> = {
   neolithic: '#8a7a5a',   // earthy brown
@@ -509,11 +509,164 @@ app.stage.addChild(world);
 const expeditionGfx = new Graphics();
 expeditionLayer.addChild(expeditionGfx);
 
+let worldBaseX = 0, worldBaseY = 0;
 function centerWorld() {
-  world.x = window.innerWidth / 2;
-  world.y = window.innerHeight / 2 - (GRID_SIZE * TILE_HEIGHT) / 2;
+  worldBaseX = window.innerWidth / 2;
+  worldBaseY = window.innerHeight / 2 - (GRID_SIZE * TILE_HEIGHT) / 2;
+  world.x = worldBaseX;
+  world.y = worldBaseY;
 }
 centerWorld();
+
+// --- Atmosphere: the world's tell ---
+// catastrophePressure is surfaced as a slow ambient darkening: a multiply
+// tint plus a vignette, both hued by the kind of doom that is brewing. The
+// viewer should half-notice the light going wrong before the first omen line.
+const DREAD = {
+  tintMaxAlpha:     0.85,
+  vignetteMaxAlpha: 0.90,
+  easeIn:           0.006,  // per-frame fraction — dread creeps in
+  easeOut:          0.003,  // and drains away slower than it broke
+  hues: {
+    plague:     { tint: 0x97a37f, vignette: 0x252b18 },  // sickly pallor
+    asteroid:   { tint: 0xb98e66, vignette: 0x2e1d0c },  // wrong-colored dusk
+    flood:      { tint: 0x7e94ad, vignette: 0x131f2b },  // cold and silver
+    earthquake: { tint: 0x9f8f78, vignette: 0x261e14 },  // dust in the air
+  } as Record<CatastropheType, { tint: number; vignette: number }>,
+};
+
+// Vignette texture from a DOM canvas radial gradient (API-stable, one-time).
+function makeVignetteTexture(): Texture {
+  const size = 512;
+  const cv = document.createElement('canvas');
+  cv.width = size; cv.height = size;
+  const ctx = cv.getContext('2d')!;
+  const grad = ctx.createRadialGradient(size / 2, size / 2, size * 0.30, size / 2, size / 2, size * 0.72);
+  grad.addColorStop(0, 'rgba(255,255,255,0)');
+  grad.addColorStop(0.55, 'rgba(255,255,255,0.35)');
+  grad.addColorStop(1, 'rgba(255,255,255,1)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, size, size);
+  return Texture.from(cv);
+}
+
+const dreadTint = new Graphics();
+dreadTint.blendMode = 'multiply';
+dreadTint.alpha = 0;
+const dreadVignette = new Sprite(makeVignetteTexture());
+dreadVignette.alpha = 0;
+const omenStarGfx = new Graphics();
+const impactFlash = new Graphics();
+impactFlash.alpha = 0;
+app.stage.addChild(dreadTint);
+app.stage.addChild(dreadVignette);
+app.stage.addChild(omenStarGfx);
+app.stage.addChild(impactFlash);
+
+function layoutAtmosphere() {
+  dreadTint.clear();
+  dreadTint.rect(0, 0, window.innerWidth, window.innerHeight).fill(0xffffff);
+  dreadVignette.width = window.innerWidth;
+  dreadVignette.height = window.innerHeight;
+  impactFlash.clear();
+  impactFlash.rect(0, 0, window.innerWidth, window.innerHeight).fill(0xffffff);
+}
+layoutAtmosphere();
+
+let curDread = 0;
+let curHue = DREAD.hues.plague;
+// Debug/tuning handle (harmless in prod; lets tooling read atmosphere state).
+(window as any).__atmos = {
+  get dread() { return curDread; },
+  get tintAlpha() { return dreadTint.alpha; },
+  get vigAlpha() { return dreadVignette.alpha; },
+  tintG: dreadTint,
+  vigS: dreadVignette,
+};
+let starPhase = 0;
+interface Impact { color: number; alpha: number; decayPerSec: number }
+let activeFlash: Impact | null = null;
+let shakeAmp = 0;          // px, decays
+let shakeDecayPerSec = 0;
+
+function triggerImpact(type: CatastropheType, severity: number) {
+  const s = 0.35 + 0.65 * Math.min(1, severity / CATASTROPHE.severitySevereThreshold);
+  switch (type) {
+    case 'asteroid':
+      activeFlash = { color: 0xfff3dc, alpha: 0.9 * s, decayPerSec: 1.6 };
+      shakeAmp = 7 * s; shakeDecayPerSec = 6;
+      break;
+    case 'earthquake':
+      activeFlash = { color: 0x6b5c48, alpha: 0.25 * s, decayPerSec: 0.9 };
+      shakeAmp = 10 * s; shakeDecayPerSec = 3.5;
+      break;
+    case 'flood':
+      activeFlash = { color: 0x3d5a78, alpha: 0.45 * s, decayPerSec: 0.55 };
+      break;
+    case 'plague':
+      activeFlash = { color: 0x1d2414, alpha: 0.4 * s, decayPerSec: 0.45 };
+      break;
+  }
+}
+
+function updateAtmosphere(deltaMS: number) {
+  const dt = deltaMS / 1000;
+  const frames = deltaMS / 16.7; // ease rates are tuned per-60fps-frame
+
+  // Dread level follows pressure once a catastrophe is brewing; its ceiling
+  // scales with the brewing severity so a fizzle never blackens the sky.
+  const brewing = simWorld.brewing;
+  let targetDread = 0;
+  if (brewing) {
+    curHue = DREAD.hues[brewing.type];
+    const sevScale = 0.35 + 0.65 * Math.min(1, brewing.severity / CATASTROPHE.severitySevereThreshold);
+    const ramp = Math.max(0, Math.min(1,
+      (simWorld.catastrophePressure - CATASTROPHE.brewingThreshold) / (1 - CATASTROPHE.brewingThreshold)));
+    targetDread = ramp * sevScale;
+  }
+  const ease = targetDread > curDread ? DREAD.easeIn : DREAD.easeOut;
+  curDread += (targetDread - curDread) * Math.min(1, ease * frames);
+
+  dreadTint.tint = curHue.tint;
+  dreadTint.alpha = curDread * DREAD.tintMaxAlpha;
+  dreadVignette.tint = curHue.vignette;
+  dreadVignette.alpha = curDread * DREAD.vignetteMaxAlpha;
+
+  // Omen star: only for a brewing asteroid past the first omen stage — a
+  // point of light that has no business being there, brightening.
+  omenStarGfx.clear();
+  if (brewing && brewing.type === 'asteroid' && simWorld.catastrophePressure >= CATASTROPHE.omenStages[0]) {
+    starPhase += dt;
+    const ramp = Math.max(0, Math.min(1,
+      (simWorld.catastrophePressure - CATASTROPHE.omenStages[0]) / (1 - CATASTROPHE.omenStages[0])));
+    const x = window.innerWidth * 0.76;
+    const y = window.innerHeight * 0.14;
+    const twinkle = 0.9 + 0.1 * Math.sin(starPhase * 5.1);
+    const r = (1.2 + 2.6 * ramp) * twinkle;
+    const a = (0.25 + 0.75 * ramp) * twinkle;
+    omenStarGfx.circle(x, y, r * 3.2).fill({ color: 0xfff0d8, alpha: a * 0.16 });
+    omenStarGfx.circle(x, y, r * 1.8).fill({ color: 0xfff5e4, alpha: a * 0.35 });
+    omenStarGfx.circle(x, y, r).fill({ color: 0xffffff, alpha: a });
+  }
+
+  // Impact flash decays exponentially.
+  if (activeFlash) {
+    activeFlash.alpha -= activeFlash.alpha * activeFlash.decayPerSec * dt * 3;
+    impactFlash.tint = activeFlash.color;
+    impactFlash.alpha = activeFlash.alpha;
+    if (activeFlash.alpha < 0.01) { activeFlash = null; impactFlash.alpha = 0; }
+  }
+
+  // Ground shake.
+  if (shakeAmp > 0.1) {
+    world.x = worldBaseX + (Math.random() * 2 - 1) * shakeAmp;
+    world.y = worldBaseY + (Math.random() * 2 - 1) * shakeAmp * 0.6;
+    shakeAmp -= shakeAmp * shakeDecayPerSec * dt;
+  } else if (world.x !== worldBaseX || world.y !== worldBaseY) {
+    world.x = worldBaseX;
+    world.y = worldBaseY;
+  }
+}
 
 // --- Seed management ---
 function getInitialSeed(): string {
@@ -892,7 +1045,8 @@ function drawExpeditions() {
 
   for (const exp of simWorld.expeditions) {
     const civ = simWorld.civs.get(exp.civId);
-    if (!civ || civ.phase === 'dead') continue;
+    // Desperate voyages keep sailing after their nation dies — keep drawing them.
+    if (!civ || (civ.phase === 'dead' && !exp.desperate)) continue;
 
     const n = exp.trail.length;
     for (let i = 0; i < n; i++) {
@@ -1332,6 +1486,10 @@ app.ticker.add((ticker) => {
     }
   }
   pushLogEvents(frameEvents);
+  for (const ev of frameEvents) {
+    if (ev.kind === 'catastrophe') triggerImpact(ev.catastropheType, ev.severity);
+  }
+  updateAtmosphere(ticker.deltaMS);
   frameCount++;
   // Ease per-civ saturation toward era target; refresh tints for any civ mid-transition.
   easeCivSatMults();
@@ -1621,9 +1779,12 @@ document.getElementById('catastrophe')!.addEventListener('click', () => {
   const biomeChanges: BiomeChange[] = [];
   const events: SimEvent[] = [];
   applyCatastrophe(simWorld, biomeMap, elevationMap, changes, biomeChanges, events);
-  for (const { row, col } of changes) { refreshTileOverlay(row, col); }
+  for (const { row, col } of changes) { noteTileChange(row, col); refreshTileOverlay(row, col); refreshBuildingSprite(row, col); }
   for (const { row, col } of biomeChanges) { refreshBiomeTile(row, col); }
   pushLogEvents(events);
+  for (const ev of events) {
+    if (ev.kind === 'catastrophe') triggerImpact(ev.catastropheType, ev.severity);
+  }
   drawCityMarkers();
 });
 document.getElementById('skip')!.addEventListener('click', () => {
@@ -1657,6 +1818,7 @@ document.getElementById('skip')!.addEventListener('click', () => {
 window.addEventListener('resize', () => {
   app.renderer.resize(window.innerWidth, window.innerHeight);
   centerWorld();
+  layoutAtmosphere();
 });
 
 function colorsWithin(a: number, b: number, tol: number): boolean {
