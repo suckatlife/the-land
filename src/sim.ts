@@ -19,7 +19,7 @@ export type SimEvent =
   | { kind: 'civ_died'; civId: number }
   | { kind: 'colony_founded'; civId: number; desperate: boolean }
   | { kind: 'breakaway'; newCivId: number; parentId: number }
-  | { kind: 'catastrophe'; centerRow: number; centerCol: number; affectedCivIds: number[]; severity: number; catastropheType: CatastropheType }
+  | { kind: 'catastrophe'; centerRow: number; centerCol: number; affectedCivIds: number[]; severity: number; catastropheType: CatastropheType; radius: number }
   | { kind: 'city_fell'; civId: number; cityName: string; prominence: number; wasCapital: boolean }
   | { kind: 'capital_moved'; civId: number; oldCapitalName: string; newCapitalName: string }
   // Suspense events:
@@ -1206,7 +1206,7 @@ export function applyCatastrophe(
     affectedCivIds.push(civ.id);
   }
 
-  events.push({ kind: 'catastrophe', centerRow, centerCol, affectedCivIds, severity, catastropheType });
+  events.push({ kind: 'catastrophe', centerRow, centerCol, affectedCivIds, severity, catastropheType, radius });
 
   // Near-misses: untouched living civs whose capital sat close to the blast.
   // The two closest get narrated — relief is half of suspense.

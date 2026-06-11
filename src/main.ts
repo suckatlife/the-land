@@ -1,8 +1,9 @@
 import { Application, Assets, Container, Graphics, Sprite, Text, TextStyle, Texture } from 'pixi.js';
 import { generateBiomeMap, BIOME_COLORS } from './biomes';
-import { drawTile, drawStateOverlayPersistent, redrawOverlay, redrawBiomeTile, lerpColor, TILE_HEIGHT, gridToScreen, rgbToHsl, hslToRgb } from './iso';
+import { drawTile, drawStateOverlayPersistent, redrawOverlay, redrawBiomeTile, lerpColor, gridToScreen, rgbToHsl, hslToRgb } from './iso';
 import { createSimWorld, step, tileOverlayColor, seedInitialCivs, applyCatastrophe, CATASTROPHE, CITY, nearestCityDist, type SimWorld, type Civ, type SimEvent, type Era, type TileOverlay, type BiomeChange, type CatastropheType } from './sim';
 import * as audio from './audio';
+import { createAtmosphere, ATMOS } from './atmosphere';
 
 const ERA_TINT: Record<string, string> = {
   neolithic: '#8a7a5a',   // earthy brown
@@ -491,6 +492,11 @@ await app.init({
 });
 document.body.appendChild(app.canvas);
 
+// Atmosphere: sky behind the world, scars inside it, a day/night glaze above.
+const atmos = createAtmosphere();
+// Tuning/debug handle: scrub time with __atmosphere.setTimeOfDay(0..1).
+(window as any).__atmosphere = atmos;
+
 const biomeLayer = new Container();
 const simLayer = new Container();
 const buildingLayer = new Container();
@@ -501,19 +507,28 @@ const labelLayer = new Container();
 const world = new Container();
 world.addChild(biomeLayer);
 world.addChild(simLayer);
+// Scars sit above civ tints (catastrophes hit settled land) but below buildings.
+world.addChild(atmos.scarLayer);
 world.addChild(buildingLayer);
 world.addChild(expeditionLayer);
 world.addChild(cityMarkersContainer);
 world.addChild(labelLayer);
+app.stage.addChild(atmos.skyLayer);
 app.stage.addChild(world);
+app.stage.addChild(atmos.glazeLayer);
+atmos.layout(window.innerWidth, window.innerHeight);
 
 const expeditionGfx = new Graphics();
 expeditionLayer.addChild(expeditionGfx);
 
 let worldBaseX = 0, worldBaseY = 0;
 function centerWorld() {
+  // The world sits in the sky: scaled down so air shows around the diamond,
+  // its top vertex seated at horizonFrac of the screen. See ATMOS.composition.
+  const s = ATMOS.composition.worldScale;
+  world.scale.set(s);
   worldBaseX = window.innerWidth / 2;
-  worldBaseY = window.innerHeight / 2 - (GRID_SIZE * TILE_HEIGHT) / 2;
+  worldBaseY = window.innerHeight * ATMOS.composition.horizonFrac;
   world.x = worldBaseX;
   world.y = worldBaseY;
 }
@@ -1410,6 +1425,7 @@ function resetWorld(newSeed: string) {
   civsTransitioningSat.clear();
   civLastEra.clear();
   eventLog.length = 0;
+  atmos.clearScars();
   for (const lbl of civLabels.values()) { labelLayer.removeChild(lbl.text); lbl.text.destroy(); }
   civLabels.clear();
   clearSimLayer();
@@ -1438,6 +1454,7 @@ function resetSimOnly() {
   civsTransitioningSat.clear();
   civLastEra.clear();
   eventLog.length = 0;
+  atmos.clearScars();
   for (const lbl of civLabels.values()) { labelLayer.removeChild(lbl.text); lbl.text.destroy(); }
   civLabels.clear();
   clearSimLayer();
@@ -1516,12 +1533,16 @@ app.ticker.add((ticker) => {
     if (ev.kind === 'catastrophe') {
       triggerImpact(ev.catastropheType, ev.severity);
       triggerEpicenter(ev.centerRow, ev.centerCol, ev.catastropheType, ev.severity);
+      atmos.addScar(ev.catastropheType, ev.centerRow, ev.centerCol, ev.radius, ev.severity);
       audio.impact(ev.severity);
     } else if (ev.kind === 'omen' && ev.stage === 3) {
       audio.omenBell();
     }
   }
   updateAtmosphere(ticker.deltaMS);
+  // Sky + glaze + scar fades. The sky leans toward the last dread hue while
+  // curDread eases, so it releases smoothly after a catastrophe fires.
+  atmos.update(ticker.deltaMS, curDread, curHue.vignette);
   audio.setDread(curDread);
   frameCount++;
   // Ease per-civ saturation toward era target; refresh tints for any civ mid-transition.
@@ -1825,6 +1846,7 @@ document.getElementById('catastrophe')!.addEventListener('click', () => {
     if (ev.kind === 'catastrophe') {
       triggerImpact(ev.catastropheType, ev.severity);
       triggerEpicenter(ev.centerRow, ev.centerCol, ev.catastropheType, ev.severity);
+      atmos.addScar(ev.catastropheType, ev.centerRow, ev.centerCol, ev.radius, ev.severity);
       audio.impact(ev.severity);
     }
   }
@@ -1835,6 +1857,8 @@ document.getElementById('skip')!.addEventListener('click', () => {
   running = false;
   for (let i = 0; i < SKIP_TICKS; i++) step(simWorld, biomeMap, elevationMap);
   // Full redraw after skip — terrain may have mutated, so rebuild biome layer first.
+  // Scars from skipped ticks weren't rendered; drop any stale ones.
+  atmos.clearScars();
   drawBiomes();
   fadedDeadCivs.clear();
   for (const civ of simWorld.civs.values()) {
@@ -1862,6 +1886,7 @@ window.addEventListener('resize', () => {
   app.renderer.resize(window.innerWidth, window.innerHeight);
   centerWorld();
   layoutAtmosphere();
+  atmos.layout(window.innerWidth, window.innerHeight);
 });
 
 function colorsWithin(a: number, b: number, tol: number): boolean {
