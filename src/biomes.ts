@@ -30,50 +30,50 @@ export const BIOME_COLORS: Record<Biome, number> = {
   rock:    0xbfb8ae,  // muted stone gray
 };
 
-// Tunable parameters. Mess with these to change the world's character.
-const SEA_LEVEL = -0.5;       // -1..1, lower = more land
-const SHORE_LEVEL = -0.3;      // sand band just above sea level
-const MOUNTAIN_LEVEL = 0.55;  // above this is rock
+// --- Tunable knobs ---
+export const SEA_LEVEL   = 0.05;  // combined elevation threshold for water; raise = more ocean
+export const SHORE_LEVEL = 0.18;  // sand band just above sea level
+const MOUNTAIN_LEVEL = 0.65; // above this is rock
 
-const ELEVATION_SCALE = 0.07; // smaller = larger landmasses
-const MOISTURE_SCALE = 0.09;  // smaller = larger climate zones
-const ISLAND_FALLOFF = 0.6;   // 0 = no island shaping, 1 = strong falloff
+const CONTINENTAL_SCALE  = 0.025; // frequency of the big land-mass layer; smaller = broader continents
+const DETAIL_SCALE       = 0.09;  // frequency of the coastline/island detail layer
+const CONTINENTAL_WEIGHT = 0.65;  // how much the continental layer drives elevation
+const DETAIL_WEIGHT      = 0.35;  // how much the detail layer contributes (weights should sum to 1)
+
+const MOISTURE_SCALE = 0.09; // smaller = larger climate zones
 
 // Map (elevation, moisture) to a biome.
 function classify(elevation: number, moisture: number): Biome {
   if (elevation < SEA_LEVEL) return 'water';
   if (elevation < SHORE_LEVEL) return 'sand';
   if (elevation > MOUNTAIN_LEVEL) return 'rock';
-  // Mid elevations: moisture decides.
   if (moisture > 0.3) return 'forest';
   if (moisture > -0.1) return 'grass';
-  return 'fertile';  // dry but not desert — open meadowland
+  return 'fertile';
 }
 
-export function generateBiomeMap(width: number, height: number, seed: string): Biome[][] {
-  // Two PRNGs from the same seed, with a salt so elevation and moisture
-  // don't accidentally correlate.
-  const elevationNoise: NoiseFunction2D = createNoise2D(mulberry32(seed + ':elevation'));
-  const moistureNoise: NoiseFunction2D = createNoise2D(mulberry32(seed + ':moisture'));
+export function generateBiomeMap(
+  width: number,
+  height: number,
+  seed: string,
+): { biomes: Biome[][]; elevation: number[][] } {
+  const continentalNoise: NoiseFunction2D = createNoise2D(mulberry32(seed + ':continental'));
+  const detailNoise: NoiseFunction2D      = createNoise2D(mulberry32(seed + ':detail'));
+  const moistureNoise: NoiseFunction2D    = createNoise2D(mulberry32(seed + ':moisture'));
 
-  const map: Biome[][] = [];
-  const cx = width / 2;
-  const cy = height / 2;
-  const maxDist = Math.sqrt(cx * cx + cy * cy);
-
+  const biomes: Biome[][] = [];
+  const elevation: number[][] = [];
   for (let row = 0; row < height; row++) {
-    map[row] = [];
+    biomes[row] = [];
+    elevation[row] = [];
     for (let col = 0; col < width; col++) {
-      let elevation = elevationNoise(col * ELEVATION_SCALE, row * ELEVATION_SCALE);
-      const moisture = moistureNoise(col * MOISTURE_SCALE, row * MOISTURE_SCALE);
-
-      const dx = col - cx;
-      const dy = row - cy;
-      const dist = Math.sqrt(dx * dx + dy * dy) / maxDist;
-      elevation -= dist * ISLAND_FALLOFF;
-
-      map[row][col] = classify(elevation, moisture);
+      const continental = continentalNoise(col * CONTINENTAL_SCALE, row * CONTINENTAL_SCALE);
+      const detail      = detailNoise(col * DETAIL_SCALE, row * DETAIL_SCALE);
+      const elev        = continental * CONTINENTAL_WEIGHT + detail * DETAIL_WEIGHT;
+      const moisture    = moistureNoise(col * MOISTURE_SCALE, row * MOISTURE_SCALE);
+      biomes[row][col]    = classify(elev, moisture);
+      elevation[row][col] = elev;
     }
   }
-  return map;
+  return { biomes, elevation };
 }
