@@ -1,0 +1,10 @@
+import { chromium } from 'playwright';
+const browser = await chromium.launch();
+const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
+page.on('pageerror', (e) => console.log('PAGE EXCEPTION:', e.message));
+await page.goto('http://localhost:5175/?seed=fable01', { waitUntil: 'networkidle' });
+await page.waitForTimeout(7000);
+await page.evaluate(() => document.getElementById('catastrophe').click());
+await page.waitForTimeout(700);
+await page.screenshot({ path: '/tmp/landshots/epicenter.png' });
+await browser.close();

@@ -526,8 +526,9 @@ centerWorld();
 const DREAD = {
   tintMaxAlpha:     0.85,
   vignetteMaxAlpha: 0.90,
-  easeIn:           0.006,  // per-frame fraction — dread creeps in
-  easeOut:          0.003,  // and drains away slower than it broke
+  easeIn:           0.006,   // per-frame fraction — dread creeps in
+  easeOut:          0.0015,  // and drains away slower than it broke
+  sevFloor:         0.22,    // dread ceiling for a near-zero-severity fizzle
   hues: {
     plague:     { tint: 0x97a37f, vignette: 0x252b18 },  // sickly pallor
     asteroid:   { tint: 0xb98e66, vignette: 0x2e1d0c },  // wrong-colored dusk
@@ -559,6 +560,9 @@ dreadVignette.alpha = 0;
 const omenStarGfx = new Graphics();
 const impactFlash = new Graphics();
 impactFlash.alpha = 0;
+// Epicenter rings live in world space so the viewer sees *where* it landed.
+const epicenterGfx = new Graphics();
+world.addChild(epicenterGfx);
 app.stage.addChild(dreadTint);
 app.stage.addChild(dreadVignette);
 app.stage.addChild(omenStarGfx);
@@ -589,6 +593,14 @@ interface Impact { color: number; alpha: number; decayPerSec: number }
 let activeFlash: Impact | null = null;
 let shakeAmp = 0;          // px, decays
 let shakeDecayPerSec = 0;
+interface EpicenterRing { x: number; y: number; r: number; maxR: number; alpha: number; color: number }
+const epicenterRings: EpicenterRing[] = [];
+
+function triggerEpicenter(row: number, col: number, type: CatastropheType, severity: number) {
+  const { x, y } = gridToScreen(col, row);
+  const s = 0.45 + 0.55 * Math.min(1, severity / CATASTROPHE.severitySevereThreshold);
+  epicenterRings.push({ x, y, r: 4, maxR: 230 * s, alpha: 0.85, color: DREAD.hues[type].vignette });
+}
 
 function triggerImpact(type: CatastropheType, severity: number) {
   const s = 0.35 + 0.65 * Math.min(1, severity / CATASTROPHE.severitySevereThreshold);
@@ -620,7 +632,7 @@ function updateAtmosphere(deltaMS: number) {
   let targetDread = 0;
   if (brewing) {
     curHue = DREAD.hues[brewing.type];
-    const sevScale = 0.35 + 0.65 * Math.min(1, brewing.severity / CATASTROPHE.severitySevereThreshold);
+    const sevScale = DREAD.sevFloor + (1 - DREAD.sevFloor) * Math.min(1, brewing.severity / CATASTROPHE.severitySevereThreshold);
     const ramp = Math.max(0, Math.min(1,
       (simWorld.catastrophePressure - CATASTROPHE.brewingThreshold) / (1 - CATASTROPHE.brewingThreshold)));
     targetDread = ramp * sevScale;
@@ -648,6 +660,19 @@ function updateAtmosphere(deltaMS: number) {
     omenStarGfx.circle(x, y, r * 3.2).fill({ color: 0xfff0d8, alpha: a * 0.16 });
     omenStarGfx.circle(x, y, r * 1.8).fill({ color: 0xfff5e4, alpha: a * 0.35 });
     omenStarGfx.circle(x, y, r).fill({ color: 0xffffff, alpha: a });
+  }
+
+  // Epicenter rings expand and fade over a few seconds.
+  epicenterGfx.clear();
+  for (let i = epicenterRings.length - 1; i >= 0; i--) {
+    const ring = epicenterRings[i];
+    ring.r += (ring.maxR - ring.r) * 1.6 * dt;
+    ring.alpha -= ring.alpha * 1.1 * dt;
+    if (ring.alpha < 0.02) { epicenterRings.splice(i, 1); continue; }
+    epicenterGfx.ellipse(ring.x, ring.y, ring.r, ring.r * 0.5)
+      .stroke({ color: ring.color, alpha: ring.alpha, width: 2.5 });
+    epicenterGfx.ellipse(ring.x, ring.y, ring.r * 0.72, ring.r * 0.36)
+      .stroke({ color: ring.color, alpha: ring.alpha * 0.5, width: 1.5 });
   }
 
   // Impact flash decays exponentially.
@@ -1490,6 +1515,7 @@ app.ticker.add((ticker) => {
   for (const ev of frameEvents) {
     if (ev.kind === 'catastrophe') {
       triggerImpact(ev.catastropheType, ev.severity);
+      triggerEpicenter(ev.centerRow, ev.centerCol, ev.catastropheType, ev.severity);
       audio.impact(ev.severity);
     } else if (ev.kind === 'omen' && ev.stage === 3) {
       audio.omenBell();
@@ -1796,7 +1822,11 @@ document.getElementById('catastrophe')!.addEventListener('click', () => {
   for (const { row, col } of biomeChanges) { refreshBiomeTile(row, col); }
   pushLogEvents(events);
   for (const ev of events) {
-    if (ev.kind === 'catastrophe') triggerImpact(ev.catastropheType, ev.severity);
+    if (ev.kind === 'catastrophe') {
+      triggerImpact(ev.catastropheType, ev.severity);
+      triggerEpicenter(ev.centerRow, ev.centerCol, ev.catastropheType, ev.severity);
+      audio.impact(ev.severity);
+    }
   }
   drawCityMarkers();
 });
