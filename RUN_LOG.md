@@ -14,3 +14,5 @@
 ## Atmosphere run, 2026-06-11
 - 00:00 New BRIEF read. Branch fable-run-atmosphere-2026-06-11 created from suspense tip (NOTE: brief says suspense was merged to main — it wasn't; main is still pre-suspense. Flagged in OBSERVATIONS).
 - 00:15 6-min re-orientation watch: calm world is flat airless noon; manual catastrophe untraceable at +30s (ring gone by +5s). OBSERVATIONS + PLAN written. Window 1 begins: sky, day/night glaze, persistent scars.
+- 01:30 atmosphere.ts: sky + day/night glaze + scars implemented and wired. First pass: sky invisible (world overflowed viewport) and scars ~0.04 effective alpha. Fixed: composition block seats the scaled world in the sky; scar washes boosted.
+- 02:00 Visual pass on all 4 day keyframes + all 4 scar types + night-dread composition. Smoke test: brewing -> omen -> impact -> scar verified end-to-end, both natural and manual paths. Build passes. WINDOW_1_NOTES written. Window 1 done.
