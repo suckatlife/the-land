@@ -10,3 +10,7 @@
 - 02:20 Procedural Web Audio: dread drone + omen bell + impact thump, muted by default, context suspended while muted. 12-min integration watch running.
 - 02:55 12-min natural-pacing watch complete: calm 0-5min, fizzle brewing 5:00-7:30 (dread 0.33 then release), calm again, severe asteroid (0.69) brewing from 11:00 with star + amber dusk. Loop verified end-to-end. (One artifact: a mid-watch git operation triggered a Vite reload at ~1:15 — don't touch the repo during a watch.)
 - 03:05 Post-watch tuning: fizzles whisper (sevFloor 0.22), air clears slower (easeOut 0.0015). Added epicenter shockwave rings in world space — impact now has a *where*. Production build passes.
+
+## Atmosphere run, 2026-06-11
+- 00:00 New BRIEF read. Branch fable-run-atmosphere-2026-06-11 created from suspense tip (NOTE: brief says suspense was merged to main — it wasn't; main is still pre-suspense. Flagged in OBSERVATIONS).
+- 00:15 6-min re-orientation watch: calm world is flat airless noon; manual catastrophe untraceable at +30s (ring gone by +5s). OBSERVATIONS + PLAN written. Window 1 begins: sky, day/night glaze, persistent scars.

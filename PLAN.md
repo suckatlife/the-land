@@ -1,59 +1,52 @@
-# PLAN — suspense run, 2026-06-10
+# PLAN — atmosphere run, 2026-06-11
 
 ## Hypothesis
 
-Suspense fails here for three reasons, in order: (1) all civs live identical
-57-second lives (a sim bug), so there are no protagonists to fear for; (2) the
-catastrophe system telegraphs nothing — pressure is invisible and cadence is
-metronomic; (3) there is no quiet — 85 events/min makes every signal noise.
-Fix the time structure first, then surface the pressure, then punctuate the
-arrival. Narration and a slow ambient visual are the cheapest channels with
-the highest dread-per-line-of-code.
+The world reads as a board because nothing touches it from above: no sky, no
+light temperature, no memory of damage. One new module (`src/atmosphere.ts`)
+owning a sky gradient, a day/night glaze, and persistent painterly scars will
+convert the existing muted palette into "a place" — and because all three are
+keyframe/constant-driven, Lawrence can tune the entire look without reading
+the system code.
 
-## Moves (each one commits)
+## Window 1 moves (each commits)
 
-1. **Lifespan variance (sim).** Roll phase duration once on phase entry, store
-   it on the civ. Tune durations so median life ≈ 2–3 min with a long tail
-   (rare decade-civs). Lengthen `decliningDuration` so the dying window is
-   ~30–90s — long enough to notice and dread. Verify with observe.ts
-   distribution stats.
+1. **`src/atmosphere.ts` skeleton + sky layer.** Canvas-gradient sky texture
+   behind the world, colors from a keyframed day-cycle palette (dawn / noon /
+   dusk / night), regenerated only when colors actually change. Sky lerps
+   toward the dread hue as dread rises — the sky joins the suspense system
+   from day one.
+2. **Day/night glaze.** A fullscreen multiply layer above the world (same
+   pattern as the dread tint), color+alpha keyframed across the cycle:
+   neutral noon (alpha→0), warm dawn/dusk, cool blue night with a hard
+   legibility ceiling. One full cycle ≈ 6 minutes (tuneable), clock pauses
+   with the sim. Building shadow direction: assessed, likely skipped as
+   sprite-unfriendly — noted in WINDOW_1_NOTES.
+3. **Persistent scars.** Sim: `catastrophe` event gains `radius`. Renderer:
+   a scar layer inside the world above `simLayer`; each catastrophe spawns a
+   seeded, painterly, blur-softened Graphics (asteroid scorch+crater,
+   earthquake cracks, flood silt ring, plague pallor veil) that holds, then
+   fades over minutes (per-type lifetime constants; plague lingers longest).
+   Cap ~10 live scars; cleared on reroll/reset/skip.
+4. **Smoke test + tune pass.** Manual catastrophe → brewing → omen → impact →
+   scar lifecycle end-to-end; screenshot day-cycle keyframes and each scar
+   type at +30s/+2min/+8min; check FPS. Then `WINDOW_1_NOTES.md` with the
+   Lawrence-facing constants table, and the window-1 commit.
 
-2. **Brewing catastrophes (sim).** When pressure crosses ~0.5, pre-roll the
-   coming catastrophe's type + severity into `world.brewing`. Emit `omen`
-   events at escalating thresholds (~0.55 / 0.8 / 0.93), type-specific and
-   era-aware. Make pressure build irregular (noise + occasional lulls) so the
-   cadence isn't a metronome. `applyCatastrophe` consumes `brewing`.
+## Windows 2–3 (sketch, revisable)
 
-3. **Aftermath legibility (sim).** `spared` events for civs whose capital sat
-   just outside the radius (the near-miss made visible). A rare `rally`:
-   a declining civ with high fortune can return to stable once — uncertainty
-   needs both outcomes to be possible. Desperate last expeditions for
-   declining civs, flagged so the narrator can treat them as flight.
+- W2: drifting cloud/fog alpha fields (canvas-noise textures, slow
+  translation), seasonal palette drift (15–30 min cycle modulating biome and
+  sky keyframes), era atmosphere (extend ERA_TREATMENT's register to the new
+  layers: clearer neolithic air, industrial haze), dread re-integration so
+  sky+clouds carry the brewing color rather than just the ground multiply.
+- W3: at most two of: tile-level wash variation, water ripple/grass motion,
+  Ken-Burns drift toward brewing region, atmospheric perspective.
 
-4. **Narration (render).** Era × type flavored omen lines (neolithic auguries,
-   modern barometers). Spared/rally/last-flight lines. Throttle the torrent:
-   drop colony spam, raise city-fall thresholds, aim for a few lines/min so
-   omens stand out. Omens get their own visual treatment in the log.
+## Rules I'm holding myself to
 
-5. **Ambient dread (render).** A screen-edge vignette + world tint that eases
-   with pressure, hued by brewing type (plague: sickly pallor; flood: cold
-   blue; asteroid: dusk amber; earthquake: dust). Subtle — half-noticed is the
-   goal. For asteroids, a small star that brightens in the sky over the final
-   stretch. Pressure falls → the air clears over ~10s (relief is part of it).
-
-6. **Arrival punctuation (render).** ~2s of impact: flash for asteroid, shake
-   for earthquake, dark pulse for plague, surge tint for flood. Then the
-   vignette releases.
-
-7. **Verify by watching.** Screenshots through a full pressure cycle; long
-   observe runs for pacing stats. Iterate tunables. Summary docs.
-
-## Risks / notes
-
-- Move 1 changes global pacing — biggest taste call of the run. Justified: it
-  is a bug, and the brief's jeopardy requirement depends on it.
-- Sim stays Pixi-free: sim emits events + exposes `catastrophePressure` and
-  `brewing`; renderer reads them. No new deps in prod code (playwright/tsx are
-  dev-only analysis tools).
-- Audio drone is the strongest tool I'm deferring — only if time remains after
-  the visual loop works (muted by default per brief).
+- Painterly checklist on every visual: soft edge? muted? would a wash do it?
+- Every magic number lives in the `ATMOS` constants block with a comment
+  saying what changing it does.
+- Tempting extras go to IDEAS.md, not the code.
+- No src edits or git operations while a watch session is recording.

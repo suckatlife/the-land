@@ -1,0 +1,21 @@
+import { chromium } from 'playwright';
+const browser = await chromium.launch();
+const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
+page.on('pageerror', (e) => console.log('PAGE EXCEPTION:', e.message));
+await page.goto('http://localhost:5175/?seed=atmos01', { waitUntil: 'networkidle' });
+await page.waitForTimeout(10000);
+await page.screenshot({ path: '/tmp/watch/re_t010.png' });
+await page.waitForTimeout(110000);
+await page.screenshot({ path: '/tmp/watch/re_t120.png' });
+await page.waitForTimeout(120000);
+await page.screenshot({ path: '/tmp/watch/re_t240.png' });
+// manual catastrophe; aftermath legibility at +5s/+30s/+60s
+await page.evaluate(() => document.getElementById('catastrophe').click());
+await page.waitForTimeout(5000);
+await page.screenshot({ path: '/tmp/watch/re_cat_plus05.png' });
+await page.waitForTimeout(25000);
+await page.screenshot({ path: '/tmp/watch/re_cat_plus30.png' });
+await page.waitForTimeout(30000);
+await page.screenshot({ path: '/tmp/watch/re_cat_plus60.png' });
+await browser.close();
+console.log('reorient done');

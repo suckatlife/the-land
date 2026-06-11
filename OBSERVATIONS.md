@@ -1,71 +1,62 @@
-# OBSERVATIONS — Fable run, 2026-06-10
+# OBSERVATIONS — atmosphere run, 2026-06-11
 
-How I watched: a headless harness (`scripts/observe.ts`) that runs the sim 54,000
-ticks (30 viewer-minutes) and logs the full event stream with timestamps, plus
-Playwright screenshots of the live app (`scripts/screenshot.mjs`). Two seeds
-observed headless, one watched live.
+Start-of-run read, after the suspense run (see that branch's FABLE_RUN_SUMMARY)
+and a 6-minute re-orientation watch (screenshots in /tmp/watch/re_*.png,
+including a manual catastrophe with +5s/+30s/+60s aftermath shots).
 
-## The big discovery: every civilization lives exactly 57 seconds
+## Repo state note
 
-In 30 minutes of observed sim time, **every single civ** lived ~56–60s
-(born→died), with a dying window (declining→died) of 10–13s. Constitution,
-ambition, fortune — none of it matters to lifespan. The cause is a sim bug:
-`advanceCivPhase` calls `vary(base)` — which rolls `base * (1 ± 0.6)` — **every
-tick**, so a phase ends as soon as `phaseAge` exceeds the *minimum* possible
-roll. The intended ±60% lifespan variation collapses to a deterministic
-`base × 0.4` for all three phases: 480 + 800 + 320 ticks ≈ 53s, plus vitality
-ramp. The dying window is always ~11s.
+The brief says the suspense branch was merged to main; it wasn't — main is
+still at the pre-suspense checkpoint. This branch forks from
+`fable-run-2026-06-10`'s tip so all suspense mechanics are present, per the
+hard constraint. Worth resolving the merge before this branch lands.
 
-This is the root of "civilizations don't feel like protagonists." There are no
-old empires and no doomed youths — everyone gets the same metronome. Jeopardy
-is impossible when every death is on schedule.
+## What calm looks like now
 
-## Catastrophes are a metronome too
+- The world floats on a flat cream page (`background: '#e8e2d4'`). There is no
+  sky, no horizon, no sense of air. The iso diamond reads as a game board on
+  paper — precisely the "board, not place" problem the brief names.
+- Light is constant and shadowless: eternal flat noon. Nothing in the visual
+  field moves on its own except tile-state lerps and the occasional expedition
+  dot. Between events, nothing drifts, nothing breathes.
+- The dread system is the *only* atmospheric register. When pressure is low
+  (most of the time, especially the ~5-minute calm after a catastrophe), the
+  world is at its flattest exactly when the brief's 2-minute-calm test would
+  be administered.
+- The palette substrate is actually friendly to washes: biome colors are
+  already muted, civ tints are ~50% alpha overlays, era treatments desaturate.
+  A unifying glaze over the whole sheet should harmonize rather than fight.
 
-14 catastrophes in 30 min: gaps of 1m45s–2m40s, *trending tighter* as the world
-saturates (settled fraction pins the pressure build rate at its cap). Severity
-is mostly low (9 of 14 under 0.4). Affected civs usually 0–1 — the vitality-hit
-radius rarely catches anyone because civs die of old age before the blast
-matters to them. So the most dramatic system in the sim mostly lands as: some
-tiles quietly turn grey-brown, a red line appears in the log. No buildup, no
-release, no aftermath. The viewer never knows pressure exists.
+## The aftermath problem, measured
 
-## The event log is a torrent
+Manual catastrophe, screenshots at +5s/+30s/+60s: at +5s the epicenter ring
+is already nearly gone (it fades in ~2.5s by design); at +30s the only trace
+is ruin-tinted tiles that read identically to ordinary decay-ruins anywhere
+else on the map; at +60s nothing distinguishes the impact zone at all. A
+viewer who blinked has no way to point at where it hit. Lawrence's complaint
+reproduces exactly.
 
-2,557 events in 30 min ≈ one narrated line every 0.7 seconds. Colony landfalls
-spam hardest (an expedition fires every few seconds early on), then city falls
-and the birth/death churn from the 57s lifespans. With LOG_MAX=5 and 22s
-lifetime, lines scroll before you can read them. **Suspense needs quiet.** A
-world where something is always happening is a world where nothing matters.
+## Render architecture notes for the work
 
-## What the screenshots show
+- Layering is friendly: a sky layer slots in at stage index 0 behind the
+  `world` container; a scar layer slots inside `world` above `simLayer`
+  (scars must sit over civ tints to be visible where catastrophes actually
+  hit) and below `buildingLayer`.
+- The dread tint/vignette are fullscreen multiply/normal layers on the stage.
+  A day/night glaze can use the same pattern — one fullscreen multiply over
+  sky and land together is coherent (a unifying wash), with the sky palette
+  tuned knowing the glaze sits on top.
+- `catastrophe` events don't currently carry the blast radius (computed
+  internally in `applyCatastrophe`); scars need it — small additive sim
+  change.
+- The watch/screenshot/observe tooling from the suspense run all still works
+  and is the iteration loop for this run too.
 
-- Bright, even, cheerful daylight palette. White-cream page background. The
-  world looks like a pleasant board, not a place where dread can build.
-- No visual channel exists for "something is wrong": no vignette, no sky, no
-  tint shift. The pressure variable has zero visual surface.
-- Catastrophe arrival has no punctuation — no flash, no shake, no epicenter
-  mark. Equal visual weight to a tile decaying of old age.
-- The building sprites, era tints, city markers, and labels are genuinely good
-  bones. Territory is legible; civs have distinct colors; names are readable.
-  The substrate for rooting-for-someone exists — it's the time structure and
-  the affect that are missing.
+## Risks
 
-## What almost-works
-
-- The narration prose is already era-flavored and decent; it's drowned by volume.
-- `catastrophePressure` builds exactly like a dread variable should — slowly,
-  with contributions from settlement density and era. It's just invisible.
-- The ember system guarantees survivors but nobody narrates the survival. A
-  near-miss currently looks identical to not being involved at all.
-- The civ bar panel shows decline (▼) but a 11s dying window makes it a blip.
-
-## Where the wow gap is biggest
-
-1. **Time variance.** Fix the phase-roll bug → some civs die in a minute, some
-   endure ten. Long-lived civs become landmarks the viewer knows by name.
-2. **Pressure surfaced.** Omens in the log + a slow ambient darkening = the
-   viewer learns the world's tell. After one catastrophe they'll recognize the
-   signs the second time. That's when "uh oh" becomes possible.
-3. **Arrival as release.** The impact moment needs ~2 seconds of visual
-   punctuation, and the aftermath needs narration for who was spared.
+- Taste risk is the named one: hues/alphas/rates are all guesses until
+  Lawrence tunes. Mitigation: every value in clearly-named grouped constants.
+- Banding in sky gradients at these subtle color distances; mitigate with
+  canvas-gradient textures rather than rect stacks.
+- Night must not destroy legibility — the multiply ceiling at night is the
+  most dangerous single constant for the screensaver use case.
