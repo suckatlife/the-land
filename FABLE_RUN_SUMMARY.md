@@ -1,9 +1,10 @@
 # FABLE_RUN_SUMMARY — atmosphere run, 2026-06-11
 
 Branch: `fable-run-atmosphere-2026-06-11`, forked from the suspense branch tip
-(see Repo state note below). Windows 1 and 2 complete in one usage window;
-Window 3 not started — it is gated on your review, per the brief. The
-suspense run's summary lives in git history on `fable-run-2026-06-10`.
+(see Repo state note below). Windows 1 and 2 completed in the first usage
+window; Window 3 (curvature, re-briefed after your review) completed in the
+second. The suspense run's summary lives in git history on
+`fable-run-2026-06-10`.
 
 **Repo state note:** the brief says the suspense branch was merged to main;
 it wasn't — main is still at the pre-suspense checkpoint. This branch
@@ -37,6 +38,23 @@ contains all suspense work. Suggested order when you're happy: merge
   (`dreadSkyBlend` 0.8), wind and cloud-shadow depth rise with dread, the
   ground multiply came down from 0.85 to 0.55.
 
+### Window 3 — planetary curvature + fake perspective (`WINDOW_3_NOTES.md`)
+- The world renders into a fixed RenderTexture and is drawn through a gently
+  bent 32×22 mesh: a planetary drop ∝ distance² from the front of the view
+  (back and corners fall away), plus a perspective pinch/squeeze of the far
+  rows. Three soft corner hazes, tinted live to the horizon color, melt the
+  diamond's points into the air.
+- Scrubbers: `__atmosphere.setCurvature(0..1)` / `setPerspective(0..1)`;
+  defaults 0.55/0.45. Calibrated per the brief: 0 is pixel-identical to the
+  old build, 1 is deliberately too much. Calibration screenshots in
+  `curvature_calibration/`.
+- Everything in world space (scars, rings, weather, markers, labels) bends
+  together by construction; the sim and all world-space math are untouched.
+- Verified: scar positions for all four types, labels on cities, suspense
+  flow end-to-end, production build. One open item: an FPS sanity check on
+  real GPU hardware (the headless software renderer pays ~35% for the RT
+  pass; a GPU should not — see WINDOW_3_NOTES doubt #1).
+
 ## 1. What I tried (including dead ends)
 
 The first sky pass was invisible — the iso diamond overflowed the viewport on
@@ -47,7 +65,17 @@ scar pass compounded per-blotch alpha with envelope alpha to ~0.04 effective
 Cloud *bodies* over land were tried mentally and rejected (they fight the
 buildings); shadows + mist carry the weather instead. Building shadow
 direction across the day was assessed and skipped (flat sprites, no cheap
-believable version — Window 3's directional-lighting slot if wanted).
+believable version).
+
+Window 3: per-tile curvature (the brief's "cheap and likely correct" option)
+was rejected after reading iso.ts — tiles are thousands of individually
+positioned Graphics, so per-tile offsets touch every consumer and force a
+full scene rebuild on every scrub; the mesh route bends the finished image
+instead and scrubs for free. Mid-window scare: city markers and labels
+appeared to vanish on a mature world — an hour of probing showed they were
+rendering correctly all along (small at 0.68 world scale, plus a pre-existing
+frame-rate-coupled label fade that crawls in the 3.5fps software-rendered
+headless browser). The debug handle `window.__layers` stays — it earned it.
 
 ## 2. What works now that didn't before
 
@@ -86,6 +114,15 @@ are the most beautiful images the project has produced.
    name memory in one place.
 
 ## 5. Honest self-assessment against the brief test
+
+*Window 3's test — does the silhouette stop reading as a hard diamond?* At
+defaults, side-by-side with flat: yes — the corners dissolve into sky, the
+edges barely bow, and nothing announces "planet." At a glance the stills are
+near-identical to the old build, which the brief defines as probably correct.
+My honest caveat: the corner haze carries more of the silhouette work than
+the geometric bend at default strength — if you turn the haze off expecting
+the bend alone to soften the points, it won't; the knobs to reconcile that
+are in WINDOW_3_NOTES doubt #3.
 
 *Two minutes of absolute calm — are they still looking?* From the final
 natural-pacing watch: within any 2-minute window the viewer gets visible
