@@ -1,4 +1,4 @@
-import { Application, Assets, Container, Graphics, Sprite, Text, TextStyle, Texture } from 'pixi.js';
+import { Application, Assets, Container, Graphics, MeshPlane, RenderTexture, Sprite, Text, TextStyle, Texture } from 'pixi.js';
 import { generateBiomeMap, BIOME_COLORS } from './biomes';
 import { drawTile, drawStateOverlayPersistent, redrawOverlay, redrawBiomeTile, lerpColor, gridToScreen, rgbToHsl, hslToRgb } from './iso';
 import { createSimWorld, step, tileOverlayColor, seedInitialCivs, applyCatastrophe, CATASTROPHE, CITY, nearestCityDist, type SimWorld, type Civ, type SimEvent, type Era, type TileOverlay, type BiomeChange, type CatastropheType } from './sim';
@@ -521,24 +521,52 @@ world.addChild(cityMarkersContainer);
 world.addChild(atmos.fogLayer);
 world.addChild(labelLayer);
 atmos.attach({ biomeLayer });
+
+// Curvature: the world container never sits on the stage. It renders each
+// frame into a fixed world-space RenderTexture and is drawn through a gently
+// bent MeshPlane (ATMOS.curve) — so the silhouette stops being a hard
+// diamond, and everything in world space (scars, rings, weather, labels)
+// bends together. The capture rect is in world units, window-independent.
+const WORLD_CAPTURE = { x0: -1600, y0: -110, w: 3200, h: 1720 };
+const captureScale = ATMOS.composition.worldScale;
+const worldRT = RenderTexture.create({
+  width: Math.ceil(WORLD_CAPTURE.w * captureScale),
+  height: Math.ceil(WORLD_CAPTURE.h * captureScale),
+  antialias: true,
+  resolution: Math.min(window.devicePixelRatio || 1, 2),
+});
+world.scale.set(captureScale);
+world.x = -WORLD_CAPTURE.x0 * captureScale;
+world.y = -WORLD_CAPTURE.y0 * captureScale;
+const worldPlane = new MeshPlane({ texture: worldRT, verticesX: 32, verticesY: 22 });
+
 app.stage.addChild(atmos.skyLayer);
-app.stage.addChild(world);
+app.stage.addChild(worldPlane);
+app.stage.addChild(atmos.hazeLayer);
 app.stage.addChild(atmos.glazeLayer);
+atmos.attachPlane(worldPlane);
 atmos.layout(window.innerWidth, window.innerHeight);
+(window as any).__layers = { world, cityMarkersContainer, labelLayer, biomeLayer };
 
 const expeditionGfx = new Graphics();
 expeditionLayer.addChild(expeditionGfx);
 
 let worldBaseX = 0, worldBaseY = 0;
 function centerWorld() {
-  // The world sits in the sky: scaled down so air shows around the diamond,
-  // its top vertex seated at horizonFrac of the screen. See ATMOS.composition.
-  const s = ATMOS.composition.worldScale;
-  world.scale.set(s);
-  worldBaseX = window.innerWidth / 2;
-  worldBaseY = window.innerHeight * ATMOS.composition.horizonFrac;
-  world.x = worldBaseX;
-  world.y = worldBaseY;
+  // Seat the world plane so the diamond's top vertex sits at horizonFrac of
+  // the screen, centered horizontally. (The world container itself has a
+  // fixed transform into the RenderTexture; only the plane moves.)
+  worldBaseX = window.innerWidth / 2 + WORLD_CAPTURE.x0 * captureScale;
+  worldBaseY = window.innerHeight * ATMOS.composition.horizonFrac + WORLD_CAPTURE.y0 * captureScale;
+  worldPlane.x = worldBaseX;
+  worldPlane.y = worldBaseY;
+  // Corner haze sits on the diamond's far points (left, top, right).
+  const toScreen = (wx: number, wy: number) => ({
+    x: worldBaseX + (wx - WORLD_CAPTURE.x0) * captureScale,
+    y: worldBaseY + (wy - WORLD_CAPTURE.y0) * captureScale,
+  });
+  const half = (GRID_SIZE * 32) / 2; // diamond half-width in world px
+  atmos.layoutHaze([toScreen(-half, half / 2), toScreen(0, 0), toScreen(half, half / 2)]);
 }
 centerWorld();
 
@@ -708,14 +736,15 @@ function updateAtmosphere(deltaMS: number) {
     if (activeFlash.alpha < 0.01) { activeFlash = null; impactFlash.alpha = 0; }
   }
 
-  // Ground shake.
+  // Ground shake — moves the world plane (the world container has a fixed
+  // transform into its RenderTexture).
   if (shakeAmp > 0.1) {
-    world.x = worldBaseX + (Math.random() * 2 - 1) * shakeAmp;
-    world.y = worldBaseY + (Math.random() * 2 - 1) * shakeAmp * 0.6;
+    worldPlane.x = worldBaseX + (Math.random() * 2 - 1) * shakeAmp;
+    worldPlane.y = worldBaseY + (Math.random() * 2 - 1) * shakeAmp * 0.6;
     shakeAmp -= shakeAmp * shakeDecayPerSec * dt;
-  } else if (world.x !== worldBaseX || world.y !== worldBaseY) {
-    world.x = worldBaseX;
-    world.y = worldBaseY;
+  } else if (worldPlane.x !== worldBaseX || worldPlane.y !== worldBaseY) {
+    worldPlane.x = worldBaseX;
+    worldPlane.y = worldBaseY;
   }
 }
 
@@ -1721,6 +1750,13 @@ app.ticker.add((ticker) => {
   // DOM rebuild for the civ bars is expensive — throttle it.
   if (frameCount % BARS_REFRESH_FRAMES === 0) updateBars();
   updateEventLog();
+});
+
+// Capture the world into its RenderTexture every frame. Registered after the
+// main tick callback (so it sees this frame's updates) and not gated by
+// `running`, so manual actions while paused still show.
+app.ticker.add(() => {
+  app.renderer.render({ container: world, target: worldRT, clear: true });
 });
 
 // --- HUD ---

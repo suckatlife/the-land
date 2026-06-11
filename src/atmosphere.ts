@@ -5,7 +5,7 @@
 // adjusted entirely by editing this block: palette keyframes, cycle length,
 // glaze ceilings, scar lifetimes and colors. The systems read these live.
 
-import { Container, Graphics, Sprite, Texture, BlurFilter } from 'pixi.js';
+import { Container, Graphics, Sprite, Texture, BlurFilter, type MeshPlane } from 'pixi.js';
 import { gridToScreen, lerpColor } from './iso';
 import type { CatastropheType, Era } from './sim';
 
@@ -53,6 +53,24 @@ export const ATMOS = {
   // How far the sky leans toward the brewing catastrophe's hue at full dread
   // (0 = sky ignores dread, 1 = sky fully becomes the dread color).
   dreadSkyBlend: 0.8,
+
+  // Planetary curvature + fake perspective. The world renders through a bent
+  // mesh; these bend it. curvature/perspective are the 0..1 knobs (scrub live
+  // with __atmosphere.setCurvature / setPerspective): 0 = the old flat build,
+  // 1 = deliberately too much, defaults in the subtle-correct middle.
+  // The *Frac values calibrate what "1" means and rarely need touching.
+  curve: {
+    curvature: 0.55,
+    perspective: 0.45,
+    bowMaxFrac:       0.085, // at curvature=1: far-corner drop, fraction of world-texture height
+    pinchMaxFrac:     0.16,  // at perspective=1: horizontal narrowing of the far edge
+    vertCompressFrac: 0.05,  // at perspective=1: vertical squeeze of the far rows
+    // Corner haze: soft sky-colored washes over the three far corners so the
+    // points dissolve into atmosphere instead of terminating sharply. Scales
+    // with the curvature knob (0 = none, exactly the old silhouette).
+    edgeHazeAlpha: 0.55,
+    edgeHazeSize:  340,      // base radius, screen px before per-corner stretch
+  },
 
   weather: {
     cloudCount: 7,          // drifting cloud-shadow patches over the land
@@ -192,6 +210,21 @@ interface Scar {
   recede: boolean; // flood silt creeps back
 }
 
+// A single soft radial gradient — used (tinted) for the corner haze.
+function makeHazeTexture(): Texture {
+  const size = 256;
+  const cv = document.createElement('canvas');
+  cv.width = size; cv.height = size;
+  const ctx = cv.getContext('2d')!;
+  const grad = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  grad.addColorStop(0, 'rgba(255,255,255,0.85)');
+  grad.addColorStop(0.5, 'rgba(255,255,255,0.40)');
+  grad.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, size, size);
+  return Texture.from(cv);
+}
+
 // Soft blobby cloud mass on a canvas — overlapping radial gradients. Each
 // texture is reused by several sprites at different scales/flips.
 function makeCloudTexture(rand: () => number): Texture {
@@ -257,6 +290,15 @@ export interface Atmosphere {
   fogLayer: Container;
   // biomeLayer is tinted seasonally; attach it once after scene construction.
   attach(layers: { biomeLayer: Container }): void;
+  // The bent mesh the world draws through; attach once after creation.
+  attachPlane(plane: MeshPlane): void;
+  hazeLayer: Container;
+  // Seat the three corner-haze washes (screen coords: left, top, right corner).
+  layoutHaze(corners: Array<{ x: number; y: number }>): void;
+  setCurvature(v: number): void;   // 0..1, live scrub
+  setPerspective(v: number): void; // 0..1, live scrub
+  curvature(): number;
+  perspective(): number;
   update(deltaMS: number, dread: number, dreadSkyColor: number | null, dominantEra: Era): void;
   addScar(type: CatastropheType, row: number, col: number, radiusTiles: number, severity: number): void;
   clearScars(): void;
@@ -315,7 +357,53 @@ export function createAtmosphere(): Atmosphere {
     d.sp.tint = ATMOS.weather.fogTint;
   }
 
+  // Corner haze: three soft washes that melt the diamond's far points into
+  // the sky. Tinted live to the current horizon color; alpha rides the
+  // curvature knob.
+  const hazeLayer = new Container();
+  const hazeTexture = makeHazeTexture();
+  const hazeSprites: Sprite[] = [];
+  for (let i = 0; i < 3; i++) {
+    const sp = new Sprite(hazeTexture);
+    sp.anchor.set(0.5);
+    sp.alpha = 0;
+    hazeLayer.addChild(sp);
+    hazeSprites.push(sp);
+  }
+
   let attachedBiomeLayer: Container | null = null;
+  let attachedPlane: MeshPlane | null = null;
+  let planeBasePositions: Float32Array | null = null;
+  let curCurvature = ATMOS.curve.curvature;
+  let curPerspective = ATMOS.curve.perspective;
+
+  // Bend the world mesh: a planetary drop proportional to distance² from the
+  // front-center anchor (the back and corners fall away over the horizon),
+  // plus a perspective pinch + vertical squeeze of the far rows. Vertices
+  // only change when the knobs change — zero per-frame cost.
+  function applyCurve() {
+    if (!attachedPlane || !planeBasePositions) return;
+    const geo = attachedPlane.geometry;
+    const texW = (geo as any).width as number;
+    const texH = (geo as any).height as number;
+    const base = planeBasePositions;
+    const out = new Float32Array(base.length);
+    const cx = texW / 2;
+    const aspect = texW / texH;
+    const d2Max = Math.pow(0.5 * aspect, 2) + 1;
+    const c = ATMOS.curve;
+    for (let i = 0; i < base.length; i += 2) {
+      const x = base[i], y = base[i + 1];
+      const u = x / texW, v = y / texH;
+      const d2 = (Math.pow((u - 0.5) * aspect, 2) + Math.pow(1 - v, 2)) / d2Max;
+      let ny = y + curCurvature * c.bowMaxFrac * texH * d2;
+      ny += curPerspective * c.vertCompressFrac * texH * Math.pow(1 - v, 2);
+      const nx = cx + (x - cx) * (1 - curPerspective * c.pinchMaxFrac * (1 - v));
+      out[i] = nx;
+      out[i + 1] = ny;
+    }
+    geo.positions = out;
+  }
   let dayT = ATMOS.day.startT;
   let seasonT = ATMOS.season.startT;
   let eraAirCur = { air: 0xffffff, amount: 0, fogMult: 1 };
@@ -384,6 +472,14 @@ export function createAtmosphere(): Atmosphere {
     const glazeAlpha = day.glazeAlpha + season.castAmount * 0.5 + eraAirCur.amount * 0.5;
     glazeLayer.tint = glazeColor;
     glazeLayer.alpha = Math.min(ATMOS.day.glazeCap, glazeAlpha);
+
+    // Corner haze follows the sky's horizon color (including the dread lean)
+    // and fades in with the curvature knob.
+    const hazeAlpha = ATMOS.curve.edgeHazeAlpha * curCurvature;
+    for (const sp of hazeSprites) {
+      sp.tint = horizon;
+      sp.alpha = hazeAlpha;
+    }
 
     // The land itself drifts with the season (ambered autumns, pale winters).
     if (attachedBiomeLayer) attachedBiomeLayer.tint = season.biomeTint;
@@ -515,6 +611,24 @@ export function createAtmosphere(): Atmosphere {
   return {
     skyLayer, glazeLayer, scarLayer, cloudShadowLayer, fogLayer,
     attach: (layers: { biomeLayer: Container }) => { attachedBiomeLayer = layers.biomeLayer; },
+    attachPlane: (plane: MeshPlane) => {
+      attachedPlane = plane;
+      planeBasePositions = plane.geometry.positions.slice();
+      applyCurve();
+    },
+    hazeLayer,
+    layoutHaze: (corners: Array<{ x: number; y: number }>) => {
+      const base = ATMOS.curve.edgeHazeSize / 128; // texture is 256px; scale to base radius
+      const stretch: Array<[number, number]> = [[2.4, 1.0], [2.0, 0.85], [2.4, 1.0]]; // left, top, right
+      for (let i = 0; i < 3 && i < corners.length; i++) {
+        hazeSprites[i].position.set(corners[i].x, corners[i].y);
+        hazeSprites[i].scale.set(base * stretch[i][0], base * stretch[i][1]);
+      }
+    },
+    setCurvature: (v: number) => { curCurvature = Math.max(0, Math.min(1, v)); applyCurve(); },
+    setPerspective: (v: number) => { curPerspective = Math.max(0, Math.min(1, v)); applyCurve(); },
+    curvature: () => curCurvature,
+    perspective: () => curPerspective,
     update, addScar, clearScars, layout,
     timeOfDay: () => dayT,
     setTimeOfDay: (t: number) => { dayT = ((t % 1) + 1) % 1; },
