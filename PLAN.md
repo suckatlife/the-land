@@ -50,3 +50,37 @@ the system code.
   saying what changing it does.
 - Tempting extras go to IDEAS.md, not the code.
 - No src edits or git operations while a watch session is recording.
+
+## Window 3 addendum — curvature (2026-06-11, after Lawrence's W1+2 review)
+
+**Problem:** with a sky behind it, the hard diamond silhouette reads as a
+stage set. **Fix:** subtle planetary curvature + cheap fake perspective.
+Overshoot is the failure mode; ~5° max, felt not seen.
+
+**Approach: render-to-texture + bent mesh** (the brief's "cheap and possibly
+better" option), chosen over per-tile offsets after reading iso.ts: tiles are
+thousands of individually-positioned Graphics with fixed local diamond
+geometry, so per-tile curvature touches every consumer (tiles, overlays,
+buildings, markers, labels via raw centroid math) and forces a full scene
+rebuild on every scrub. The mesh route:
+
+- The `world` container leaves the stage and renders each frame into a
+  fixed-size RenderTexture (world-space capture, window-size independent).
+- A `MeshPlane` (~24×16 vertices) draws that texture where the world used to
+  sit. Curvature = vertex displacement: planetary drop ∝ distance² from the
+  front-center anchor (back and corners fall away); perspective = horizontal
+  pinch + vertical compression toward the back.
+- Vertices change only when the knobs change → scrubbing is free;
+  per-frame cost is one RT pass of a scene that was being rendered anyway.
+- Everything in world space (scars, shockwave rings, cloud shadows, mist,
+  labels, markers) bends together for free; screen-space layers (sky, glaze,
+  dread tint/vignette, star, flash) are untouched.
+- Shake moves the mesh instead of the world container.
+
+Constants in `ATMOS.curve` (curvature, perspective, bowMaxFrac, pinchMaxFrac,
+vertCompressFrac); scrubbers `__atmosphere.setCurvature/setPerspective`,
+defaults mid-range, calibrated so 1.0 overshoots and 0 is the current build.
+
+Verification: calibration screenshots (0 / default / 1) into
+`curvature_calibration/`; smoke test all four scar types' positions, labels
+on cities, sky relationship, suspense flow end-to-end.
