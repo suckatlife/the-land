@@ -36,7 +36,8 @@ requires protagonists, protagonists require differentiated lifespans.
   hangs a brightening star in the sky. Dread drains slower than it broke —
   the air clearing is the relief.
 - *Release*: per-type impact punctuation (amber flash, ground shake, cold
-  surge, dark pulse), severity-scaled.
+  surge, dark pulse), severity-scaled, plus an expanding shockwave ring at
+  the epicenter in world space — the release has a *where*, not just a when.
 - *Aftermath*: `spared` events narrate the two nearest untouched civs — the
   near-miss made legible ("In Vehl-Em, only the dishes rattled").
 - *Cadence*: pressure build is modulated by a slow random-walk noise so
@@ -111,21 +112,30 @@ after their parent died.
 
 ## 5. Honest self-assessment of the 10-minute test
 
-*(Method: 12-minute unattended headless watch with screenshots + log capture
-at natural pacing, plus staged screenshot verification of each dread tier.)*
+*(Method: 12-minute unattended headless watch at natural pacing, sampling
+pressure/dread/brewing every 15s with screenshots every 90s, plus staged
+screenshot verification of each dread tier and the impact effects.)*
 
-What a 10-minute viewer now gets, on average: 3–4 omen sequences of varying
-depth, 1–2 catastrophes with visible buildup (the screen darkens over ~45–90s
-before impact), and several civ declines slow enough to notice. The dread→
-release→relief loop demonstrably runs end-to-end. Whether a viewer *feels*
-tension is not something I can verify from inside a headless browser — but
-the structural requirements of the brief (foreshadowing the viewer can learn,
-jeopardy with time to root, uncertainty with both outcomes possible) are all
-present and verified working. My honest estimate: the test passes for a
-viewer who reads the log; for a viewer who only watches the canvas, the
-asteroid star and the darkening carry it, but plague/flood/earthquake
-foreshadowing is mostly tonal — a second visual tell per type would firm it
-up. I'd call it: one genuine moment very likely, three not guaranteed.
+The watched session, as a viewer would have experienced it: five minutes of
+calm world-building (an empire passing 1,000 tiles, cities falling and being
+named); a brewing begins at 5:00 and the world warms and darkens over 2½
+minutes toward a catastrophe that turns out to be a fizzle — the air clears;
+four more minutes of calm; then at 11:00 a *severe* asteroid begins brewing,
+the star comes out, and the dusk deepens hard. That arc — false alarm, calm,
+then the real thing using the tell you just learned — is textbook suspense
+structure, and it emerged from the mechanics rather than being scripted.
+(Post-watch I tuned fizzles quieter, so the false alarm whispers rather than
+shouts.)
+
+Whether a viewer *feels* tension is not something I can verify from inside a
+headless browser. But the structural requirements of the brief — a tell the
+viewer can learn, jeopardy with time to root (20–80s dying windows, dimming
+labels), uncertainty with both outcomes possible (rallies, near-misses,
+spared lines) — are all present and verified working at natural pacing. My
+honest estimate: one genuine "uh oh" moment in 10 minutes is very likely,
+especially for asteroid sequences (the star is the strongest single tell);
+three are not guaranteed, because plague/flood/earthquake foreshadowing is
+mostly tonal and a glance-viewer may only register it on the second cycle.
 
 Caveats for Lawrence's eye: (a) dread tint ceilings (`DREAD` in main.ts) are
 my taste call — verified legible at severe, but you may want them gentler;
