@@ -24,10 +24,15 @@ sizes (`narrow_*` = 1330×916 like your morning screenshot, `wide_*` =
 4. Your "seam in the center / arc of a globe" report: the seam was the
    compression rate jumping at the center column (the mapping compressed
    from the diamond's true, kinked edge). The mapping now uses the smooth
-   softened edge everywhere — seamless — and the sliver this leaves near the
-   apex is filled by the horizon band: stacked washes above the shoreline,
-   dense at the waterline, dissolving upward. Tiles compress into haze, haze
-   dissolves at the crown — the limb of a planet rather than a drawn edge.
+   softened edge everywhere — seamless.
+5. Your mockup became the construction. The world now has **no diamond
+   boundary at all**: an ocean apron extends the sea (with its grid) past
+   the terrain in every direction, and a screen-space **circular limb mask**
+   clips the world at a true circle through the apex — the silhouette is a
+   planet's limb by construction at any window size, and the far world
+   genuinely disappears behind the horizon, like your mockup's upper-left.
+   The haze band lies along the limb arc, tinted to the live sky. Scars,
+   labels, weather, dread all render inside the cap unchanged.
 
 ## The constants you'll most likely want to touch
 
@@ -35,16 +40,15 @@ All in `ATMOS.curve` in `src/atmosphere.ts`:
 
 | Constant | What it does | My value | Notes |
 |---|---|---|---|
-| `curvature` | The 0..1 knob: how far the wings rise toward the horizon arc | 0.62 | 0 = the old flat diamond exactly. 1 = flat-topped dome (too much; far columns stretch ~35%). |
+| `curvature` | The 0..1 knob: how planetary | 0.62 | Drives the limb circle's sag AND the interior surface bend. Below 0.05: mask + ocean apron disappear, the flat diamond returns. |
 | `perspective` | The 0..1 knob: far-row bunching + far-edge pinch | 0.45 | Independent of curvature; scrub separately. |
-| `remapMax` | How far curvature=1 travels from tent to arc | 0.55 | The master range of the knob. |
-| `arcSagFrac` | Horizon arc droop from apex to sides | 0.11 | Smaller = flatter horizon line; larger = rounder dome. |
-| `arcPower` | Arc shape | 1.7 | 2 = flat crown diving at the ends, 1 = conical. |
-| `apexRoundFrac` | How wide the apex rounds into a crown | 0.45 | The "it's actually a curve" knob — smaller brings the point back. |
+| `limbSagMax` | Horizon arc drop at the frame edge at curvature=1 | 0.80 | Fraction of half-width. The single biggest "globe-ness" number. |
+| `limbHazeAlpha` / `limbHazeWidth` | Haze band lying along the limb | 0.55 / 64 | Tinted live to the horizon color. |
+| `composition.horizonFrac` (main seat) | How much sky above the horizon | 0.24 | Raised from 0.16 to match your mockup's framing. |
+| `remapMax` | Interior surface bend toward the horizon | 0.35 | Gentler now — the limb mask owns the silhouette; this just curves the surface. |
 | `vertCompressFrac` | Far rows bunch toward the horizon (t^(1+this)) | 0.35 | The fake-perspective depth feel. |
 | `pinchMaxFrac` | Far-edge horizontal narrowing | 0.16 | |
-| `edgeFeatherAlpha` / `edgeFeatherWidth` | The horizon band — haze of distance above the far shorelines | 0.85 / 56 | **Load-bearing**: it fills the sliver the seamless remap leaves near the apex. Lower toward ~0.4 rather than zeroing. |
-| `edgeHazeAlpha` / `edgeHazeSize` | Corner-haze strength / radius (world px) | 0.55 / 500 | Now world-space — bends with the mesh. |
+| `arcSagFrac` / `arcPower` / `apexRoundFrac` | Interior bend shape | 0.11 / 1.7 / 0.45 | Rarely touch now. |
 
 ## How it works (so the knobs make sense)
 
