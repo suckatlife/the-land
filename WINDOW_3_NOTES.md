@@ -41,8 +41,9 @@ All in `ATMOS.curve` in `src/atmosphere.ts`:
 | Constant | What it does | My value | Notes |
 |---|---|---|---|
 | `curvature` | The 0..1 knob: how planetary | 0.62 | Drives the limb circle's sag AND the interior surface bend. Below 0.05: mask + ocean apron disappear, the flat diamond returns. |
-| `perspective` | The 0..1 knob: far-row bunching + far-edge pinch | 0.45 | Independent of curvature; scrub separately. |
-| `limbSagMax` | Horizon arc drop at the frame edge at curvature=1 | 0.80 | Fraction of half-width. The single biggest "globe-ness" number. |
+| `perspective` | The 0..1 knob: far-row thinning + far-edge pinch | 0.60 | Independent of curvature; scrub separately. Raised with `vertCompressFrac` 0.55 so tiles thin to slivers at the limb. |
+| `limbSagMax` | Horizon arc drop at the frame edge at curvature=1 | 0.40 | Fraction of half-width. The single biggest "globe-ness" number (halved per your note). |
+| `limbBowMix` / `limbBowPower` | Surface rows bow parallel to the limb near the horizon | 0.85 / 1.5 | Mix 0 = straight grid under the arc; power higher = bow hugs the horizon only. |
 | `limbHazeAlpha` / `limbHazeWidth` | Haze band lying along the limb | 0.55 / 64 | Tinted live to the horizon color. |
 | `composition.horizonFrac` (main seat) | How much sky above the horizon | 0.24 | Raised from 0.16 to match your mockup's framing. |
 | `remapMax` | Interior surface bend toward the horizon | 0.35 | Gentler now — the limb mask owns the silhouette; this just curves the surface. |
