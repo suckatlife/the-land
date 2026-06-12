@@ -21,6 +21,13 @@ sizes (`narrow_*` = 1330×916 like your morning screenshot, `wide_*` =
    and the apex kept its kink through the partial lerp. The mesh is now
    110×36 and the apex point rounds into a crown (`apexRoundFrac`), so the
    top edge is one continuous smooth limb.
+4. Your "seam in the center / arc of a globe" report: the seam was the
+   compression rate jumping at the center column (the mapping compressed
+   from the diamond's true, kinked edge). The mapping now uses the smooth
+   softened edge everywhere — seamless — and the sliver this leaves near the
+   apex is filled by the horizon band: stacked washes above the shoreline,
+   dense at the waterline, dissolving upward. Tiles compress into haze, haze
+   dissolves at the crown — the limb of a planet rather than a drawn edge.
 
 ## The constants you'll most likely want to touch
 
@@ -36,7 +43,7 @@ All in `ATMOS.curve` in `src/atmosphere.ts`:
 | `apexRoundFrac` | How wide the apex rounds into a crown | 0.45 | The "it's actually a curve" knob — smaller brings the point back. |
 | `vertCompressFrac` | Far rows bunch toward the horizon (t^(1+this)) | 0.35 | The fake-perspective depth feel. |
 | `pinchMaxFrac` | Far-edge horizontal narrowing | 0.16 | |
-| `edgeFeatherAlpha` / `edgeFeatherWidth` | Sky-tinted wash on the far shorelines | 0.5 / 42 | Kills the ruled-line reading. 0 = off. |
+| `edgeFeatherAlpha` / `edgeFeatherWidth` | The horizon band — haze of distance above the far shorelines | 0.85 / 56 | **Load-bearing**: it fills the sliver the seamless remap leaves near the apex. Lower toward ~0.4 rather than zeroing. |
 | `edgeHazeAlpha` / `edgeHazeSize` | Corner-haze strength / radius (world px) | 0.55 / 500 | Now world-space — bends with the mesh. |
 
 ## How it works (so the knobs make sense)
