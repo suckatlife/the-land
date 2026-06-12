@@ -443,11 +443,31 @@ const PRIORITY_EVENTS = new Set<SimEvent['kind']>([
 const LOG_QUIET_MS = 4500;
 let lastLogPushTs = 0;
 
+// The connective tissue between log, panel, and map: civ names render in
+// their civ's color wherever they appear, and a mention timestamps the civ
+// so its panel row flashes.
+const civMentionTs = new Map<number, number>();
+
+function colorizeCivNames(text: string): string {
+  const civs = [...simWorld.civs.values()].sort((a, b) => b.name.length - a.name.length);
+  let out = text;
+  for (const civ of civs) {
+    if (!out.includes(civ.name)) continue;
+    const esc = civ.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`(^|[^\\w>])(${esc})(?!\\w)`);
+    if (!re.test(out)) continue;
+    out = out.replace(re, (_m, pre, name) =>
+      `${pre}<span style="color:${hexToCss(civ.color)};font-weight:600">${name}</span>`);
+    civMentionTs.set(civ.id, Date.now());
+  }
+  return out;
+}
+
 function pushLogEvents(evs: SimEvent[]) {
   for (const ev of evs) {
     const now = Date.now();
     if (!PRIORITY_EVENTS.has(ev.kind) && now - lastLogPushTs < LOG_QUIET_MS) continue;
-    const text = narrateEvent(ev, simWorld);
+    const text = colorizeCivNames(narrateEvent(ev, simWorld));
     if (!text) continue;
     lastLogPushTs = now;
     const variant = ev.kind === 'catastrophe' ? 'catastrophe' as const
@@ -699,6 +719,13 @@ function triggerEpicenter(row: number, col: number, type: CatastropheType, sever
   epicenterRings.push({ x, y, r: 4, maxR: 230 * s, alpha: 0.85, color: DREAD.hues[type].vignette });
 }
 
+// A gentle ring where a narrated event happened — the log line's location,
+// findable on the map.
+function triggerPing(row: number, col: number, color: number) {
+  const { x, y } = gridToScreen(col, row);
+  epicenterRings.push({ x, y, r: 3, maxR: 52, alpha: 0.5, color });
+}
+
 function triggerImpact(type: CatastropheType, severity: number) {
   const s = 0.35 + 0.65 * Math.min(1, severity / CATASTROPHE.severitySevereThreshold);
   switch (type) {
@@ -891,7 +918,7 @@ const fadedDeadCivs = new Set<number>();
 function drawOceanApron(): Graphics {
   const g = new Graphics();
   const { x0, y0, w, h } = WORLD_CAPTURE;
-  g.rect(x0, y0, w, h).fill(BIOME_COLORS.water);
+  g.rect(x0, y0, w, h).fill(OCEAN.deepColor);
   // The iso grid, continued: tile edges satisfy x+2y = 32k and x-2y = 32m.
   // Lines run border-to-border; overshoot past the rect is clipped by the
   // render texture.
@@ -951,13 +978,20 @@ function rebuildWaterMask() {
 // converges to far from land.
 const OCEAN = {
   shallowColor: 0xbfdfd6,  // pale aqua at the waterline
-  depthRange:   0.16,      // how far below sea level reaches full deep color
+  deepColor:    0x76a6cf,  // open-ocean dark; the apron is painted this
+  depthRange:   0.30,      // how far below sea level reaches full deep color
+  midPoint:     0.45,      // where the ramp crosses the base water color
   shallowCurve: 0.6,       // <1 = shallows hug the coast tighter
 };
 
 function waterColorAt(row: number, col: number): number {
-  const t = Math.max(0, Math.min(1, (SEA_LEVEL - elevationMap[row][col]) / OCEAN.depthRange));
-  return lerpColor(OCEAN.shallowColor, BIOME_COLORS.water, Math.pow(t, OCEAN.shallowCurve));
+  const t = Math.pow(
+    Math.max(0, Math.min(1, (SEA_LEVEL - elevationMap[row][col]) / OCEAN.depthRange)),
+    OCEAN.shallowCurve,
+  );
+  return t <= OCEAN.midPoint
+    ? lerpColor(OCEAN.shallowColor, BIOME_COLORS.water, t / OCEAN.midPoint)
+    : lerpColor(BIOME_COLORS.water, OCEAN.deepColor, (t - OCEAN.midPoint) / (1 - OCEAN.midPoint));
 }
 
 // Rivers: polylines from the hills to the sea, tapering downstream, tinted
@@ -1871,6 +1905,13 @@ app.ticker.add((ticker) => {
       audio.impact(ev.severity);
     } else if (ev.kind === 'omen' && ev.stage === 3) {
       audio.omenBell();
+    } else if (ev.kind === 'civ_born' || ev.kind === 'civ_died' || ev.kind === 'rally'
+        || ev.kind === 'capital_moved' || ev.kind === 'last_flight' || ev.kind === 'refuge_founded') {
+      const civ = simWorld.civs.get(ev.civId);
+      if (civ) triggerPing(civ.originRow, civ.originCol, civ.color);
+    } else if (ev.kind === 'breakaway') {
+      const civ = simWorld.civs.get(ev.newCivId);
+      if (civ) triggerPing(civ.originRow, civ.originCol, civ.color);
     }
   }
   updateAtmosphere(ticker.deltaMS);
@@ -2115,6 +2156,10 @@ function hexToCss(color: number): string {
 
 function updateBars() {
   // Reuses the shared civStats cache instead of doing its own grid scan.
+  // Connected to the rest of the story surface: names render in civ color
+  // (matching map labels and log mentions), each civ shows its capital
+  // (the name city_fell / capital_moved lines refer to), and a row flashes
+  // for a few seconds when its civ is mentioned in the log.
   const counts = civStats.tileCounts;
   const living: Array<{ civ: Civ; count: number }> = [];
   for (const civ of simWorld.civs.values()) {
@@ -2122,13 +2167,12 @@ function updateBars() {
     living.push({ civ, count: counts.get(civ.id) || 0 });
   }
   living.sort((a, b) => b.count - a.count);
-
-  // Scale: longest bar = panel width. Use the largest current civ, 
-  // or a floor so tiny civs don't fill the whole bar.
+  const shown = living.slice(0, 8);
+  const more = living.length - shown.length;
   const maxCount = Math.max(40, ...living.map((l) => l.count));
+  const now = Date.now();
 
-  // Rebuild the bars. Cheap because few civs.
-  barsContainer.innerHTML = living
+  barsContainer.innerHTML = shown
     .map(({ civ, count }) => {
       const pct = Math.round((count / maxCount) * 100);
       const color = hexToCss(civ.color);
@@ -2136,10 +2180,13 @@ function updateBars() {
         civ.phase === 'rising' ? '▲' :
         civ.phase === 'stable' ? '■' :
         civ.phase === 'declining' ? '▼' : '·';
+      const capital = civ.cities[0]?.name ?? '—';
+      const mentioned = (civMentionTs.get(civ.id) ?? 0) > now - 6000;
+      const rowBg = mentioned ? 'background:rgba(255,236,190,0.95);' : '';
       return `
-        <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;">
-          <span style="width:120px;color:#444;font-size:10px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;">
-  <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${ERA_TINT[civ.era]};margin-right:3px;"></span>${civ.name} <span style="color:#999;">${civ.era.slice(0,3)}</span> ${phaseGlyph}
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;padding:1px 3px;border-radius:2px;${rowBg}">
+          <span style="width:150px;font-size:10px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;">
+  <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${ERA_TINT[civ.era]};margin-right:3px;"></span><span style="color:${color};font-weight:600">${civ.name}</span> <span style="color:#999;">· ${capital}</span> <span style="color:#666;">${phaseGlyph}</span>
 </span>
           <div style="flex:1;height:10px;background:rgba(0,0,0,0.06);border-radius:2px;overflow:hidden;">
             <div style="width:${pct}%;height:100%;background:${color};transition:width 0.2s;"></div>
@@ -2147,7 +2194,9 @@ function updateBars() {
           <span style="width:28px;text-align:right;color:#555;font-size:10px;">${count}</span>
         </div>`;
     })
-    .join('');
+    .join('') + (more > 0
+      ? `<div style="color:#999;font-size:10px;padding:2px 4px;">… and ${more} smaller</div>`
+      : '');
 }
 
 const seedLabel = document.getElementById('seed-label')!;

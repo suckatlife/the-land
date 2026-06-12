@@ -1,0 +1,12 @@
+import { chromium } from 'playwright';
+const browser = await chromium.launch();
+const page = await browser.newPage({ viewport: { width: 1235, height: 914 } });
+page.on('pageerror', (e) => console.log('PAGE EXCEPTION:', e.message));
+await page.goto('http://localhost:5175/?seed=51f518', { waitUntil: 'networkidle' });
+await page.waitForTimeout(6000);
+await page.evaluate(() => document.getElementById('skip').click());
+await page.waitForTimeout(10000);
+await page.evaluate(() => window.__atmosphere.setTimeOfDay(0.30));
+await page.waitForTimeout(2500);
+await page.screenshot({ path: '/tmp/landshots/w5b_full.png' });
+await browser.close();

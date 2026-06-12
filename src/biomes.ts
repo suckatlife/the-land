@@ -42,6 +42,13 @@ const DETAIL_WEIGHT      = 0.35;  // how much the detail layer contributes (weig
 
 const MOISTURE_SCALE = 0.09; // smaller = larger climate zones
 
+// Land never reaches the grid boundary: elevation eases below sea level over
+// the outer EDGE_FALLOFF tiles, so every landmass ends in natural coastline
+// (no terrain sliced along the old diamond edge) and boundary water matches
+// the deep ocean apron beyond it.
+const EDGE_FALLOFF = 7;
+const EDGE_DEPTH = 0.3; // how far below zero the very edge is pushed
+
 // Map (elevation, moisture) to a biome.
 function classify(elevation: number, moisture: number): Biome {
   if (elevation < SEA_LEVEL) return 'water';
@@ -118,7 +125,11 @@ export function generateBiomeMap(
     for (let col = 0; col < width; col++) {
       const continental = continentalNoise(col * CONTINENTAL_SCALE, row * CONTINENTAL_SCALE);
       const detail      = detailNoise(col * DETAIL_SCALE, row * DETAIL_SCALE);
-      const elev        = continental * CONTINENTAL_WEIGHT + detail * DETAIL_WEIGHT;
+      const edgeD = Math.min(row, col, height - 1 - row, width - 1 - col);
+      const f = Math.min(1, edgeD / EDGE_FALLOFF);
+      const ease = f * f * (3 - 2 * f);
+      const elev = (continental * CONTINENTAL_WEIGHT + detail * DETAIL_WEIGHT) * ease
+        - (1 - ease) * EDGE_DEPTH;
       const moisture    = moistureNoise(col * MOISTURE_SCALE, row * MOISTURE_SCALE);
       biomes[row][col]    = classify(elev, moisture);
       elevation[row][col] = elev;
