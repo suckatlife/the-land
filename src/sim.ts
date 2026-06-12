@@ -25,6 +25,9 @@ export type SimEvent =
   // Suspense events:
   | { kind: 'omen'; stage: 1 | 2 | 3; catastropheType: CatastropheType; severity: number }
   | { kind: 'refuge_founded'; civId: number; parentName: string }
+  | { kind: 'conquest'; row: number; col: number; attackerId: number; defenderId: number }
+  | { kind: 'wonder_built'; civId: number; row: number; col: number }
+  | { kind: 'migration'; row: number; col: number }
   | { kind: 'spared'; civId: number; catastropheType: CatastropheType }
   | { kind: 'rally'; civId: number }
   | { kind: 'last_flight'; civId: number };
@@ -149,6 +152,8 @@ export interface Civ {
   cities: CivCity[];
   hasRallied: boolean;
   hasFled: boolean;
+  // A golden-age monument; persists (as a ruin marker) after the civ dies.
+  wonder: { row: number; col: number } | null;
 }
 
 export interface NameMemory {
@@ -255,6 +260,16 @@ expeditionLaunchCityRadius: 11,  // launch coast must be within this radius (× 
   // Last flight — a declining civ may send one final expedition seaward.
   lastFlightChance: 0.00005,
   lastFlightMinSize: 12,
+
+  // Wonders — a large, fortunate civ in its stable age may raise one
+  // monument, which outlives it.
+  wonderChance: 0.00015,
+  wonderMinSize: 160,
+  wonderMinFortune: 0.12,
+
+  // Births arrive as migrations: a band wanders visibly for this many ticks
+  // before the settlement takes a name.
+  migrationTicks: 900,
 };
 
 export const CATASTROPHE = {
@@ -347,6 +362,8 @@ export interface SimWorld {
   lastCatastropheTick: number;
   pressureNoise: number;
   brewing: BrewingCatastrophe | null;
+  // Settlements on their way to existing — visible nomad bands.
+  pendingSettlements: Array<{ row: number; col: number; ticksLeft: number }>;
 }
 
 export function createSimWorld(width: number, height: number): SimWorld {
@@ -368,6 +385,7 @@ export function createSimWorld(width: number, height: number): SimWorld {
     lastCatastropheTick: 0,
     pressureNoise: 1.0,
     brewing: null,
+    pendingSettlements: [],
   };
 }
 
@@ -527,6 +545,7 @@ function spawnCiv(world: SimWorld, row: number, col: number): Civ {
     cities: [{ row, col, prominence: 1.0, name: generateName(era), foundedTick: world.tick }],
     hasRallied: false,
     hasFled: false,
+    wonder: null,
   };
   world.civs.set(civ.id, civ);
   const t = world.tiles[row][col];
@@ -753,6 +772,7 @@ function advanceExpeditions(world: SimWorld, biomes: Biome[][], changed: Array<{
               cities: [{ row: tr, col: tc, prominence: 0.5, name: generateName(civ.era), foundedTick: world.tick }],
               hasRallied: false,
               hasFled: true,
+              wonder: null,
             };
             world.civs.set(newId, refuge);
             world.nameMemory.push({ row: tr, col: tc, name: refuge.name, lastEra: civ.era });
@@ -870,6 +890,7 @@ function maybeBreakaway(world: SimWorld, changed: Array<{ row: number; col: numb
         cities: [{ row: cap.row, col: cap.col, prominence: 0.6, name: generateName(civ.era), foundedTick: world.tick }],
         hasRallied: false,
         hasFled: false,
+        wonder: null,
       };
       world.civs.set(newId, newCiv);
       events.push({ kind: 'breakaway', newCivId: newId, parentId: civ.id });
@@ -1278,6 +1299,12 @@ export function step(
       enterPhase(civ, 'stable');
       events.push({ kind: 'rally', civId: civ.id });
     }
+    // Wonders: a golden age leaves a monument.
+    if (civ.phase === 'stable' && !civ.wonder && tileCount >= SIM.wonderMinSize
+        && civ.fortune > SIM.wonderMinFortune && Math.random() < SIM.wonderChance) {
+      civ.wonder = { row: civ.originRow, col: civ.originCol };
+      events.push({ kind: 'wonder_built', civId: civ.id, row: civ.originRow, col: civ.originCol });
+    }
   }
 
   const decayCandidates = new Map<number, Array<{ row: number; col: number; severity: number }>>();
@@ -1411,6 +1438,7 @@ export function step(
                     }
                     neighborTile.lastChangedTick = world.tick;
                     changed.push({ row: r, col: c });
+                    events.push({ kind: 'conquest', row: r, col: c, attackerId: civ.id, defenderId: otherCiv.id });
                   }
                 }
               }
@@ -1513,15 +1541,28 @@ export function step(
     applyCatastrophe(world, biomes, elevation, changed, biomeChanges, events);
   }
 
-  if (livingCivCount(world) < SIM.maxLivingCivs) {
+  // Births arrive as visible migrations: the spawn roll starts a band
+  // walking; the civ exists only when it settles.
+  if (livingCivCount(world) < SIM.maxLivingCivs && world.pendingSettlements.length < 2) {
     if (Math.random() < SIM.baseCivSpawnChance) {
       const spot = pickCivSpawnTile(world, biomes);
       if (spot) {
-        const newCiv = spawnCiv(world, spot.row, spot.col);
-        changed.push(spot);
-        events.push({ kind: 'civ_born', civId: newCiv.id });
+        world.pendingSettlements.push({ row: spot.row, col: spot.col, ticksLeft: SIM.migrationTicks });
+        events.push({ kind: 'migration', row: spot.row, col: spot.col });
       }
     }
+  }
+  for (let i = world.pendingSettlements.length - 1; i >= 0; i--) {
+    const p = world.pendingSettlements[i];
+    p.ticksLeft--;
+    if (p.ticksLeft > 0) continue;
+    world.pendingSettlements.splice(i, 1);
+    const t = world.tiles[p.row][p.col];
+    if (livingCivCount(world) >= SIM.maxLivingCivs) continue;
+    if (biomes[p.row][p.col] === 'water' || (t.state !== 'wild' && t.state !== 'ruin')) continue;
+    const newCiv = spawnCiv(world, p.row, p.col);
+    changed.push({ row: p.row, col: p.col });
+    events.push({ kind: 'civ_born', civId: newCiv.id });
   }
 
   return { changes: changed, events, biomeChanges };

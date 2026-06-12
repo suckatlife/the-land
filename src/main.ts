@@ -1,7 +1,7 @@
 import { Application, Assets, Container, Graphics, MeshPlane, RenderTexture, Sprite, Text, TextStyle, Texture } from 'pixi.js';
 import { generateBiomeMap, generateRivers, makeTerrainSampler, classify, BIOME_COLORS, SEA_LEVEL } from './biomes';
 import { drawTile, drawStateOverlayPersistent, redrawOverlay, redrawBiomeTile, lerpColor, gridToScreen, rgbToHsl, hslToRgb } from './iso';
-import { createSimWorld, step, tileOverlayColor, seedInitialCivs, applyCatastrophe, CATASTROPHE, CITY, nearestCityDist, type SimWorld, type Civ, type SimEvent, type Era, type TileOverlay, type BiomeChange, type CatastropheType } from './sim';
+import { createSimWorld, step, tileOverlayColor, seedInitialCivs, applyCatastrophe, CATASTROPHE, CITY, nearestCityDist, type SimWorld, type Civ, type CivCity, type SimEvent, type Era, type TileOverlay, type BiomeChange, type CatastropheType } from './sim';
 import * as audio from './audio';
 import { createAtmosphere, ATMOS } from './atmosphere';
 
@@ -222,6 +222,16 @@ const OMEN_LINES: Record<string, Record<EraBucket, string[]>[]> = {
   ],
 };
 
+// What an age calls its great work.
+const WONDER_TITLES: Record<Era, (place: string) => string> = {
+  neolithic:  (p) => `the Standing Stones of ${p}`,
+  classical:  (p) => `the Lighthouse of ${p}`,
+  medieval:   (p) => `the Cathedral of ${p}`,
+  industrial: (p) => `the Great Engine of ${p}`,
+  modern:     (p) => `the Spire of ${p}`,
+  post:       (p) => `the Beacon of ${p}`,
+};
+
 function narrateEvent(ev: SimEvent, world: SimWorld): string {
   switch (ev.kind) {
     case 'civ_born': {
@@ -323,6 +333,28 @@ function narrateEvent(ev: SimEvent, world: SimWorld): string {
       return pick([
         `The last ships of ${civ.name} put to sea.`,
         `${civ.name} sends its children seaward while it still can.`,
+      ]);
+    }
+    case 'conquest':
+      // Individual tile flips aren't narrated; the war-heat aggregator
+      // (below) speaks when a border is genuinely contested.
+      return '';
+    case 'migration': {
+      const bucket = dominantEraBucket(world);
+      const lines: Record<EraBucket, string[]> = {
+        ancient: ['A band crosses the steppe, looking for water.', 'Smoke from cookfires moves through the wilds, a little further each night.'],
+        middle:  ['Wagons move through the empty country, looking for ground.', 'A landless people walks the margins, asking after soil.'],
+        late:    ['Settlers move through the empty quarter.', 'A convoy crosses the wastes, maps out of date.'],
+      };
+      return pick(lines[bucket]);
+    }
+    case 'wonder_built': {
+      const civ = world.civs.get(ev.civId);
+      if (!civ) return '';
+      const title = WONDER_TITLES[civ.era](civ.cities[0]?.name ?? civ.name);
+      return pick([
+        `${civ.name} raises ${title}. It can be seen from the sea.`,
+        `${title} is finished. ${civ.name} did not build it quickly.`,
       ]);
     }
     case 'refuge_founded': {
@@ -525,6 +557,13 @@ const atmos = createAtmosphere();
 const riverGfx = new Graphics();
 const sceneryWaterGfx = new Graphics(); // beyond-the-grid sea (under glitter)
 const sceneryLandGfx = new Graphics();  // beyond-the-grid land (over glitter)
+const roadsGfx = new Graphics();        // paths between cities, era-styled
+const conflictGfx = new Graphics();     // war flickers at contested tiles
+const wonderGfx = new Graphics();       // monuments (persist as ruins)
+const boatsGfx = new Graphics();        // sea craft, fishing dots, whales
+const nomadGfx = new Graphics();        // migrating bands before settlement
+const festivalGfx = new Graphics();     // night festival glow
+festivalGfx.blendMode = 'add';
 const smokeLayer = new Container();
 const cityLightsGfx = new Graphics();
 cityLightsGfx.blendMode = 'add';
@@ -546,12 +585,20 @@ world.addChild(sceneryLandGfx);
 // Rivers run over the terrain, under settlement tints.
 world.addChild(riverGfx);
 world.addChild(simLayer);
+// Roads over the tints (still under scars and buildings).
+world.addChild(roadsGfx);
 // Scars sit above civ tints (catastrophes hit settled land) but below buildings.
 world.addChild(atmos.scarLayer);
 // Wind shimmer brightens the ground, masked to land below.
 world.addChild(atmos.shimmerLayer);
 world.addChild(buildingLayer);
+// Conflict flickers and monuments stand among the buildings.
+world.addChild(conflictGfx);
+world.addChild(wonderGfx);
 world.addChild(expeditionLayer);
+// Nomad bands and sea craft travel the surface.
+world.addChild(nomadGfx);
+world.addChild(boatsGfx);
 // Directional land light sits under the cloud shadows (clouds block sun).
 world.addChild(atmos.landLightLayer);
 // City smoke rises beneath the clouds.
@@ -560,6 +607,9 @@ world.addChild(smokeLayer);
 world.addChild(atmos.cloudShadowLayer);
 // City lights pierce the night (and sit above cloud shadow).
 world.addChild(cityLightsGfx);
+// Festival glow joins the lights; storms ride above everything groundborne.
+world.addChild(festivalGfx);
+world.addChild(atmos.stormLayer);
 // Bird flocks cross at dawn and dusk.
 world.addChild(atmos.birdLayer);
 world.addChild(cityMarkersContainer);
@@ -1025,6 +1075,9 @@ function drawScenery() {
         .stroke({ color: 0x000000, alpha: 0.08, width: 1 });
     }
   }
+  // Static once drawn — collapse the ~20k polys to one cached quad.
+  sceneryLandGfx.cacheAsTexture?.(false);
+  sceneryLandGfx.cacheAsTexture?.(true);
 }
 
 // Rivers: polylines from the hills to the sea, tapering downstream, tinted
@@ -1062,6 +1115,11 @@ function drawBiomes() {
     }
   }
   drawRivers();
+  // The biome layer is ~9k tile Graphics + 20k scenery-water polys that
+  // almost never change — cache the whole subtree to one texture. While a
+  // flood/quake animates tiles, the cache re-renders per frame (rare).
+  biomeLayer.cacheAsTexture?.(false);
+  biomeLayer.cacheAsTexture?.(true);
 }
 
 function refreshBiomeTile(row: number, col: number) {
@@ -1328,8 +1386,14 @@ function rebuildBuildingSprites() {
   }
 }
 
+let expWasEmpty = true;
 function drawExpeditions() {
   const g = expeditionGfx;
+  if (simWorld.expeditions.length === 0) {
+    if (!expWasEmpty) { g.clear(); expWasEmpty = true; }
+    return;
+  }
+  expWasEmpty = false;
   g.clear();
   if (simWorld.expeditions.length > 0) {
     (window as any).__lastExpRender = simWorld.tick;
@@ -1547,6 +1611,473 @@ function updateSmoke(dt: number) {
     p.sp.scale.set(0.12 + u * 0.5);
     p.sp.alpha = p.emitter.alpha * Math.sin(Math.PI * u);
   }
+}
+
+// --- Story surfaces: roads, wars, boats, wonders, ghosts, festivals --------
+
+// Roads: each city connects to its nearest older sibling — a growing tree.
+// Paths are A* over land, cached by endpoints (terrain is near-static), so
+// the periodic rebuild is usually pure drawing.
+const ROAD_STYLE: Record<Era, { color: number; width: number; alpha: number }> = {
+  neolithic:  { color: 0x8a7a5e, width: 0.8, alpha: 0.18 },
+  classical:  { color: 0xa08c66, width: 1.0, alpha: 0.30 },
+  medieval:   { color: 0xa08c66, width: 1.1, alpha: 0.34 },
+  industrial: { color: 0x4f4a44, width: 1.4, alpha: 0.48 },
+  modern:     { color: 0x63646a, width: 1.7, alpha: 0.50 },
+  post:       { color: 0x9a8fd0, width: 1.2, alpha: 0.50 },
+};
+const roadPathCache = new Map<string, Array<{ row: number; col: number }> | null>();
+
+function findLandPath(r1: number, c1: number, r2: number, c2: number): Array<{ row: number; col: number }> | null {
+  const key = (r: number, c: number) => r * GRID_SIZE + c;
+  const open: Array<{ r: number; c: number; f: number }> = [{ r: r1, c: c1, f: 0 }];
+  const gScore = new Map<number, number>([[key(r1, c1), 0]]);
+  const cameFrom = new Map<number, number>();
+  let explored = 0;
+  while (open.length > 0 && explored++ < 3000) {
+    let bi = 0;
+    for (let i = 1; i < open.length; i++) if (open[i].f < open[bi].f) bi = i;
+    const cur = open.splice(bi, 1)[0];
+    if (cur.r === r2 && cur.c === c2) {
+      const path: Array<{ row: number; col: number }> = [];
+      let k: number | undefined = key(cur.r, cur.c);
+      while (k !== undefined) {
+        path.unshift({ row: (k / GRID_SIZE) | 0, col: k % GRID_SIZE });
+        k = cameFrom.get(k);
+      }
+      return path;
+    }
+    const g0 = gScore.get(key(cur.r, cur.c))!;
+    for (const [dr, dc] of [[-1, 0], [1, 0], [0, -1], [0, 1]] as const) {
+      const nr = cur.r + dr, nc = cur.c + dc;
+      if (nr < 0 || nr >= GRID_SIZE || nc < 0 || nc >= GRID_SIZE) continue;
+      if (biomeMap[nr][nc] === 'water') continue;
+      const nk = key(nr, nc);
+      const g = g0 + 1;
+      if (g >= (gScore.get(nk) ?? Infinity)) continue;
+      gScore.set(nk, g);
+      cameFrom.set(nk, key(cur.r, cur.c));
+      open.push({ r: nr, c: nc, f: g + (Math.abs(nr - r2) + Math.abs(nc - c2)) * 1.01 });
+    }
+  }
+  return null;
+}
+
+function roadBetween(a: CivCity, b: CivCity): Array<{ row: number; col: number }> | null {
+  const ck = `${a.row},${a.col}-${b.row},${b.col}`;
+  if (!roadPathCache.has(ck)) roadPathCache.set(ck, findLandPath(a.row, a.col, b.row, b.col));
+  return roadPathCache.get(ck)!;
+}
+
+function rebuildRoads() {
+  roadsGfx.clear();
+  for (const civ of simWorld.civs.values()) {
+    if (civ.phase === 'dead' || civ.cities.length < 2) continue;
+    const style = ROAD_STYLE[civ.era];
+    const ordered = [...civ.cities].sort((a, b) => a.foundedTick - b.foundedTick);
+    for (let i = 1; i < ordered.length; i++) {
+      let nearest = 0, nd = Infinity;
+      for (let j = 0; j < i; j++) {
+        const d = Math.hypot(ordered[i].row - ordered[j].row, ordered[i].col - ordered[j].col);
+        if (d < nd) { nd = d; nearest = j; }
+      }
+      const path = roadBetween(ordered[i], ordered[nearest]);
+      if (!path || path.length < 2) continue;
+      const p0 = gridToScreen(path[0].col, path[0].row);
+      roadsGfx.moveTo(p0.x, p0.y);
+      for (let k = 1; k < path.length; k++) {
+        const p = gridToScreen(path[k].col, path[k].row);
+        roadsGfx.lineTo(p.x, p.y);
+      }
+      roadsGfx.stroke({ color: style.color, alpha: style.alpha, width: style.width, join: 'round', cap: 'round' });
+    }
+  }
+}
+
+// War heat: conquest tile-flips aggregate per civ-pair; sustained contact is
+// narrated once, and quiet afterwards is narrated too.
+const warHeat = new Map<string, { a: number; b: number; count: number; lastTs: number; narratedAt: number }>();
+interface ConflictFlash { x: number; y: number; age: number }
+const conflictFlashes: ConflictFlash[] = [];
+
+function noteConquest(ev: { row: number; col: number; attackerId: number; defenderId: number }) {
+  const [a, b] = ev.attackerId < ev.defenderId
+    ? [ev.attackerId, ev.defenderId] : [ev.defenderId, ev.attackerId];
+  const k = `${a}:${b}`;
+  const now = Date.now();
+  let w = warHeat.get(k);
+  if (!w) { w = { a, b, count: 0, lastTs: now, narratedAt: 0 }; warHeat.set(k, w); }
+  w.count++;
+  w.lastTs = now;
+  if (w.count >= 8 && now - w.narratedAt > 90000) {
+    w.narratedAt = now;
+    w.count = 0;
+    const A = simWorld.civs.get(a), B = simWorld.civs.get(b);
+    if (A && B) {
+      eventLog.unshift({
+        text: colorizeCivNames(pick([
+          `${A.name} and ${B.name} contest their border.`,
+          `There is burning on the line between ${A.name} and ${B.name}.`,
+        ])),
+        ts: now,
+      });
+    }
+  }
+  if (conflictFlashes.length < 20) {
+    const { x, y } = gridToScreen(ev.col, ev.row);
+    conflictFlashes.push({ x, y, age: 0 });
+  }
+}
+
+function checkWarQuiet() {
+  const now = Date.now();
+  for (const [k, w] of warHeat) {
+    if (w.narratedAt > 0 && now - w.lastTs > 45000) {
+      const A = simWorld.civs.get(w.a), B = simWorld.civs.get(w.b);
+      if (A && B && A.phase !== 'dead' && B.phase !== 'dead') {
+        eventLog.unshift({
+          text: colorizeCivNames(`The border between ${A.name} and ${B.name} falls quiet.`),
+          ts: now,
+        });
+      }
+      warHeat.delete(k);
+    } else if (w.narratedAt === 0 && now - w.lastTs > 60000) {
+      warHeat.delete(k);
+    }
+  }
+}
+
+let conflictWasEmpty = true;
+function updateConflictFlashes(dt: number) {
+  if (conflictFlashes.length === 0) {
+    if (!conflictWasEmpty) { conflictGfx.clear(); conflictWasEmpty = true; }
+    return;
+  }
+  conflictWasEmpty = false;
+  conflictGfx.clear();
+  for (let i = conflictFlashes.length - 1; i >= 0; i--) {
+    const f = conflictFlashes[i];
+    f.age += dt;
+    const u = f.age / 0.8;
+    if (u >= 1) { conflictFlashes.splice(i, 1); continue; }
+    conflictGfx.circle(f.x, f.y, 1.6 + u * 2).fill({ color: 0xffa050, alpha: (1 - u) * 0.7 });
+    conflictGfx.circle(f.x, f.y - u * 5, 2.2).fill({ color: 0x5a544c, alpha: (1 - u) * 0.3 });
+  }
+}
+
+// Wonders: drawn as small spires; dead civs' wonders dim to ruin tone.
+function rebuildWonders() {
+  wonderGfx.clear();
+  for (const civ of simWorld.civs.values()) {
+    if (!civ.wonder) continue;
+    const { x, y } = gridToScreen(civ.wonder.col, civ.wonder.row);
+    const alive = civ.phase !== 'dead';
+    const body = alive ? 0xe9e2d2 : 0x6f695f;
+    const edge = alive ? 0x9a9282 : 0x55504a;
+    wonderGfx.poly([x - 3, y, x + 3, y, x + 1, y - 24, x - 1, y - 24]).fill({ color: body, alpha: 0.95 });
+    wonderGfx.poly([x - 1, y - 24, x + 1, y - 24, x, y - 30]).fill({ color: edge, alpha: 0.95 });
+    wonderGfx.ellipse(x, y + 1, 5, 2.2).fill({ color: edge, alpha: 0.5 });
+  }
+}
+
+// Boats, fishing dots, whales — small life on the water.
+interface Boat { pts: Array<{ x: number; y: number }>; idx: number; speed: number; color: number }
+const boats: Boat[] = [];
+const waterRouteCache = new Map<string, Array<{ row: number; col: number }> | null>();
+let fishSpots: Array<{ x: number; y: number }> = [];
+let whale: { x: number; y: number; t: number } | null = null;
+
+function findWaterPath(r1: number, c1: number, r2: number, c2: number): Array<{ row: number; col: number }> | null {
+  // Same A* as roads, walkable = water.
+  const key = (r: number, c: number) => r * GRID_SIZE + c;
+  const open: Array<{ r: number; c: number; f: number }> = [{ r: r1, c: c1, f: 0 }];
+  const gScore = new Map<number, number>([[key(r1, c1), 0]]);
+  const cameFrom = new Map<number, number>();
+  let explored = 0;
+  while (open.length > 0 && explored++ < 5000) {
+    let bi = 0;
+    for (let i = 1; i < open.length; i++) if (open[i].f < open[bi].f) bi = i;
+    const cur = open.splice(bi, 1)[0];
+    if (cur.r === r2 && cur.c === c2) {
+      const path: Array<{ row: number; col: number }> = [];
+      let k: number | undefined = key(cur.r, cur.c);
+      while (k !== undefined) {
+        path.unshift({ row: (k / GRID_SIZE) | 0, col: k % GRID_SIZE });
+        k = cameFrom.get(k);
+      }
+      return path;
+    }
+    const g0 = gScore.get(key(cur.r, cur.c))!;
+    for (const [dr, dc] of [[-1, 0], [1, 0], [0, -1], [0, 1]] as const) {
+      const nr = cur.r + dr, nc = cur.c + dc;
+      if (nr < 0 || nr >= GRID_SIZE || nc < 0 || nc >= GRID_SIZE) continue;
+      if (biomeMap[nr][nc] !== 'water') continue;
+      const nk = key(nr, nc);
+      const g = g0 + 1;
+      if (g >= (gScore.get(nk) ?? Infinity)) continue;
+      gScore.set(nk, g);
+      cameFrom.set(nk, key(cur.r, cur.c));
+      open.push({ r: nr, c: nc, f: g + (Math.abs(nr - r2) + Math.abs(nc - c2)) * 1.01 });
+    }
+  }
+  return null;
+}
+
+function coastalWaterNear(city: CivCity): { row: number; col: number } | null {
+  for (let dr = -2; dr <= 2; dr++) {
+    for (let dc = -2; dc <= 2; dc++) {
+      const r = city.row + dr, c = city.col + dc;
+      if (r < 0 || r >= GRID_SIZE || c < 0 || c >= GRID_SIZE) continue;
+      if (biomeMap[r][c] === 'water') return { row: r, col: c };
+    }
+  }
+  return null;
+}
+
+function maybeSpawnBoats() {
+  if (boats.length >= 6) return;
+  for (const civ of simWorld.civs.values()) {
+    if (civ.phase === 'dead' || civ.cities.length < 2) continue;
+    if (boats.filter((b) => b.color === civ.color).length >= 2) continue;
+    if (Math.random() > 0.25) continue;
+    const coastal = civ.cities
+      .map((city) => ({ city, w: coastalWaterNear(city) }))
+      .filter((e) => e.w);
+    if (coastal.length < 2) continue;
+    const i = Math.floor(Math.random() * coastal.length);
+    let j = Math.floor(Math.random() * (coastal.length - 1));
+    if (j >= i) j++;
+    const a = coastal[i].w!, b = coastal[j].w!;
+    const ck = `${a.row},${a.col}-${b.row},${b.col}`;
+    if (!waterRouteCache.has(ck)) waterRouteCache.set(ck, findWaterPath(a.row, a.col, b.row, b.col));
+    const route = waterRouteCache.get(ck);
+    if (!route || route.length < 6) continue;
+    boats.push({
+      pts: route.map((p) => gridToScreen(p.col, p.row)),
+      idx: 0,
+      speed: 1.6 + Math.random() * 0.8, // path points per second
+      color: civ.color,
+    });
+    if (boats.length >= 6) return;
+  }
+}
+
+function rebuildFishSpots() {
+  fishSpots = [];
+  for (const civ of simWorld.civs.values()) {
+    if (civ.phase === 'dead') continue;
+    for (const city of civ.cities) {
+      if (city.prominence < 0.6 || fishSpots.length >= 12) continue;
+      const w = coastalWaterNear(city);
+      if (w) fishSpots.push(gridToScreen(w.col, w.row));
+    }
+  }
+}
+
+function updateWater(dt: number, nowSec: number) {
+  const empty = boats.length === 0 && fishSpots.length === 0 && !whale;
+  if (empty) { boatsGfx.clear(); return; }
+  boatsGfx.clear();
+  for (let i = boats.length - 1; i >= 0; i--) {
+    const b = boats[i];
+    b.idx += b.speed * dt;
+    if (b.idx >= b.pts.length - 1) { boats.splice(i, 1); continue; }
+    const k = Math.floor(b.idx), u = b.idx - k;
+    const x = b.pts[k].x + (b.pts[k + 1].x - b.pts[k].x) * u;
+    const y = b.pts[k].y + (b.pts[k + 1].y - b.pts[k].y) * u;
+    boatsGfx.circle(x, y, 1.8).fill({ color: 0x3c352c, alpha: 0.85 });
+    boatsGfx.circle(x, y, 0.9).fill({ color: b.color, alpha: 0.9 });
+    if (k > 1) boatsGfx.circle(b.pts[k - 1].x, b.pts[k - 1].y, 1.2).fill({ color: 0xffffff, alpha: 0.18 });
+  }
+  for (let i = 0; i < fishSpots.length; i++) {
+    const s = fishSpots[i];
+    boatsGfx.circle(s.x + Math.sin(nowSec * 0.7 + i * 2.1) * 2, s.y + Math.sin(nowSec * 1.9 + i) * 0.8, 1.1)
+      .fill({ color: 0x4a4338, alpha: 0.55 });
+  }
+  if (whale) {
+    whale.t += dt;
+    const u = whale.t / 9;
+    if (u >= 1) { whale = null; }
+    else {
+      const env = Math.sin(Math.PI * u);
+      boatsGfx.ellipse(whale.x, whale.y, 5.5, 1.9).fill({ color: 0x32424e, alpha: env * 0.6 });
+      if (u > 0.2 && u < 0.5) {
+        const su = (u - 0.2) / 0.3;
+        boatsGfx.circle(whale.x + 3, whale.y - 2 - su * 5, 1.0).fill({ color: 0xeef4f8, alpha: (1 - su) * 0.6 });
+        boatsGfx.circle(whale.x + 3.5, whale.y - 3 - su * 8, 0.7).fill({ color: 0xeef4f8, alpha: (1 - su) * 0.4 });
+      }
+    }
+  }
+}
+
+function maybeWhale(dt: number) {
+  if (whale || Math.random() > dt / 300) return;
+  for (let tries = 0; tries < 20; tries++) {
+    const r = Math.floor(Math.random() * GRID_SIZE), c = Math.floor(Math.random() * GRID_SIZE);
+    if (biomeMap[r][c] !== 'water' || elevationMap[r][c] > SEA_LEVEL - 0.12) continue;
+    const { x, y } = gridToScreen(c, r);
+    whale = { x, y, t: 0 };
+    triggerPing(r, c, 0xdfeaf2);
+    return;
+  }
+}
+
+// Nomad bands: pending settlements walk in from the margins.
+function updateNomads(nowSec: number) {
+  if (simWorld.pendingSettlements.length === 0) { nomadGfx.clear(); return; }
+  nomadGfx.clear();
+  for (const p of simWorld.pendingSettlements) {
+    const f = 1 - p.ticksLeft / SIM_MIGRATION_TICKS;
+    const { x: tx, y: ty } = gridToScreen(p.col, p.row);
+    const phase = (p.row * 7 + p.col * 13) % 100;
+    const dist = 80 * (1 - f);
+    const ang = phase + f * 2.0;
+    const cx = tx + Math.cos(ang) * dist;
+    const cy = ty + Math.sin(ang) * dist * 0.5;
+    for (let i = 0; i < 5; i++) {
+      const ox = Math.sin(phase + i * 2.3) * 4 + Math.sin(nowSec * 1.1 + i) * 1.2;
+      const oy = Math.cos(phase + i * 1.7) * 2.4 + Math.sin(nowSec * 1.4 + i * 0.7) * 0.8;
+      nomadGfx.circle(cx + ox, cy + oy, 1.2).fill({ color: 0x5a5044, alpha: 0.6 });
+    }
+  }
+}
+const SIM_MIGRATION_TICKS = 900; // mirror of SIM.migrationTicks for the renderer
+
+// Ghost echoes: the land remembers, briefly, at night.
+const ghostText = new Text({
+  text: '',
+  style: new TextStyle({
+    fontFamily: LABEL.fontFamily, fontSize: 12, fontStyle: 'italic',
+    fill: 0xcfd8e8, stroke: { color: 0x1a2028, width: 2, join: 'round' },
+  }),
+});
+ghostText.anchor.set(0.5);
+ghostText.alpha = 0;
+labelLayer.addChild(ghostText);
+let ghostStart = 0;
+let ghostUntil = 0;
+let ghostBaseY = 0;
+
+function maybeGhost(dt: number, nightness: number) {
+  const now = Date.now();
+  if (ghostUntil > now) {
+    const u = (now - ghostStart) / (ghostUntil - ghostStart);
+    ghostText.alpha = Math.sin(Math.PI * u) * 0.30;
+    ghostText.y = ghostBaseY - u * 6;
+    return;
+  }
+  ghostText.alpha = 0;
+  if (nightness < 0.7 || Math.random() > dt / 240 || simWorld.nameMemory.length === 0) return;
+  for (let tries = 0; tries < 6; tries++) {
+    const mem = simWorld.nameMemory[Math.floor(Math.random() * simWorld.nameMemory.length)];
+    let nearLiving = false;
+    for (const civ of simWorld.civs.values()) {
+      if (civ.phase === 'dead') continue;
+      if (Math.hypot(civ.originRow - mem.row, civ.originCol - mem.col) < 12) { nearLiving = true; break; }
+    }
+    if (nearLiving) continue;
+    let ruins = 0;
+    for (let dr = -3; dr <= 3; dr++) {
+      for (let dc = -3; dc <= 3; dc++) {
+        const r = mem.row + dr, c = mem.col + dc;
+        if (r < 0 || r >= GRID_SIZE || c < 0 || c >= GRID_SIZE) continue;
+        if (simWorld.tiles[r][c].state === 'ruin') ruins++;
+      }
+    }
+    if (ruins < 2) continue;
+    const { x, y } = gridToScreen(mem.col, mem.row);
+    ghostText.text = mem.name;
+    ghostText.x = x;
+    ghostBaseY = y - 6;
+    ghostStart = now;
+    ghostUntil = now + 12000;
+    if (Math.random() < 0.18) {
+      eventLog.unshift({ text: `Shepherds at the ruins of ${mem.name} say the stones hum.`, ts: now });
+    }
+    return;
+  }
+}
+
+// Festivals: a city reaching full prominence burns its lamps all night, once.
+const festivalDone = new Set<string>();
+let pendingFestivals: Array<{ x: number; y: number; name: string }> = [];
+let activeFestival: { x: number; y: number; start: number; until: number } | null = null;
+
+function queueFestivals() {
+  for (const civ of simWorld.civs.values()) {
+    if (civ.phase === 'dead') continue;
+    for (const city of civ.cities) {
+      if (city.prominence < 0.995) continue;
+      const k = `${city.row},${city.col}`;
+      if (festivalDone.has(k)) continue;
+      festivalDone.add(k);
+      const { x, y } = gridToScreen(city.col, city.row);
+      pendingFestivals.push({ x, y, name: city.name });
+    }
+  }
+}
+
+function updateFestival(nightness: number) {
+  const now = Date.now();
+  if (!activeFestival && pendingFestivals.length > 0 && nightness > 0.5) {
+    const f = pendingFestivals.shift()!;
+    activeFestival = { x: f.x, y: f.y, start: now, until: now + 45000 };
+    eventLog.unshift({ text: `In ${f.name}, the lamps burn all night.`, ts: now });
+  }
+  if (!activeFestival) { festivalGfx.clear(); return; }
+  if (now > activeFestival.until) { activeFestival = null; festivalGfx.clear(); return; }
+  const u = (now - activeFestival.start) / (activeFestival.until - activeFestival.start);
+  const env = Math.sin(Math.PI * u);
+  const pulse = 1 + 0.25 * Math.sin(now / 280);
+  festivalGfx.clear();
+  festivalGfx.circle(activeFestival.x, activeFestival.y, 13 * pulse).fill({ color: 0xffc878, alpha: 0.20 * env * nightness });
+  festivalGfx.circle(activeFestival.x, activeFestival.y, 6 * pulse).fill({ color: 0xffe2b0, alpha: 0.28 * env * nightness });
+}
+
+// Chronicle: a line for whoever just tuned in, every ~5 minutes of sim time.
+let lastChronicleTick = 0;
+
+function maybeChronicle() {
+  if (simWorld.tick - lastChronicleTick < 9000 || simWorld.tick < 3000) return;
+  lastChronicleTick = simWorld.tick;
+  const living: Array<{ civ: Civ; count: number }> = [];
+  let total = 0;
+  for (const civ of simWorld.civs.values()) {
+    if (civ.phase === 'dead') continue;
+    const n = civStats.tileCounts.get(civ.id) || 0;
+    living.push({ civ, count: n });
+    total += n;
+  }
+  if (living.length === 0 || total === 0) return;
+  living.sort((a, b) => b.count - a.count);
+  const leader = living[0].civ;
+  const share = living[0].count / total;
+  const text = living.length === 1
+    ? `${leader.name} is alone in the world.`
+    : share > 0.5
+      ? `An age of ${leader.name}: half the known world answers to it.`
+      : `The age continues: ${living.length} nations share the land, ${leader.name} first among them.`;
+  eventLog.unshift({ text: colorizeCivNames(text), ts: Date.now() });
+}
+
+// Reset for everything above (called wherever the world is rebuilt).
+function resetStorySurfaces() {
+  roadPathCache.clear();
+  waterRouteCache.clear();
+  warHeat.clear();
+  conflictFlashes.length = 0;
+  boats.length = 0;
+  fishSpots = [];
+  whale = null;
+  ghostUntil = 0;
+  ghostText.alpha = 0;
+  festivalDone.clear();
+  pendingFestivals = [];
+  activeFestival = null;
+  lastChronicleTick = 0;
+  rebuildRoads();
+  rebuildWonders();
+  rebuildFishSpots();
 }
 
 function drawCityMarkers() {
@@ -1805,6 +2336,7 @@ function resetWorld(newSeed: string) {
   civLastEra.clear();
   eventLog.length = 0;
   atmos.clearScars();
+  resetStorySurfaces();
   for (const lbl of civLabels.values()) { labelLayer.removeChild(lbl.text); lbl.text.destroy(); }
   civLabels.clear();
   clearSimLayer();
@@ -1834,6 +2366,7 @@ function resetSimOnly() {
   civLastEra.clear();
   eventLog.length = 0;
   atmos.clearScars();
+  resetStorySurfaces();
   for (const lbl of civLabels.values()) { labelLayer.removeChild(lbl.text); lbl.text.destroy(); }
   civLabels.clear();
   clearSimLayer();
@@ -1864,6 +2397,7 @@ drawCityMarkers();
 rebuildCivIndex();
 rebuildCityLights();
 rebuildSmokeEmitters();
+resetStorySurfaces();
 
 // --- Tick loop ---
 let accumulator = 0;
@@ -1947,6 +2481,11 @@ app.ticker.add((ticker) => {
     } else if (ev.kind === 'breakaway') {
       const civ = simWorld.civs.get(ev.newCivId);
       if (civ) triggerPing(civ.originRow, civ.originCol, civ.color);
+    } else if (ev.kind === 'conquest') {
+      noteConquest(ev);
+    } else if (ev.kind === 'wonder_built') {
+      rebuildWonders();
+      triggerPing(ev.row, ev.col, 0xfff0d0);
     }
   }
   updateAtmosphere(ticker.deltaMS);
@@ -1966,7 +2505,16 @@ app.ticker.add((ticker) => {
   const n = L.nightness;
   cityLightsGfx.alpha = LIGHTS.maxAlpha * (n * n * (3 - 2 * n));
   riverGfx.tint = lerpColor(0xffffff, L.color, 0.35);
-  updateSmoke(ticker.deltaMS / 1000);
+  const dtSec = ticker.deltaMS / 1000;
+  const nowSec = performance.now() / 1000;
+  updateSmoke(dtSec);
+  updateConflictFlashes(dtSec);
+  updateWater(dtSec, nowSec);
+  maybeWhale(dtSec);
+  updateNomads(nowSec);
+  maybeGhost(dtSec, n);
+  updateFestival(n);
+  maybeChronicle();
   // The camera breathes — whole-stage lens scale, leaning in with dread.
   breathT += ticker.deltaMS / 1000;
   app.stage.scale.set(
@@ -1995,6 +2543,12 @@ app.ticker.add((ticker) => {
     drawCityMarkers();
     rebuildCityLights();
     rebuildSmokeEmitters();
+    rebuildRoads();
+    rebuildWonders();
+    rebuildFishSpots();
+    maybeSpawnBoats();
+    queueFestivals();
+    checkWarQuiet();
   }
   // Animate tile color/alpha toward targets.
   const EASE = 0.15; // higher = faster transitions
@@ -2049,6 +2603,8 @@ app.ticker.add((ticker) => {
     }
   }
   for (const key of biomeDone) animatingBiomeTiles.delete(key);
+  // Re-render the cached biome texture while tiles are easing (floods).
+  if (animatingBiomeTiles.size > 0 || biomeDone.length > 0) (biomeLayer as any).updateCacheTexture?.();
 
   // Animate building sprite alpha (density), mid-floor alpha (era), and roof Y (era).
   const ROOF_EASE = 0.10;     // per-frame ease for roof Y slide on era change
@@ -2308,6 +2864,7 @@ document.getElementById('skip')!.addEventListener('click', () => {
   // Scars from skipped ticks weren't rendered; drop any stale ones.
   atmos.clearScars();
   drawBiomes();
+  resetStorySurfaces();
   fadedDeadCivs.clear();
   for (const civ of simWorld.civs.values()) {
     if (civ.phase === 'dead') fadedDeadCivs.add(civ.id);

@@ -161,6 +161,16 @@ export const ATMOS = {
     dreadLean: 0.015,
   },
 
+  // Traveling storms: one cell at a time crosses the world on the wind —
+  // dark cloud cluster, rain streaks, lightning flickers at night.
+  storm: {
+    meanSec: 420,
+    durationSec: 100,
+    alpha: 0.34,        // cloud-cluster darkness
+    rainAlpha: 0.22,
+    lightningMeanSec: 7, // while storming at night
+  },
+
   // Rare celestial events — rewards for the long-session viewer. Mean
   // intervals are rolled per-second while conditions hold; each event has a
   // cooldown so they never cluster. Trigger manually for tuning with
@@ -427,6 +437,7 @@ export interface Atmosphere {
   starLayer: Container;
   shimmerLayer: Container;
   birdLayer: Container;
+  stormLayer: Container;
   cometLayer: Container;
   auroraLayer: Container;
   setWaterMask(mask: Container | null): void; // restricts the glitter to water
@@ -717,6 +728,87 @@ export function createAtmosphere(): Atmosphere {
   }
   function cometGfx_clear() { cometLayer.clear(); }
 
+  // Traveling storm: a heavy, rarer drifter with rain and lightning.
+  const stormLayer = new Container();
+  const stormClouds: Sprite[] = [];
+  const stormCloudOffsets: Array<{ x: number; y: number; s: number }> = [];
+  for (let i = 0; i < 5; i++) {
+    const sp = new Sprite(cloudTextures[i % cloudTextures.length]);
+    sp.anchor.set(0.5);
+    sp.tint = 0x474c55;
+    sp.blendMode = 'multiply';
+    sp.alpha = 0;
+    stormLayer.addChild(sp);
+    stormClouds.push(sp);
+    stormCloudOffsets.push({
+      x: (weatherRand() - 0.5) * 240,
+      y: (weatherRand() - 0.5) * 110,
+      s: 2.2 + weatherRand() * 1.6,
+    });
+  }
+  const rainGfx = new Graphics();
+  stormLayer.addChild(rainGfx);
+  const lightningSprite = new Sprite(cloudTextures[0]);
+  lightningSprite.anchor.set(0.5);
+  lightningSprite.tint = 0xeef2ff;
+  lightningSprite.blendMode = 'add';
+  lightningSprite.alpha = 0;
+  stormLayer.addChild(lightningSprite);
+  let storm: { x: number; y: number; t: number } | null = null;
+  let lightningFlash = 0;
+
+  function updateStorm(dt: number, wx: number, wy: number, L: CelestialLight) {
+    const S = ATMOS.storm;
+    if (!storm) {
+      if (Math.random() < dt / S.meanSec) {
+        // Enter upwind so the cell crosses the world.
+        const fromX = wx >= 0 ? DRIFT.minX - 200 : DRIFT.maxX + 200;
+        storm = { x: fromX, y: 200 + weatherRand() * 1100, t: 0 };
+      } else {
+        return;
+      }
+    }
+    storm.t += dt;
+    const u = storm.t / S.durationSec;
+    if (u >= 1) {
+      storm = null;
+      for (const sp of stormClouds) sp.alpha = 0;
+      rainGfx.clear();
+      lightningSprite.alpha = 0;
+      return;
+    }
+    const speed = Math.max(14, Math.hypot(wx, wy) * 1.6);
+    const dirX = wx >= 0 ? 1 : -1;
+    storm.x += dirX * speed * dt;
+    storm.y += wy * 0.6 * dt;
+    const env = Math.sin(Math.PI * Math.min(1, u * 1.15));
+    for (let i = 0; i < stormClouds.length; i++) {
+      const sp = stormClouds[i];
+      const o = stormCloudOffsets[i];
+      sp.position.set(storm.x + o.x, storm.y + o.y);
+      sp.scale.set(o.s, o.s * 0.7);
+      sp.alpha = ATMOS.storm.alpha * env;
+    }
+    // Rain: a handful of slanted streaks beneath the cluster, jittered.
+    rainGfx.clear();
+    for (let i = 0; i < 16; i++) {
+      const rx = storm.x + (weatherRand() - 0.5) * 260;
+      const ry = storm.y + 40 + weatherRand() * 90;
+      rainGfx.moveTo(rx, ry).lineTo(rx - 3, ry + 9)
+        .stroke({ color: 0x9fb2c8, alpha: S.rainAlpha * env, width: 1 });
+    }
+    // Lightning at night: a one-flash glow that decays fast.
+    if (L.nightness > 0.4 && Math.random() < dt / S.lightningMeanSec) lightningFlash = 1;
+    if (lightningFlash > 0.01) {
+      lightningFlash *= Math.exp(-dt * 12);
+      lightningSprite.position.set(storm.x, storm.y);
+      lightningSprite.scale.set(3.2, 2.2);
+      lightningSprite.alpha = lightningFlash * 0.75 * env;
+    } else {
+      lightningSprite.alpha = 0;
+    }
+  }
+
   // Bird flocks: a V of dots crossing the world at dawn or dusk.
   const birdLayer = new Graphics();
   let birdFlock: { x: number; y: number; dir: number; t: number } | null = null;
@@ -992,6 +1084,7 @@ export function createAtmosphere(): Atmosphere {
     for (const d of cloudShadows) advance(d, shadowStrength, false);
     for (const d of fogBanks) advance(d, fogStrength, true);
     lastWind = { x: wx, y: wy };
+    updateStorm(dt, wx, wy, curLight);
     // Wind shimmer: same drift machinery, faster, daylight-gated. (curLight
     // is last frame's value here — a one-frame lag, invisible.)
     const shimmerAlpha = ATMOS.shimmer.alpha * curLight.intensity * (curLight.isDay ? 1 : 0.3);
@@ -1123,6 +1216,7 @@ export function createAtmosphere(): Atmosphere {
     setWaterMask: (mask: Container | null) => { glitterLayer.mask = mask; },
     shimmerLayer,
     birdLayer,
+    stormLayer,
     cometLayer,
     auroraLayer,
     setLandMask: (mask: Container | null) => { shimmerLayer.mask = mask; },
