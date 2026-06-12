@@ -67,12 +67,8 @@ export const ATMOS = {
     // 1 = wings fully on the arc (too much; far columns stretch visibly).
     curvature: 0.62,
     perspective: 0.60,
-    remapMax:   0.35,        // at curvature=1: how far the surface bends toward the horizon (interior only — the limb mask owns the silhouette)
-    arcSagFrac: 0.11,        // interior bend arc droop, fraction of texture height
-    arcPower:   1.7,         // interior bend arc shape
-    apexRoundFrac: 0.45,     // how wide the apex rounds (fraction of half-span, scales with the knob)
     pinchMaxFrac:     0.16,  // at perspective=1: horizontal narrowing of the far edge
-    vertCompressFrac: 0.55,  // at perspective=1: how hard far rows thin toward the horizon (t^(1+this))
+    vertCompressFrac: 0.55,  // at perspective=1: how hard rows thin toward the horizon (t^(1+this))
     // The limb: a true circular horizon, screen-space, that clips the world.
     // The far world disappears behind it — the ocean apron (drawn under the
     // terrain in main.ts) means there is always sea to clip, so the
@@ -417,26 +413,25 @@ export function createAtmosphere(): Atmosphere {
   let curCurvature = ATMOS.curve.curvature;
   let curPerspective = ATMOS.curve.perspective;
 
-  // Bend the world mesh by remapping its upper silhouette onto a horizon arc.
-  // For each column: the diamond's tent edge (apex-to-corner straight line)
-  // is pulled toward a smooth arc through the apex; everything between the
-  // tent and the front anchor compresses proportionally, the front stays
-  // pinned, and content above the tent (feather blur, sky margin) rides
-  // rigidly with the wing. Perspective adds a far-edge pinch and a vertical
-  // squeeze of the far rows. Vertices only change when the knobs change.
+  // Bend the world mesh. Three smooth ingredients, no regime boundaries
+  // anywhere visible (the diamond's own edges play no role — the limb mask
+  // owns the silhouette and the ocean apron means there is no content edge):
+  // 1. Vertical redistribution referenced to the APEX ROW: rows thin toward
+  //    the horizon (t^e). The zero-compression locus is the apex row itself,
+  //    which the limb mask hides everywhere by construction (the mask's
+  //    highest point is the apex).
+  // 2. Rows bow parallel to the limb circle as they approach it.
+  // 3. A horizontal pinch of the far field.
   function applyCurve() {
     if (!attachedPlane || !planeBasePositions || !planeGeom) return;
     const geo = attachedPlane.geometry;
     const texH = (geo as any).height as number;
     const base = planeBasePositions;
     const out = new Float32Array(base.length);
-    const { left, apex, right, front } = planeGeom;
+    const { apex, front } = planeGeom;
     const c = ATMOS.curve;
-    const k = curCurvature * c.remapMax;
-    const halfSpan = (right.x - left.x) / 2;
-    // The limb circle (if seated): surface rows bow parallel to it as they
-    // approach the horizon, so the grid wraps the planet instead of running
-    // straight underneath the arc.
+    const span = front.y - apex.y;
+    const e = 1 + curPerspective * c.vertCompressFrac;
     let limbR = 0;
     if (limbLayout) {
       const sag = curCurvature * c.limbSagMax * (limbLayout.width / 2);
@@ -447,33 +442,17 @@ export function createAtmosphere(): Atmosphere {
     }
     for (let i = 0; i < base.length; i += 2) {
       const x = base[i], y = base[i + 1];
-      // The silhouette target: the diamond's tent edge with its apex rounded
-      // into a crown (softened |dx|), pulled toward a horizon arc. Everything
-      // here is smooth in x — the mapping must have no kink anywhere or the
-      // compression rate jumps at the center column and draws a seam. The
-      // sliver between the soft tent and the true edge near the apex is
-      // filled by the horizon band (featherLayer), not by stretched tiles.
-      const dx = Math.min(1, Math.abs(x - apex.x) / halfSpan);
-      const r = c.apexRoundFrac * k;
-      const dxSoft = Math.sqrt(dx * dx + r * r) - r;
-      const tentSoftY = apex.y + dxSoft * (left.y - apex.y);
-      const arcY = apex.y + c.arcSagFrac * texH * Math.pow(dx, c.arcPower);
-      const newTopY = tentSoftY + (arcY - tentSoftY) * k;
       let ny: number;
-      let tRaw = 1; // 0 at the horizon edge, 1 at the front
-      if (y <= tentSoftY) {
-        // Sky margin above the soft edge: ride with the wing.
-        ny = y + (newTopY - tentSoftY);
+      let tRaw: number; // 0 at the apex row (infinite distance), 1 at the front
+      if (y <= apex.y) {
+        ny = y;
         tRaw = 0;
       } else if (y < front.y) {
-        // Surface between the soft edge and the front anchor: compress toward
-        // the new top (front pinned), perspective bunching the far rows
-        // toward the horizon (t^e redistribution).
-        tRaw = (y - tentSoftY) / (front.y - tentSoftY);
-        const t = Math.pow(tRaw, 1 + curPerspective * c.vertCompressFrac);
-        ny = newTopY + t * (front.y - newTopY);
+        tRaw = (y - apex.y) / span;
+        ny = apex.y + Math.pow(tRaw, e) * span;
       } else {
         ny = y;
+        tRaw = 1;
       }
       // Bow rows parallel to the limb circle as they near the horizon.
       if (limbR > 0 && tRaw < 1) {
@@ -481,7 +460,7 @@ export function createAtmosphere(): Atmosphere {
         const drop = limbR - Math.sqrt(limbR * limbR - dxp * dxp);
         ny += drop * c.limbBowMix * curCurvature * Math.pow(1 - tRaw, c.limbBowPower);
       }
-      // Perspective also pinches the far edge narrower.
+      // Perspective also pinches the far field narrower.
       const nx = apex.x + (x - apex.x) * (1 - curPerspective * c.pinchMaxFrac * Math.max(0, 1 - y / texH));
       out[i] = nx;
       out[i + 1] = ny;
