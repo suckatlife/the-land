@@ -84,3 +84,29 @@ defaults mid-range, calibrated so 1.0 overshoots and 0 is the current build.
 Verification: calibration screenshots (0 / default / 1) into
 `curvature_calibration/`; smoke test all four scar types' positions, labels
 on cities, sky relationship, suspense flow end-to-end.
+
+## Window 4 addendum — celestial light + stars (2026-06-11 afternoon)
+
+Ranked per brief. Architecture:
+
+1. **Light state** in atmosphere.ts: sun occupies the day window of dayT,
+   moon the night window; azimuth sweeps 0→1 across each window, altitude is
+   a sine arc. Color warm→neutral by sun altitude, silver at night;
+   intensity follows altitude (handoffs pass through zero = twilight dip).
+   Scrubbers pin azimuth/altitude until cleared.
+2. **Water glitter** as a world-space layer (bends with the planet) between
+   biome and sim layers, masked to water: per-terrain mask = water-tile
+   diamonds + the 4 outside-diamond apron triangles, rebuilt on
+   reroll/flood. The band: a soft gradient sprite + two baked glint-dash
+   variants crossfading in counter-phase (cheap twinkle), add-blended,
+   tinted by light color, positioned by azimuth, narrower/dimmer for the
+   moon path.
+3. **Stars**: two one-time Graphics (bright + faint populations) scattered
+   in a disc around a celestial pole, rotated as containers (~30 min/rev),
+   between sky and world plane so the planet occludes them. Bright stars
+   fade in first at dusk. The omen star lives above all of this on the
+   stage and keeps its drama.
+4. **Land directional gradient**: one world-space gradient sprite, additive,
+   toward the light azimuth, very low alpha.
+5. Stretch: per-tile water depth-blues at drawBiomes time, only if all
+   above ships.
