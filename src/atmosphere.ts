@@ -70,6 +70,7 @@ export const ATMOS = {
     remapMax:   0.55,        // at curvature=1: how far the wings travel from tent to arc
     arcSagFrac: 0.11,        // horizon arc droop from apex toward the sides, fraction of texture height
     arcPower:   1.7,         // arc shape: 2 = flat crown that dives at the ends, 1 = conical
+    apexRoundFrac: 0.45,     // how wide the apex point rounds into a crown (fraction of half-span, scales with the knob)
     pinchMaxFrac:     0.16,  // at perspective=1: horizontal narrowing of the far edge
     vertCompressFrac: 0.35,  // at perspective=1: how hard far rows bunch toward the horizon (t^(1+this))
     // Corner haze: soft sky-colored washes over the three far corners so the
@@ -441,9 +442,14 @@ export function createAtmosphere(): Atmosphere {
       // The diamond's upper edge height at this column (clamped beyond corners).
       const dx = Math.min(1, Math.abs(x - apex.x) / halfSpan);
       const tentY = apex.y + dx * (left.y - apex.y);
-      // The target horizon arc through the apex.
+      // The silhouette target: the tent with its apex point rounded into a
+      // crown (softened |dx|, radius scaling with the knob), pulled toward a
+      // horizon arc. Both terms vanish as the knob goes to 0 — flat restores.
+      const r = c.apexRoundFrac * k;
+      const dxSoft = Math.sqrt(dx * dx + r * r) - r;
+      const tentSoftY = apex.y + dxSoft * (left.y - apex.y);
       const arcY = apex.y + c.arcSagFrac * texH * Math.pow(dx, c.arcPower);
-      const newTopY = tentY + (arcY - tentY) * k;
+      const newTopY = tentSoftY + (arcY - tentSoftY) * k;
       let ny: number;
       if (y <= tentY) {
         // Sky margin / feather above the edge: ride with the wing.

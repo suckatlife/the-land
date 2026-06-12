@@ -542,7 +542,8 @@ const worldRT = RenderTexture.create({
 world.scale.set(captureScale);
 world.x = -WORLD_CAPTURE.x0 * captureScale;
 world.y = -WORLD_CAPTURE.y0 * captureScale;
-const worldPlane = new MeshPlane({ texture: worldRT, verticesX: 32, verticesY: 22 });
+// Dense enough that the curved silhouette reads as a curve, not a polyline.
+const worldPlane = new MeshPlane({ texture: worldRT, verticesX: 110, verticesY: 36 });
 
 app.stage.addChild(atmos.skyLayer);
 app.stage.addChild(worldPlane);
