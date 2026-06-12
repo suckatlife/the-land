@@ -150,3 +150,39 @@ scar test passes with margin: impact sites are pointable well past 30
 seconds — plague sites for 13 minutes. My own doubts, ranked: cloud shadows
 may be too timid in stills (judge in motion), winter may be a step too bold,
 and the noon sky is empty until clouds get bodies or texture.
+
+## Window 4 — celestial light + stars (2026-06-11 afternoon)
+
+**1. What I tried:** All four ranked deliverables shipped: a CelestialLight
+state (sun/moon windows over the day cycle, intensity through zero at
+twilight); water glitter/moon path as a world-space twinkle band masked to
+water; a rotating star dome (bright stars lead at dusk); a directional land
+gradient. Dead ends: a canvas-sprite alpha mask for the water silently
+failed inside the render-texture pipeline (content verified correct — the
+mechanism is untrustworthy there); switched to a Graphics stencil mask, the
+same mechanism the limb uses, worked immediately. First star pass was
+invisible: the scatter dome was huge relative to the visible sky band (~2
+stars in view) — fixed by sizing field totals to the ~4% visible fraction.
+
+**2. What works now:** the surface moves between events. Glitter slides and
+twinkles across the ocean through the day, hands off to a quiet silver moon
+path at night; stars come out one population at a time and the sky visibly
+turns; the light has a side, and the world knows it. The omen star still
+owns the night when an asteroid brews — verified over the full field.
+
+**3. What I learned:** sprite-as-mask inside a manually rendered container
+is not trustworthy in this Pixi version; Graphics stencil masks are. Visible
+star density must be budgeted against the *visible band*, not the dome.
+
+**4. Directions next:** star reflections on water (Van Gogh's Rhône); ocean
+depth-blues (parked stretch item); the retune pass Lawrence has been
+accumulating (winter, cloud bodies, noon sky, moon path strength).
+
+**5. Self-assessment vs the test** (*watch a day-to-night transition for 5
+minutes — can you see motion?*): yes by construction now — the band slides
+visibly across the ocean within any 2 minutes of day, glints twinkle at
+1.4 Hz, dusk brings stars in two waves while the glitter dims and silvers,
+and the dome turns ~12° during the watch. My honest caveats: the moon path
+and land gradient are at the quiet edge of perceptible (deliberately — both
+have scrubbers), and all tuning was done through a software-rendered
+headless browser; the twinkle cadence deserves one look at real 60fps.
