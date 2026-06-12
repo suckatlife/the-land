@@ -49,8 +49,26 @@ const MOISTURE_SCALE = 0.09; // smaller = larger climate zones
 const EDGE_FALLOFF = 7;
 const EDGE_DEPTH = 0.3; // how far below zero the very edge is pushed
 
+// Continuous terrain sampler — the same noise the grid uses, usable beyond
+// the grid bounds. Lets the renderer draw scenery terrain to the horizon
+// (the sim never sees it).
+export function makeTerrainSampler(seed: string): {
+  elevationAt(row: number, col: number): number;
+  moistureAt(row: number, col: number): number;
+} {
+  const continentalNoise = createNoise2D(mulberry32(seed + ':continental'));
+  const detailNoise = createNoise2D(mulberry32(seed + ':detail'));
+  const moistureNoise = createNoise2D(mulberry32(seed + ':moisture'));
+  return {
+    elevationAt: (row, col) =>
+      continentalNoise(col * CONTINENTAL_SCALE, row * CONTINENTAL_SCALE) * CONTINENTAL_WEIGHT +
+      detailNoise(col * DETAIL_SCALE, row * DETAIL_SCALE) * DETAIL_WEIGHT,
+    moistureAt: (row, col) => moistureNoise(col * MOISTURE_SCALE, row * MOISTURE_SCALE),
+  };
+}
+
 // Map (elevation, moisture) to a biome.
-function classify(elevation: number, moisture: number): Biome {
+export function classify(elevation: number, moisture: number): Biome {
   if (elevation < SEA_LEVEL) return 'water';
   if (elevation < SHORE_LEVEL) return 'sand';
   if (elevation > MOUNTAIN_LEVEL) return 'rock';

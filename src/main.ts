@@ -1,5 +1,5 @@
 import { Application, Assets, Container, Graphics, MeshPlane, RenderTexture, Sprite, Text, TextStyle, Texture } from 'pixi.js';
-import { generateBiomeMap, generateRivers, BIOME_COLORS, SEA_LEVEL } from './biomes';
+import { generateBiomeMap, generateRivers, makeTerrainSampler, classify, BIOME_COLORS, SEA_LEVEL } from './biomes';
 import { drawTile, drawStateOverlayPersistent, redrawOverlay, redrawBiomeTile, lerpColor, gridToScreen, rgbToHsl, hslToRgb } from './iso';
 import { createSimWorld, step, tileOverlayColor, seedInitialCivs, applyCatastrophe, CATASTROPHE, CITY, nearestCityDist, type SimWorld, type Civ, type SimEvent, type Era, type TileOverlay, type BiomeChange, type CatastropheType } from './sim';
 import * as audio from './audio';
@@ -523,6 +523,8 @@ const atmos = createAtmosphere();
 // Declared ahead of the layer stack (they slot into it below); drawn/managed
 // further down.
 const riverGfx = new Graphics();
+const sceneryWaterGfx = new Graphics(); // beyond-the-grid sea (under glitter)
+const sceneryLandGfx = new Graphics();  // beyond-the-grid land (over glitter)
 const smokeLayer = new Container();
 const cityLightsGfx = new Graphics();
 cityLightsGfx.blendMode = 'add';
@@ -539,6 +541,8 @@ const world = new Container();
 world.addChild(biomeLayer);
 // Sun glitter / moon path on the water, masked to water tiles below.
 world.addChild(atmos.glitterLayer);
+// Scenery land sits over the glitter (so the simple water mask suffices).
+world.addChild(sceneryLandGfx);
 // Rivers run over the terrain, under settlement tints.
 world.addChild(riverGfx);
 world.addChild(simLayer);
@@ -916,22 +920,11 @@ const fadedDeadCivs = new Set<number>();
 // only edge the viewer ever sees. Same fill and grid treatment as water
 // tiles; first child of biomeLayer so it takes the seasonal tint.
 function drawOceanApron(): Graphics {
+  // Deep-sea backstop under the scenery tiles (covers any sub-tile slivers
+  // at the capture margins). The scenery tiles carry the texture and grid.
   const g = new Graphics();
   const { x0, y0, w, h } = WORLD_CAPTURE;
   g.rect(x0, y0, w, h).fill(OCEAN.deepColor);
-  // The iso grid, continued: tile edges satisfy x+2y = 32k and x-2y = 32m.
-  // Lines run border-to-border; overshoot past the rect is clipped by the
-  // render texture.
-  for (let k = Math.ceil((x0 + 2 * y0) / 32); k <= Math.floor((x0 + w + 2 * (y0 + h)) / 32); k++) {
-    const c = k * 32;
-    g.moveTo(c - 2 * y0, y0).lineTo(c - 2 * (y0 + h), y0 + h)
-      .stroke({ color: 0x000000, alpha: 0.08, width: 1 });
-  }
-  for (let m = Math.ceil((x0 - 2 * (y0 + h)) / 32); m <= Math.floor((x0 + w - 2 * y0) / 32); m++) {
-    const c = m * 32;
-    g.moveTo(c + 2 * y0, y0).lineTo(c + 2 * (y0 + h), y0 + h)
-      .stroke({ color: 0x000000, alpha: 0.08, width: 1 });
-  }
   return g;
 }
 
@@ -984,14 +977,54 @@ const OCEAN = {
   shallowCurve: 0.6,       // <1 = shallows hug the coast tighter
 };
 
-function waterColorAt(row: number, col: number): number {
+function waterColorFromElev(elev: number): number {
   const t = Math.pow(
-    Math.max(0, Math.min(1, (SEA_LEVEL - elevationMap[row][col]) / OCEAN.depthRange)),
+    Math.max(0, Math.min(1, (SEA_LEVEL - elev) / OCEAN.depthRange)),
     OCEAN.shallowCurve,
   );
   return t <= OCEAN.midPoint
     ? lerpColor(OCEAN.shallowColor, BIOME_COLORS.water, t / OCEAN.midPoint)
     : lerpColor(BIOME_COLORS.water, OCEAN.deepColor, (t - OCEAN.midPoint) / (1 - OCEAN.midPoint));
+}
+
+function waterColorAt(row: number, col: number): number {
+  return waterColorFromElev(elevationMap[row][col]);
+}
+
+// Scenery terrain: the world continues past the sim grid to the horizon.
+// Same noise, same depth colors, same tile strokes — but the sim never sees
+// it. A sea moat (SCENERY.moatTiles, blending out from the grid's own edge
+// falloff) separates the known world from the distant continents, so
+// civilizations always end at real coastline rather than an invisible wall.
+const SCENERY = {
+  moatTiles: 14,    // sea gap beyond the grid before terrain resumes
+  edgeDepth: 0.3,   // must match EDGE_DEPTH in biomes.ts
+};
+
+function drawScenery() {
+  sceneryWaterGfx.clear();
+  sceneryLandGfx.clear();
+  const sampler = makeTerrainSampler(currentSeed);
+  const { x0, y0, w, h } = WORLD_CAPTURE;
+  for (let r = -60; r <= 155; r++) {
+    for (let c = -60; c <= 155; c++) {
+      if (r >= 0 && r < GRID_SIZE && c >= 0 && c < GRID_SIZE) continue; // real tiles cover this
+      const { x, y } = gridToScreen(c, r);
+      if (x < x0 - 16 || x > x0 + w + 16 || y < y0 - 8 || y > y0 + h + 8) continue;
+      // Moat blend: grid-edge depth at the boundary, raw terrain beyond.
+      const dOut = Math.max(-r, r - (GRID_SIZE - 1), -c, c - (GRID_SIZE - 1), 0);
+      const f = Math.min(1, dOut / SCENERY.moatTiles);
+      const ease = f * f * (3 - 2 * f);
+      const elev = -SCENERY.edgeDepth * (1 - ease) + sampler.elevationAt(r, c) * ease;
+      const biome = classify(elev, sampler.moistureAt(r, c));
+      const water = biome === 'water';
+      const color = water ? waterColorFromElev(elev) : BIOME_COLORS[biome];
+      const target = water ? sceneryWaterGfx : sceneryLandGfx;
+      target.poly([x, y - 8, x + 16, y, x, y + 8, x - 16, y])
+        .fill(color)
+        .stroke({ color: 0x000000, alpha: 0.08, width: 1 });
+    }
+  }
 }
 
 // Rivers: polylines from the hills to the sea, tapering downstream, tinted
@@ -1014,6 +1047,8 @@ function drawBiomes() {
   biomeLayer.removeChildren();
   oceanApron = drawOceanApron();
   biomeLayer.addChild(oceanApron);
+  biomeLayer.addChild(sceneryWaterGfx);
+  drawScenery();
   rebuildWaterMask();
   biomeTileVisuals = Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(null));
   animatingBiomeTiles.clear();
@@ -1918,9 +1953,14 @@ app.ticker.add((ticker) => {
   // Sky + glaze + weather + scar fades. The sky leans toward the last dread
   // hue while curDread eases, so it releases smoothly after a catastrophe.
   atmos.update(ticker.deltaMS, curDread, curHue.vignette, dominantEra(simWorld));
-  // The ocean apron belongs to the planetary look; scrubbing curvature to ~0
-  // restores the bare flat diamond.
-  if (oceanApron) oceanApron.alpha = atmos.curvature() < 0.05 ? 0 : 1;
+  // The ocean apron + scenery belong to the planetary look; scrubbing
+  // curvature to ~0 restores the bare flat diamond.
+  const planetary = atmos.curvature() >= 0.05 ? 1 : 0;
+  if (oceanApron) oceanApron.alpha = planetary;
+  sceneryWaterGfx.alpha = planetary;
+  sceneryLandGfx.alpha = planetary;
+  // Scenery land follows the seasonal land tint (it lives outside biomeLayer).
+  sceneryLandGfx.tint = biomeLayer.tint;
   // City lights follow the night; rivers catch the light; smoke drifts.
   const L = atmos.light();
   const n = L.nightness;
