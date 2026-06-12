@@ -2,8 +2,15 @@
 
 Scrub live from the console: `__atmosphere.setCurvature(0..1)` and
 `__atmosphere.setPerspective(0..1)`. Calibration screenshots are in
-`curvature_calibration/` — flat (0), defaults, overshoot (1). Compare those
-three before touching anything.
+`curvature_calibration/` — flat / default / overshoot triples at two window
+sizes (`narrow_*` = 1330×916 like your morning screenshot, `wide_*` =
+1600×900). Compare a triple before touching anything.
+
+**Post-review revision:** your "no bend visible" report was correct — the
+first curve shape put all its curvature at the side corners, which narrower
+windows crop out. The bend is now an apex-concentrated planetary limb (the
+top corner reads as a rounded crown at any framing) plus a shoreline feather
+so the far edges stop reading as ruled lines.
 
 ## The constants you'll most likely want to touch
 
@@ -11,12 +18,15 @@ All in `ATMOS.curve` in `src/atmosphere.ts`:
 
 | Constant | What it does | My value | Notes |
 |---|---|---|---|
-| `curvature` | The 0..1 knob: how far the back/corners fall away | 0.55 | 0 = the old flat build exactly. 1 = deliberately too much. |
+| `curvature` | The 0..1 knob: how far the world falls away | 0.62 | 0 = the old flat build exactly. 1 = deliberately too much. Raised from 0.55 after your "no bend" report. |
 | `perspective` | The 0..1 knob: far-edge pinch + far-row squeeze | 0.45 | Independent of curvature; try scrubbing them separately. |
-| `edgeHazeAlpha` | Corner-haze strength at curvature=1 | 0.55 | Set 0 to kill the haze entirely (pure geometric bend). |
-| `edgeHazeSize` | Corner-haze radius, px | 340 | |
-| `bowMaxFrac` | Calibrates what curvature=1 means (corner drop) | 0.085 | Rarely touch; rescale only if the whole knob range feels wrong. |
-| `pinchMaxFrac` / `vertCompressFrac` | Calibrate perspective=1 | 0.16 / 0.05 | Same. |
+| `limbFrac` | Side-corner drop at curvature=1 (the planetary limb) | 0.11 | The main bend. Its curvature concentrates at the apex so it reads at any window size. |
+| `limbPower` | Where along the edge the curve lives | 1.5 | Lower = rounder crown at the apex; 2 = pushed to the corners (the shape that failed for you). |
+| `depthFrac` | Extra drop of the far rows at curvature=1 | 0.06 | The back falling over the horizon. |
+| `edgeFeatherAlpha` | Sky-tinted wash along the two far shorelines | 0.5 | Kills the ruled-line reading of the edges. 0 = off. |
+| `edgeFeatherWidth` | Feather width, world px | 42 | |
+| `edgeHazeAlpha` / `edgeHazeSize` | Corner-haze strength / radius | 0.55 / 340 | Set alpha 0 to judge the pure geometric bend. |
+| `pinchMaxFrac` / `vertCompressFrac` | Calibrate perspective=1 | 0.16 / 0.05 | Rarely touch. |
 
 ## How it works (so the knobs make sense)
 
