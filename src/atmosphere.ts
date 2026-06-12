@@ -66,18 +66,20 @@ export const ATMOS = {
     // up to the horizon instead of sitting inside it. 0 = the flat diamond,
     // 1 = wings fully on the arc (too much; far columns stretch visibly).
     curvature: 0.62,
-    perspective: 0.45,
+    perspective: 0.60,
     remapMax:   0.35,        // at curvature=1: how far the surface bends toward the horizon (interior only — the limb mask owns the silhouette)
     arcSagFrac: 0.11,        // interior bend arc droop, fraction of texture height
     arcPower:   1.7,         // interior bend arc shape
     apexRoundFrac: 0.45,     // how wide the apex rounds (fraction of half-span, scales with the knob)
     pinchMaxFrac:     0.16,  // at perspective=1: horizontal narrowing of the far edge
-    vertCompressFrac: 0.35,  // at perspective=1: how hard far rows bunch toward the horizon (t^(1+this))
+    vertCompressFrac: 0.55,  // at perspective=1: how hard far rows thin toward the horizon (t^(1+this))
     // The limb: a true circular horizon, screen-space, that clips the world.
     // The far world disappears behind it — the ocean apron (drawn under the
     // terrain in main.ts) means there is always sea to clip, so the
     // silhouette is a circle arc by construction at any framing.
-    limbSagMax:   0.80,      // arc drop at the frame edge at curvature=1, fraction of half-width
+    limbSagMax:   0.40,      // arc drop at the frame edge at curvature=1, fraction of half-width
+    limbBowMix:   0.85,      // how strongly surface rows bow parallel to the limb as they near it
+    limbBowPower: 1.5,       // how quickly the bow fades toward the viewer (higher = horizon-only)
     limbHazeAlpha: 0.55,     // haze band lying along the limb
     limbHazeWidth: 64,       // band stroke width, screen px before blur
   },
@@ -378,6 +380,7 @@ export function createAtmosphere(): Atmosphere {
     if (sag < 2 || !attachedPlane) {
       // Flat: no horizon, no clipping.
       if (attachedPlane) attachedPlane.mask = null;
+      applyCurve();
       return;
     }
     // Circle through the arc apex (apexX, apexY), sagging `sag` px at the
@@ -403,6 +406,8 @@ export function createAtmosphere(): Atmosphere {
       limbBandGfx.arc(apexX, cy, R + off, -Math.PI / 2 - theta, -Math.PI / 2 + theta)
         .stroke({ color: 0xffffff, alpha: aMult, width: w0 * wMult, cap: 'round' });
     }
+    // The surface bow depends on the limb radius — re-bend the mesh.
+    applyCurve();
   }
 
   let attachedBiomeLayer: Container | null = null;
@@ -429,6 +434,17 @@ export function createAtmosphere(): Atmosphere {
     const c = ATMOS.curve;
     const k = curCurvature * c.remapMax;
     const halfSpan = (right.x - left.x) / 2;
+    // The limb circle (if seated): surface rows bow parallel to it as they
+    // approach the horizon, so the grid wraps the planet instead of running
+    // straight underneath the arc.
+    let limbR = 0;
+    if (limbLayout) {
+      const sag = curCurvature * c.limbSagMax * (limbLayout.width / 2);
+      if (sag >= 2) {
+        const halfW = limbLayout.width / 2 + 80;
+        limbR = (halfW * halfW + sag * sag) / (2 * sag);
+      }
+    }
     for (let i = 0; i < base.length; i += 2) {
       const x = base[i], y = base[i + 1];
       // The silhouette target: the diamond's tent edge with its apex rounded
@@ -444,18 +460,26 @@ export function createAtmosphere(): Atmosphere {
       const arcY = apex.y + c.arcSagFrac * texH * Math.pow(dx, c.arcPower);
       const newTopY = tentSoftY + (arcY - tentSoftY) * k;
       let ny: number;
+      let tRaw = 1; // 0 at the horizon edge, 1 at the front
       if (y <= tentSoftY) {
         // Sky margin above the soft edge: ride with the wing.
         ny = y + (newTopY - tentSoftY);
+        tRaw = 0;
       } else if (y < front.y) {
         // Surface between the soft edge and the front anchor: compress toward
         // the new top (front pinned), perspective bunching the far rows
         // toward the horizon (t^e redistribution).
-        let t = (y - tentSoftY) / (front.y - tentSoftY);
-        t = Math.pow(t, 1 + curPerspective * c.vertCompressFrac);
+        tRaw = (y - tentSoftY) / (front.y - tentSoftY);
+        const t = Math.pow(tRaw, 1 + curPerspective * c.vertCompressFrac);
         ny = newTopY + t * (front.y - newTopY);
       } else {
         ny = y;
+      }
+      // Bow rows parallel to the limb circle as they near the horizon.
+      if (limbR > 0 && tRaw < 1) {
+        const dxp = Math.min(limbR, Math.abs(x - apex.x));
+        const drop = limbR - Math.sqrt(limbR * limbR - dxp * dxp);
+        ny += drop * c.limbBowMix * curCurvature * Math.pow(1 - tRaw, c.limbBowPower);
       }
       // Perspective also pinches the far edge narrower.
       const nx = apex.x + (x - apex.x) * (1 - curPerspective * c.pinchMaxFrac * Math.max(0, 1 - y / texH));
