@@ -34,3 +34,8 @@
 - Stars: two static Graphics populations rotating around a pole (30 min/rev), bright leads at dusk. First pass invisible: scatter disc was huge vs the visible sky band (~2 stars in view) — densified field totals (1300+110, ~4% visible at once = Hokusai-sparse on screen).
 - Land directional gradient: additive, follows azimuth, fades at noon and twilight.
 - Verified: omen star dominates the field at night brewing; impact/dread/narration cycle intact; glitter stops at coastlines; full-cycle calibration shots in celestial_calibration/. Item 5 (ocean color variation) not shipped (stretch rule).
+
+## Window 5 — visual-life batch (2026-06-11 evening, from approved IDEAS)
+- All eight ideas shipped: ocean depth/shallows, rivers (deterministic, visual-only), era-colored city lights at night, era smoke, wind shimmer (land-masked), camera breathing, rare celestial events (comet/eclipse/aurora, narrated as wonder), bird flocks. Wakes/tides resolved differently (exist already / poor value).
+- Notable fixes during: river source threshold 0.42 -> 0.30 (2 rivers/seed -> 6-9); land mask built alongside the water mask in one pass.
+- Verified: night lights transform the night register; suspense brewing->impact composes over everything; rivers confirmed on three seeds; FPS within noise of baseline in the software renderer.

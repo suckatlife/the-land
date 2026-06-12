@@ -186,3 +186,18 @@ and the dome turns ~12° during the watch. My honest caveats: the moon path
 and land gradient are at the quiet edge of perceptible (deliberately — both
 have scrubbers), and all tuning was done through a software-rendered
 headless browser; the twinkle cadence deserves one look at real 60fps.
+
+## Window 5 — the visual-life batch (2026-06-11 evening)
+
+Lawrence approved the full visual-interest brainstorm; all eight shipped in
+one window: ocean depth + shallows (from existing elevation), rivers
+(deterministic greedy descent, visual-only — sim untouched), era-colored
+city lights at night (the transformative one: night now shows life, and
+catastrophes read as lights going dark), era-flavored smoke, wind shimmer
+masked to land, camera breathing with a dread lean, rare narrated celestial
+events (comet / lunar eclipse / winter aurora), and dawn/dusk bird flocks.
+Two of the small ideas resolved differently: expedition wakes already
+existed as trail dots; tide breathing would need per-tile repaints per
+frame (parked). Performance held within noise of the prior baseline in the
+software-rendered harness; the one cost to watch is the city-lights rebuild
+on big worlds (WINDOW_5_NOTES doubt #1).

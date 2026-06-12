@@ -11,11 +11,11 @@
 - Star reflections on water at deep night (Van Gogh Rhone) — a few glints aligned under bright stars.
 
 ## Visual-interest brainstorm (2026-06-11 evening, Lawrence asked)
-- **City lights at night** (top pick): additive glow over settlements keyed to building density × nightness; era-flavored quality (hearth embers → lamplight → industrial orange grids → modern cool sprawl). Night becomes the "life" register; catastrophes read as lights going dark.
-- **Shallows + depth-blues**: pale shallow-water rim along coasts + per-tile depth variation from existing elevation. Fixes the flat ocean; gives glitter texture to catch.
-- **Era-flavored smoke** from large cities (hearth → chimneys → industrial haze feeding era-air).
-- **Rare celestial events**: comet (non-catastrophe omen, ambiguous narration), lunar eclipse (30s dimming), winter aurora. Plug into omen/narration machinery.
-- **Wind made visible**: small fast cousin of cloud shadows — brightness waves over grass/forest.
-- **Camera breathing**: ±2% slow drift/scale; optional drift toward brewing regions (suspense tie-in).
-- **Rivers** (big, terrain-level): elevation→sea waterlines; glint in directional light; natural borders, city sites, river names for the story run.
+- ~~City lights at night~~ — SHIPPED (Window 5)
+- ~~Shallows + depth-blues~~ — SHIPPED (Window 5)
+- ~~Era-flavored smoke~~ — SHIPPED (Window 5)
+- ~~Rare celestial events~~ — SHIPPED (Window 5)
+- ~~Wind made visible~~ — SHIPPED (Window 5)
+- ~~Camera breathing~~ — SHIPPED (Window 5)
+- ~~Rivers~~ — SHIPPED (Window 5, visual-only)
 - Smaller: ocean tide breathing at coastlines, bird flocks at dawn/dusk, expedition wakes.
