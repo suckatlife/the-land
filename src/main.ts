@@ -1,5 +1,5 @@
 import { Application, Assets, Container, Graphics, MeshPlane, RenderTexture, Sprite, Text, TextStyle, Texture } from 'pixi.js';
-import { generateBiomeMap, BIOME_COLORS } from './biomes';
+import { generateBiomeMap, generateRivers, BIOME_COLORS, SEA_LEVEL } from './biomes';
 import { drawTile, drawStateOverlayPersistent, redrawOverlay, redrawBiomeTile, lerpColor, gridToScreen, rgbToHsl, hslToRgb } from './iso';
 import { createSimWorld, step, tileOverlayColor, seedInitialCivs, applyCatastrophe, CATASTROPHE, CITY, nearestCityDist, type SimWorld, type Civ, type SimEvent, type Era, type TileOverlay, type BiomeChange, type CatastropheType } from './sim';
 import * as audio from './audio';
@@ -500,6 +500,14 @@ const atmos = createAtmosphere();
 // Tuning/debug handle: scrub time with __atmosphere.setTimeOfDay(0..1).
 (window as any).__atmosphere = atmos;
 
+// Declared ahead of the layer stack (they slot into it below); drawn/managed
+// further down.
+const riverGfx = new Graphics();
+const smokeLayer = new Container();
+const cityLightsGfx = new Graphics();
+cityLightsGfx.blendMode = 'add';
+cityLightsGfx.alpha = 0;
+
 const biomeLayer = new Container();
 const simLayer = new Container();
 const buildingLayer = new Container();
@@ -511,15 +519,25 @@ const world = new Container();
 world.addChild(biomeLayer);
 // Sun glitter / moon path on the water, masked to water tiles below.
 world.addChild(atmos.glitterLayer);
+// Rivers run over the terrain, under settlement tints.
+world.addChild(riverGfx);
 world.addChild(simLayer);
 // Scars sit above civ tints (catastrophes hit settled land) but below buildings.
 world.addChild(atmos.scarLayer);
+// Wind shimmer brightens the ground, masked to land below.
+world.addChild(atmos.shimmerLayer);
 world.addChild(buildingLayer);
 world.addChild(expeditionLayer);
 // Directional land light sits under the cloud shadows (clouds block sun).
 world.addChild(atmos.landLightLayer);
+// City smoke rises beneath the clouds.
+world.addChild(smokeLayer);
 // Cloud shadows fall on land and buildings; markers and labels stay above.
 world.addChild(atmos.cloudShadowLayer);
+// City lights pierce the night (and sit above cloud shadow).
+world.addChild(cityLightsGfx);
+// Bird flocks cross at dawn and dusk.
+world.addChild(atmos.birdLayer);
 world.addChild(cityMarkersContainer);
 // Mist banks veil everything but the text.
 world.addChild(atmos.fogLayer);
@@ -548,6 +566,9 @@ const worldPlane = new MeshPlane({ texture: worldRT, verticesX: 110, verticesY: 
 app.stage.addChild(atmos.skyLayer);
 // Stars turn behind the planet; the world plane occludes them below the limb.
 app.stage.addChild(atmos.starLayer);
+// Comets and aurora share the night sky and set behind the planet.
+app.stage.addChild(atmos.cometLayer);
+app.stage.addChild(atmos.auroraLayer);
 app.stage.addChild(worldPlane);
 // The limb mask clips the plane at the circular horizon; it must live in the
 // tree. The band lays horizon haze along the arc, above the plane.
@@ -580,6 +601,9 @@ function centerWorld() {
   worldBaseY = window.innerHeight * ATMOS.composition.horizonFrac + WORLD_CAPTURE.y0 * captureScale;
   worldPlane.x = worldBaseX;
   worldPlane.y = worldBaseY;
+  // Camera breathing scales the whole stage around the screen center.
+  app.stage.pivot.set(window.innerWidth / 2, window.innerHeight / 2);
+  app.stage.position.set(window.innerWidth / 2, window.innerHeight / 2);
   // The circular horizon passes through the diamond apex's screen position.
   atmos.layoutLimb({
     width: window.innerWidth,
@@ -893,6 +917,10 @@ let oceanApron: Graphics | null = null;
 const waterMaskG = new Graphics();
 world.addChildAt(waterMaskG, world.getChildIndex(atmos.glitterLayer));
 atmos.setWaterMask(waterMaskG);
+// Land mask (inverse): restricts the wind shimmer to terrain.
+const landMaskG = new Graphics();
+world.addChildAt(landMaskG, world.getChildIndex(atmos.shimmerLayer));
+atmos.setLandMask(landMaskG);
 
 function rebuildWaterMask() {
   const g = waterMaskG;
@@ -904,12 +932,46 @@ function rebuildWaterMask() {
   g.poly([T.x, y0, x0 + w, y0, x0 + w, R.y, R.x, R.y, T.x, T.y]).fill(0xffffff);
   g.poly([x0 + w, R.y, x0 + w, y0 + h, B.x, y0 + h, B.x, B.y, R.x, R.y]).fill(0xffffff);
   g.poly([B.x, y0 + h, x0, y0 + h, x0, L.y, L.x, L.y, B.x, B.y]).fill(0xffffff);
-  // Water tile diamonds, inflated a touch.
+  // Water tile diamonds, inflated a touch; land diamonds go to the land mask.
+  landMaskG.clear();
   for (let row = 0; row < GRID_SIZE; row++) {
     for (let col = 0; col < GRID_SIZE; col++) {
-      if (biomeMap[row][col] !== 'water') continue;
+      const water = biomeMap[row][col] === 'water';
+      const target = water ? g : landMaskG;
       const { x, y } = gridToScreen(col, row);
-      g.poly([x, y - 9, x + 17, y, x, y + 9, x - 17, y]).fill(0xffffff);
+      target.poly([x, y - 9, x + 17, y, x, y + 9, x - 17, y]).fill(0xffffff);
+    }
+  }
+}
+
+// Ocean depth: water tiles pale toward the shore (small depth below sea
+// level) and deepen to the base blue offshore — one mechanism gives both
+// shallows rims and open-water variation, from elevation data that already
+// exists. The apron stays the deep base color, which the depth curve
+// converges to far from land.
+const OCEAN = {
+  shallowColor: 0xbfdfd6,  // pale aqua at the waterline
+  depthRange:   0.16,      // how far below sea level reaches full deep color
+  shallowCurve: 0.6,       // <1 = shallows hug the coast tighter
+};
+
+function waterColorAt(row: number, col: number): number {
+  const t = Math.max(0, Math.min(1, (SEA_LEVEL - elevationMap[row][col]) / OCEAN.depthRange));
+  return lerpColor(OCEAN.shallowColor, BIOME_COLORS.water, Math.pow(t, OCEAN.shallowCurve));
+}
+
+// Rivers: polylines from the hills to the sea, tapering downstream, tinted
+// each frame toward the celestial light so they catch dawn and dusk.
+function drawRivers() {
+  riverGfx.clear();
+  const rivers = generateRivers(elevationMap, biomeMap, currentSeed);
+  for (const path of rivers) {
+    for (let i = 1; i < path.length; i++) {
+      const a = gridToScreen(path[i - 1].col, path[i - 1].row);
+      const b = gridToScreen(path[i].col, path[i].row);
+      const t = i / path.length;
+      riverGfx.moveTo(a.x, a.y).lineTo(b.x, b.y)
+        .stroke({ color: 0x6fa8c8, alpha: 0.6 + 0.3 * t, width: 1.0 + 2.4 * t, cap: 'round', join: 'round' });
     }
   }
 }
@@ -923,17 +985,21 @@ function drawBiomes() {
   animatingBiomeTiles.clear();
   for (let row = 0; row < GRID_SIZE; row++) {
     for (let col = 0; col < GRID_SIZE; col++) {
-      const color = BIOME_COLORS[biomeMap[row][col]];
-      const g = drawTile(biomeLayer, col, row, biomeMap[row][col]);
+      const biome = biomeMap[row][col];
+      const color = biome === 'water' ? waterColorAt(row, col) : BIOME_COLORS[biome];
+      const g = drawTile(biomeLayer, col, row, biome);
+      if (biome === 'water') redrawBiomeTile(g, color);
       biomeTileVisuals[row][col] = { g, curColor: color, targetColor: color };
     }
   }
+  drawRivers();
 }
 
 function refreshBiomeTile(row: number, col: number) {
   const btv = biomeTileVisuals[row][col];
   if (!btv) return;
-  btv.targetColor = BIOME_COLORS[biomeMap[row][col]];
+  const biome = biomeMap[row][col];
+  btv.targetColor = biome === 'water' ? waterColorAt(row, col) : BIOME_COLORS[biome];
   animatingBiomeTiles.add(`${row},${col}`);
 }
 
@@ -1286,6 +1352,134 @@ function noteTileChange(r: number, c: number) {
   tileCivIdSnapshot[r][c] = newCid;
 }
 
+// --- City lights (night) and smoke (day) -----------------------------------
+// Both rebuild on the city cadence (cheap, ~every 0.7s of viewing); per-frame
+// cost is container alpha for lights and ~a few dozen sprite moves for smoke.
+
+const LIGHTS = {
+  maxAlpha: 0.9,        // layer alpha at full night
+  dotRadius: 2.1,       // per-tile lamp dot
+  cityHaloRadius: 10,   // soft halo at cities (scaled by prominence)
+  densityFloor: 0.16,   // tiles dimmer than this stay dark
+  // The quality of light is the era speaking: hearth embers, lamplight,
+  // sooty industry, cool modern sprawl, synthetic post glow.
+  eraColors: {
+    neolithic: 0xffaa5e, classical: 0xffc47e, medieval: 0xffc47e,
+    industrial: 0xff8f43, modern: 0xcfe0ff, post: 0xb9a3ff,
+  } as Record<Era, number>,
+};
+
+function rebuildCityLights() {
+  cityLightsGfx.clear();
+  for (const civ of simWorld.civs.values()) {
+    if (civ.phase === 'dead') continue;
+    const color = LIGHTS.eraColors[civ.era];
+    for (const city of civ.cities) {
+      const { x, y } = gridToScreen(city.col, city.row);
+      cityLightsGfx.circle(x, y, LIGHTS.cityHaloRadius * (0.5 + city.prominence))
+        .fill({ color, alpha: 0.10 + 0.08 * city.prominence });
+    }
+    const ts = civTiles.get(civ.id);
+    if (!ts) continue;
+    for (const key of ts) {
+      const r = (key / GRID_SIZE) | 0;
+      const c = key % GRID_SIZE;
+      if (simWorld.tiles[r][c].state !== 'built') continue;
+      const density = computeTileDensity(r, c, civ);
+      if (density < LIGHTS.densityFloor) continue;
+      const { x, y } = gridToScreen(c, r);
+      cityLightsGfx.circle(x, y, LIGHTS.dotRadius * (0.6 + density * 0.8))
+        .fill({ color, alpha: 0.20 + 0.45 * density });
+    }
+  }
+}
+
+const SMOKE = {
+  minProminence: 0.5,   // cities large enough to smoke
+  maxPuffs: 56,
+  riseSpeed: 9,         // world px/s upward
+  windCarry: 0.35,      // fraction of the atmosphere wind that drifts puffs
+  lifeSec: 8,
+  eraStyle: {
+    neolithic:  { color: 0xd8cdbb, alpha: 0.10, count: 1 },
+    classical:  { color: 0xd2c8b6, alpha: 0.11, count: 1 },
+    medieval:   { color: 0xc4bba9, alpha: 0.12, count: 2 },
+    industrial: { color: 0x6e675f, alpha: 0.18, count: 3 },
+    modern:     { color: 0x9aa0a6, alpha: 0.09, count: 1 },
+    post:       { color: 0xb0a8c0, alpha: 0.06, count: 1 },
+  } as Record<Era, { color: number; alpha: number; count: number }>,
+};
+
+function makePuffTexture(): Texture {
+  const cv = document.createElement('canvas');
+  cv.width = 64; cv.height = 64;
+  const ctx = cv.getContext('2d')!;
+  const grad = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grad.addColorStop(0, 'rgba(255,255,255,0.8)');
+  grad.addColorStop(0.6, 'rgba(255,255,255,0.3)');
+  grad.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, 64, 64);
+  return Texture.from(cv);
+}
+const puffTexture = makePuffTexture();
+
+interface SmokeEmitter { x: number; y: number; color: number; alpha: number; count: number }
+interface Puff { sp: Sprite; age: number; emitter: SmokeEmitter }
+let smokeEmitters: SmokeEmitter[] = [];
+const puffs: Puff[] = [];
+
+function rebuildSmokeEmitters() {
+  smokeEmitters = [];
+  for (const civ of simWorld.civs.values()) {
+    if (civ.phase === 'dead') continue;
+    const style = SMOKE.eraStyle[civ.era];
+    for (const city of civ.cities) {
+      if (city.prominence < SMOKE.minProminence) continue;
+      const { x, y } = gridToScreen(city.col, city.row);
+      smokeEmitters.push({ x, y: y - 6, color: style.color, alpha: style.alpha, count: style.count });
+    }
+  }
+}
+
+function updateSmoke(dt: number) {
+  // Spawn up to each emitter's budget, bounded globally.
+  let budget = SMOKE.maxPuffs - puffs.length;
+  if (budget > 0) {
+    for (const em of smokeEmitters) {
+      if (budget <= 0) break;
+      let alive = 0;
+      for (const p of puffs) if (p.emitter === em) alive++;
+      if (alive >= em.count) continue;
+      const sp = new Sprite(puffTexture);
+      sp.anchor.set(0.5);
+      sp.position.set(em.x + (Math.random() - 0.5) * 4, em.y);
+      sp.tint = em.color;
+      sp.alpha = 0;
+      sp.scale.set(0.12);
+      smokeLayer.addChild(sp);
+      puffs.push({ sp, age: Math.random() * 0.5, emitter: em });
+      budget--;
+    }
+  }
+  const wind = atmos.wind();
+  for (let i = puffs.length - 1; i >= 0; i--) {
+    const p = puffs[i];
+    p.age += dt;
+    const u = p.age / SMOKE.lifeSec;
+    if (u >= 1 || !smokeEmitters.includes(p.emitter)) {
+      smokeLayer.removeChild(p.sp);
+      p.sp.destroy();
+      puffs.splice(i, 1);
+      continue;
+    }
+    p.sp.y -= SMOKE.riseSpeed * dt;
+    p.sp.x += wind.x * SMOKE.windCarry * dt;
+    p.sp.scale.set(0.12 + u * 0.5);
+    p.sp.alpha = p.emitter.alpha * Math.sin(Math.PI * u);
+  }
+}
+
 function drawCityMarkers() {
   cityMarkersContainer.removeChildren();
   for (const civ of simWorld.civs.values()) {
@@ -1599,11 +1793,33 @@ for (let row = 0; row < GRID_SIZE; row++) {
 rebuildBuildingSprites();
 drawCityMarkers();
 rebuildCivIndex();
+rebuildCityLights();
+rebuildSmokeEmitters();
 
 // --- Tick loop ---
 let accumulator = 0;
 let frameCount = 0;
+let breathT = 0;
 const BARS_REFRESH_FRAMES = 10;  // DOM rebuild for civ bar panel; ~6 Hz at 60fps
+
+// Rare celestial events get a narrated line — wonder, not warning.
+atmos.onCelestialEvent((kind) => {
+  const lines: Record<string, string[]> = {
+    comet: [
+      'A comet crosses the night. The wise disagree on what it intends.',
+      'A long light moves against the stars, and is watched from many hills.',
+    ],
+    eclipse: [
+      'The moon goes dark, and the dogs are quiet about it.',
+      'A shadow crosses the moon. Work stops until it passes.',
+    ],
+    aurora: [
+      'Lights move in the winter sky, and no one who sees them sleeps soon.',
+      'The night sky stands in curtains of pale fire.',
+    ],
+  };
+  eventLog.unshift({ text: pick(lines[kind] ?? ['Something passes overhead.']), ts: Date.now() });
+});
 
 app.ticker.add((ticker) => {
   if (!running) return;
@@ -1664,6 +1880,18 @@ app.ticker.add((ticker) => {
   // The ocean apron belongs to the planetary look; scrubbing curvature to ~0
   // restores the bare flat diamond.
   if (oceanApron) oceanApron.alpha = atmos.curvature() < 0.05 ? 0 : 1;
+  // City lights follow the night; rivers catch the light; smoke drifts.
+  const L = atmos.light();
+  const n = L.nightness;
+  cityLightsGfx.alpha = LIGHTS.maxAlpha * (n * n * (3 - 2 * n));
+  riverGfx.tint = lerpColor(0xffffff, L.color, 0.35);
+  updateSmoke(ticker.deltaMS / 1000);
+  // The camera breathes — whole-stage lens scale, leaning in with dread.
+  breathT += ticker.deltaMS / 1000;
+  app.stage.scale.set(
+    1 + ATMOS.camera.breathAmp * 0.5 * (1 + Math.sin((Math.PI * 2 * breathT) / ATMOS.camera.breathPeriodSec))
+      + curDread * ATMOS.camera.dreadLean
+  );
   audio.setDread(curDread);
   frameCount++;
   // Ease per-civ saturation toward era target; refresh tints for any civ mid-transition.
@@ -1684,6 +1912,8 @@ app.ticker.add((ticker) => {
   if (simWorld.tick % CITY.foundingCheckInterval === 0 ||
       frameEvents.some(e => e.kind === 'catastrophe' || e.kind === 'civ_born')) {
     drawCityMarkers();
+    rebuildCityLights();
+    rebuildSmokeEmitters();
   }
   // Animate tile color/alpha toward targets.
   const EASE = 0.15; // higher = faster transitions

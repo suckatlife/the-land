@@ -145,6 +145,33 @@ export const ATMOS = {
     strength: 0.10, // additive gradient toward the light's side of the world
   },
 
+  // Wind made visible: faint bright waves crossing the land (a faster,
+  // smaller cousin of the cloud shadows), masked to land by main.ts.
+  shimmer: {
+    count: 5,
+    alpha: 0.055,     // peak strength in full daylight
+    speedMult: 3.0,   // multiple of the cloud wind speed
+  },
+
+  // The camera breathes: a slow lens-scale oscillation, leaning in slightly
+  // as dread builds. Applied by main.ts to the whole stage.
+  camera: {
+    breathAmp: 0.012,
+    breathPeriodSec: 150,
+    dreadLean: 0.015,
+  },
+
+  // Rare celestial events — rewards for the long-session viewer. Mean
+  // intervals are rolled per-second while conditions hold; each event has a
+  // cooldown so they never cluster. Trigger manually for tuning with
+  // __atmosphere.triggerCelestial('comet'|'eclipse'|'aurora').
+  events: {
+    cometMeanSec: 480,    cometDurationSec: 80,   // any night
+    eclipseMeanSec: 720,  eclipseDurationSec: 45, // moon high
+    auroraMeanSec: 420,   auroraDurationSec: 160, // winter nights
+    cooldownSec: 120,
+  },
+
   era: {
     // The air of an age — keyed by the leading civilization's era and eased
     // slowly. `air`/`amount` lean the glaze; fogMult scales the mist.
@@ -392,12 +419,21 @@ export interface Atmosphere {
   limbBand: Container;
   // Seat the limb (call on resize; scrubs re-use the last layout).
   layoutLimb(args: { width: number; height: number; apexX: number; apexY: number }): void;
-  // Celestial light surfaces. glitterLayer and landLightLayer are
-  // world-space; starLayer is screen-space behind the world plane.
+  // Celestial light surfaces. glitterLayer, landLightLayer, shimmerLayer and
+  // birdLayer are world-space; starLayer, cometLayer and auroraLayer are
+  // screen-space behind the world plane.
   glitterLayer: Container;
   landLightLayer: Container;
   starLayer: Container;
+  shimmerLayer: Container;
+  birdLayer: Container;
+  cometLayer: Container;
+  auroraLayer: Container;
   setWaterMask(mask: Container | null): void; // restricts the glitter to water
+  setLandMask(mask: Container | null): void;  // restricts the shimmer to land
+  wind(): { x: number; y: number };
+  onCelestialEvent(cb: (kind: string) => void): void;
+  triggerCelestial(kind: 'comet' | 'eclipse' | 'aurora'): void;
   light(): CelestialLight;
   setLightAzimuth(v: number | null): void;   // pin the light's azimuth (null = resume cycle)
   setLightAltitude(v: number | null): void;  // pin the light's altitude
@@ -565,6 +601,148 @@ export function createAtmosphere(): Atmosphere {
     starLayer.addChild(faintStarsG);
     starLayer.addChild(brightStarsG);
   }
+  // Wind shimmer over land: bright strips on the wind, masked to land.
+  const shimmerLayer = new Container();
+  const shimmerDrifters: Drifter[] = [];
+  for (let i = 0; i < ATMOS.shimmer.count; i++) {
+    spawnDrifter(shimmerLayer, shimmerDrifters, 3.0, 5.0);
+  }
+  for (const d of shimmerDrifters) {
+    d.sp.tint = 0xfff3d2;
+    d.sp.blendMode = 'add';
+    d.sp.scale.y *= 0.3; // long thin waves
+  }
+  let lastWind = { x: 0, y: 0 };
+
+  // Rare celestial events.
+  const cometLayer = new Graphics();
+  const auroraLayer = new Container();
+  const auroraSprites: Sprite[] = [];
+  {
+    // Ribbon texture: a soft vertical strip.
+    const cv = document.createElement('canvas');
+    cv.width = 96; cv.height = 512;
+    const cx2 = cv.getContext('2d')!;
+    const grad = cx2.createLinearGradient(0, 0, 0, 512);
+    grad.addColorStop(0, 'rgba(255,255,255,0)');
+    grad.addColorStop(0.35, 'rgba(255,255,255,0.5)');
+    grad.addColorStop(0.75, 'rgba(255,255,255,0.15)');
+    grad.addColorStop(1, 'rgba(255,255,255,0)');
+    cx2.fillStyle = grad;
+    cx2.fillRect(0, 0, 96, 512);
+    const ribbonTex = Texture.from(cv);
+    const colors = [0x7fe0c0, 0xa7e8d2, 0xb39fe0];
+    for (let i = 0; i < 3; i++) {
+      const sp = new Sprite(ribbonTex);
+      sp.anchor.set(0.5, 0);
+      sp.tint = colors[i];
+      sp.blendMode = 'add';
+      sp.alpha = 0;
+      auroraLayer.addChild(sp);
+      auroraSprites.push(sp);
+    }
+  }
+  let activeEvent: { kind: 'comet' | 'eclipse' | 'aurora'; t: number; dur: number; a?: { x: number; y: number }; b?: { x: number; y: number } } | null = null;
+  let eventCooldown = 0;
+  let eclipseMult = 1;
+  let eventCb: ((kind: string) => void) | null = null;
+
+  function startCelestial(kind: 'comet' | 'eclipse' | 'aurora') {
+    const E = ATMOS.events;
+    const w = limbLayout?.width ?? 1600;
+    const h = limbLayout?.height ?? 900;
+    const dur = kind === 'comet' ? E.cometDurationSec : kind === 'eclipse' ? E.eclipseDurationSec : E.auroraDurationSec;
+    activeEvent = { kind, t: 0, dur };
+    if (kind === 'comet') {
+      const leftToRight = weatherRand() < 0.5;
+      const y0 = h * (0.04 + weatherRand() * 0.06);
+      const y1 = h * (0.14 + weatherRand() * 0.10);
+      activeEvent.a = { x: leftToRight ? w * 0.06 : w * 0.94, y: y0 };
+      activeEvent.b = { x: leftToRight ? w * 0.94 : w * 0.06, y: y1 };
+    }
+    if (kind === 'aurora') {
+      for (let i = 0; i < auroraSprites.length; i++) {
+        auroraSprites[i].position.set(w * (0.25 + 0.25 * i + weatherRand() * 0.08), -10);
+        auroraSprites[i].height = h * 0.42;
+        auroraSprites[i].width = 90 + weatherRand() * 70;
+      }
+    }
+    eventCb?.(kind);
+  }
+
+  function updateCelestialEvents(dt: number, L: CelestialLight) {
+    if (eventCooldown > 0) eventCooldown -= dt;
+    if (!activeEvent && eventCooldown <= 0) {
+      const E = ATMOS.events;
+      const roll = (mean: number) => Math.random() < dt / mean;
+      const winter = seasonT > 0.6 && seasonT < 0.95;
+      if (L.nightness > 0.5 && roll(E.cometMeanSec)) startCelestial('comet');
+      else if (!L.isDay && L.altitude > 0.4 && roll(E.eclipseMeanSec)) startCelestial('eclipse');
+      else if (L.nightness > 0.8 && winter && roll(E.auroraMeanSec)) startCelestial('aurora');
+    }
+    eclipseMult = 1;
+    cometGfx_clear();
+    if (!activeEvent) return;
+    activeEvent.t += dt;
+    const p = activeEvent.t / activeEvent.dur;
+    if (p >= 1) {
+      activeEvent = null;
+      eventCooldown = ATMOS.events.cooldownSec;
+      for (const sp of auroraSprites) sp.alpha = 0;
+      return;
+    }
+    const env = Math.sin(Math.PI * p);
+    if (activeEvent.kind === 'comet' && activeEvent.a && activeEvent.b) {
+      const { a, b } = activeEvent;
+      const x = a.x + (b.x - a.x) * p, y = a.y + (b.y - a.y) * p;
+      const vx = b.x - a.x, vy = b.y - a.y;
+      const vlen = Math.hypot(vx, vy);
+      const alpha = env * Math.max(0.25, L.nightness);
+      for (let i = 1; i <= 8; i++) {
+        cometLayer.circle(x - (vx / vlen) * i * 7, y - (vy / vlen) * i * 7, 1.6 - i * 0.15)
+          .fill({ color: 0xdfe9f5, alpha: alpha * (1 - i / 9) * 0.5 });
+      }
+      cometLayer.circle(x, y, 2.6).fill({ color: 0xffffff, alpha: alpha * 0.35 });
+      cometLayer.circle(x, y, 1.5).fill({ color: 0xffffff, alpha });
+    } else if (activeEvent.kind === 'eclipse') {
+      eclipseMult = 1 - 0.85 * env;
+    } else if (activeEvent.kind === 'aurora') {
+      for (let i = 0; i < auroraSprites.length; i++) {
+        const sp = auroraSprites[i];
+        sp.alpha = 0.16 * env * L.nightness;
+        sp.skew.x = 0.18 * Math.sin(activeEvent.t * 0.25 + i * 1.7);
+        sp.x += Math.sin(activeEvent.t * 0.11 + i) * 0.08;
+      }
+    }
+  }
+  function cometGfx_clear() { cometLayer.clear(); }
+
+  // Bird flocks: a V of dots crossing the world at dawn or dusk.
+  const birdLayer = new Graphics();
+  let birdFlock: { x: number; y: number; dir: number; t: number } | null = null;
+
+  function updateBirds(dt: number, L: CelestialLight) {
+    birdLayer.clear();
+    if (!birdFlock) {
+      if (L.isDay && L.altitude < 0.5 && Math.random() < dt / 150) {
+        const dir = weatherRand() < 0.5 ? 1 : -1;
+        birdFlock = { x: dir > 0 ? -1700 : 1700, y: 350 + weatherRand() * 750, dir, t: 0 };
+      }
+      return;
+    }
+    birdFlock.t += dt;
+    birdFlock.x += birdFlock.dir * 110 * dt;
+    if (Math.abs(birdFlock.x) > 1750) { birdFlock = null; return; }
+    const { x, y, dir, t } = birdFlock;
+    for (let k = 0; k <= 3; k++) {
+      for (const side of k === 0 ? [0] : [-1, 1]) {
+        const bx = x - dir * k * 9;
+        const by = y + side * k * 6 + Math.sin(t * 6 + k * 1.3 + side) * 1.3;
+        birdLayer.circle(bx, by, 1.3).fill({ color: 0x4a443c, alpha: 0.55 });
+      }
+    }
+  }
+
   let starRotation = 0;
   let lightAzOverride: number | null = null;
   let lightAltOverride: number | null = null;
@@ -735,6 +913,9 @@ export function createAtmosphere(): Atmosphere {
 
     // --- Celestial light ---------------------------------------------------
     curLight = computeLight();
+    updateCelestialEvents(dt, curLight);
+    if (!curLight.isDay) curLight.intensity *= eclipseMult;
+    updateBirds(dt, curLight);
     const L = curLight;
 
     // Water glitter / moon path: the band slides with the light's azimuth,
@@ -810,6 +991,16 @@ export function createAtmosphere(): Atmosphere {
     };
     for (const d of cloudShadows) advance(d, shadowStrength, false);
     for (const d of fogBanks) advance(d, fogStrength, true);
+    lastWind = { x: wx, y: wy };
+    // Wind shimmer: same drift machinery, faster, daylight-gated. (curLight
+    // is last frame's value here — a one-frame lag, invisible.)
+    const shimmerAlpha = ATMOS.shimmer.alpha * curLight.intensity * (curLight.isDay ? 1 : 0.3);
+    const extraMult = ATMOS.shimmer.speedMult - 1;
+    for (const d of shimmerDrifters) {
+      advance(d, shimmerAlpha, false);
+      d.sp.x += wx * extraMult * d.speedMult * dt;
+      d.sp.y += wy * extraMult * d.speedMult * dt;
+    }
 
     // Scar fade envelopes.
     for (let i = scars.length - 1; i >= 0; i--) {
@@ -930,6 +1121,14 @@ export function createAtmosphere(): Atmosphere {
     landLightLayer: landLightSprite,
     starLayer,
     setWaterMask: (mask: Container | null) => { glitterLayer.mask = mask; },
+    shimmerLayer,
+    birdLayer,
+    cometLayer,
+    auroraLayer,
+    setLandMask: (mask: Container | null) => { shimmerLayer.mask = mask; },
+    wind: () => lastWind,
+    onCelestialEvent: (cb: (kind: string) => void) => { eventCb = cb; },
+    triggerCelestial: (kind: 'comet' | 'eclipse' | 'aurora') => { startCelestial(kind); },
     light: () => curLight,
     setLightAzimuth: (v: number | null) => { lightAzOverride = v == null ? null : Math.max(0, Math.min(1, v)); },
     setLightAltitude: (v: number | null) => { lightAltOverride = v == null ? null : Math.max(0, Math.min(1, v)); },

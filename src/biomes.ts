@@ -52,6 +52,55 @@ function classify(elevation: number, moisture: number): Biome {
   return 'fertile';
 }
 
+// Rivers: greedy descent from high ground to the sea, deterministic per seed.
+// Purely visual — tiles remain land and the sim never sees them; main.ts
+// draws the paths as polylines.
+export function generateRivers(
+  elevation: number[][],
+  biomes: Biome[][],
+  seed: string,
+  count = 9,
+): Array<Array<{ row: number; col: number }>> {
+  const rand = mulberry32(seed + ':rivers');
+  const height = elevation.length;
+  const width = elevation[0].length;
+  const dirs = [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, 1], [-1, 1], [1, -1]];
+  const used = new Set<number>();
+  const rivers: Array<Array<{ row: number; col: number }>> = [];
+  let attempts = 0;
+  while (rivers.length < count && attempts++ < 400) {
+    let r = Math.floor(rand() * height);
+    let c = Math.floor(rand() * width);
+    if (elevation[r][c] < 0.30) continue; // sources rise in the hills
+    const path = [{ row: r, col: c }];
+    const seen = new Set([r * width + c]);
+    for (let steps = 0; steps < 300 && biomes[r][c] !== 'water'; steps++) {
+      let best = -1;
+      let bestE = Infinity;
+      for (let d = 0; d < dirs.length; d++) {
+        const nr = r + dirs[d][0], nc = c + dirs[d][1];
+        if (nr < 0 || nr >= height || nc < 0 || nc >= width) continue;
+        if (seen.has(nr * width + nc)) continue;
+        const e = elevation[nr][nc] + (rand() - 0.5) * 0.02; // slight wander
+        if (e < bestE) { bestE = e; best = d; }
+      }
+      if (best < 0) break;
+      r += dirs[best][0];
+      c += dirs[best][1];
+      seen.add(r * width + c);
+      path.push({ row: r, col: c });
+    }
+    const end = path[path.length - 1];
+    if (path.length < 10 || biomes[end.row][end.col] !== 'water') continue;
+    let overlap = 0;
+    for (const p of path) if (used.has(p.row * width + p.col)) overlap++;
+    if (overlap > path.length * 0.25) continue;
+    for (const p of path) used.add(p.row * width + p.col);
+    rivers.push(path);
+  }
+  return rivers;
+}
+
 export function generateBiomeMap(
   width: number,
   height: number,
