@@ -1412,14 +1412,13 @@ function drawExpeditions() {
       g.circle(x, y, 2.5).fill({ color: civ.color, alpha });
     }
 
+    // Drawn like the trade boats, a size up — a hull, a sail, a wake — not
+    // the old diamond marker.
     const { x, y } = gridToScreen(exp.col, exp.row);
-    g.moveTo(x, y - 7);
-    g.lineTo(x + 7, y);
-    g.lineTo(x, y + 7);
-    g.lineTo(x - 7, y);
-    g.closePath();
-    g.fill({ color: civ.color, alpha: 1.0 });
-    g.stroke({ color: 0xffffff, alpha: 0.95, width: 1.5 });
+    g.ellipse(x, y + 0.5, 3.2, 1.7).fill({ color: 0x3c352c, alpha: 0.9 });
+    g.circle(x, y, 1.2).fill({ color: civ.color, alpha: 0.95 });
+    g.poly([x - 0.5, y - 1, x - 0.5, y - 6, x + 3, y - 1.8]).fill({ color: 0xf2ecdc, alpha: 0.85 });
+    g.circle(x - exp.dirCol * 5, y - exp.dirRow * 2.5, 1.3).fill({ color: 0xffffff, alpha: 0.25 });
   }
 }
 
