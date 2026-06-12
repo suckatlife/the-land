@@ -39,11 +39,13 @@ contains all suspense work. Suggested order when you're happy: merge
   ground multiply came down from 0.85 to 0.55.
 
 ### Window 3 — planetary curvature + fake perspective (`WINDOW_3_NOTES.md`)
-- The world renders into a fixed RenderTexture and is drawn through a gently
-  bent 32×22 mesh: a planetary drop ∝ distance² from the front of the view
-  (back and corners fall away), plus a perspective pinch/squeeze of the far
-  rows. Three soft corner hazes, tinted live to the horizon color, melt the
-  diamond's points into the air.
+- The world renders into a fixed RenderTexture and is drawn through a 32×22
+  mesh whose vertices remap the upper silhouette onto a horizon arc: the
+  apex stays, the diamond's wings rise to meet the curve, the far surface
+  bunches toward the horizon (t^e perspective), the front stays pinned. This
+  shape went through two revisions driven by Lawrence's live review — see
+  "What I tried" below. Corner hazes and a shoreline feather (both
+  world-space, horizon-tinted) melt the edges into the air.
 - Scrubbers: `__atmosphere.setCurvature(0..1)` / `setPerspective(0..1)`;
   defaults 0.55/0.45. Calibrated per the brief: 0 is pixel-identical to the
   old build, 1 is deliberately too much. Calibration screenshots in
@@ -76,6 +78,20 @@ appeared to vanish on a mature world — an hour of probing showed they were
 rendering correctly all along (small at 0.68 world scale, plus a pre-existing
 frame-rate-coupled label fade that crawls in the 3.5fps software-rendered
 headless browser). The debug handle `window.__layers` stays — it earned it.
+
+The curve itself took three shapes, two of them corrected by Lawrence's live
+review — a case study in why the scrub-and-review loop exists. v1 (radial
+distance² drop) calibrated beautifully at 1600×900 and was invisible at his
+window size: all its curvature lived at the side corners, exactly what
+narrower framings crop out. v2 (apex-concentrated limb) bent visibly but
+kept the diamond's tent silhouette, just tilted — and exposed a fog-clipping
+artifact that drew a false horizon arc above the land, which Lawrence read
+as the design intent: "the world should go up to the curve." He was right,
+so v3 makes that literal: a silhouette remap that pulls each column's upper
+edge onto a horizon arc — the wings rise, the far surface compresses, and
+the visible top of the world IS the horizon. The artifact (fog banks
+clipping at the texture's straight top edge) is fixed by fading fog near
+the apex.
 
 ## 2. What works now that didn't before
 
