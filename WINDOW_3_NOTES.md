@@ -17,6 +17,10 @@ sizes (`narrow_*` = 1330×916 like your morning screenshot, `wide_*` =
    front edge stays pinned. The visible top of the world is the horizon.
    (The floating arc you saw was also a bug — fog banks clipping at the
    world texture's top edge — now fixed; fog fades near the apex.)
+3. Your "it's not a curve" report: the silhouette was a 32-column polyline
+   and the apex kept its kink through the partial lerp. The mesh is now
+   110×36 and the apex point rounds into a crown (`apexRoundFrac`), so the
+   top edge is one continuous smooth limb.
 
 ## The constants you'll most likely want to touch
 
@@ -29,6 +33,7 @@ All in `ATMOS.curve` in `src/atmosphere.ts`:
 | `remapMax` | How far curvature=1 travels from tent to arc | 0.55 | The master range of the knob. |
 | `arcSagFrac` | Horizon arc droop from apex to sides | 0.11 | Smaller = flatter horizon line; larger = rounder dome. |
 | `arcPower` | Arc shape | 1.7 | 2 = flat crown diving at the ends, 1 = conical. |
+| `apexRoundFrac` | How wide the apex rounds into a crown | 0.45 | The "it's actually a curve" knob — smaller brings the point back. |
 | `vertCompressFrac` | Far rows bunch toward the horizon (t^(1+this)) | 0.35 | The fake-perspective depth feel. |
 | `pinchMaxFrac` | Far-edge horizontal narrowing | 0.16 | |
 | `edgeFeatherAlpha` / `edgeFeatherWidth` | Sky-tinted wash on the far shorelines | 0.5 / 42 | Kills the ruled-line reading. 0 = off. |
