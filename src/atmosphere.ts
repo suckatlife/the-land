@@ -18,7 +18,7 @@ export const ATMOS = {
   // restores the old full-bleed crop (and hides the sky almost entirely).
   composition: {
     worldScale: 0.68,
-    horizonFrac: 0.16,
+    horizonFrac: 0.24,
   },
 
   day: {
@@ -67,24 +67,19 @@ export const ATMOS = {
     // 1 = wings fully on the arc (too much; far columns stretch visibly).
     curvature: 0.62,
     perspective: 0.45,
-    remapMax:   0.55,        // at curvature=1: how far the wings travel from tent to arc
-    arcSagFrac: 0.11,        // horizon arc droop from apex toward the sides, fraction of texture height
-    arcPower:   1.7,         // arc shape: 2 = flat crown that dives at the ends, 1 = conical
-    apexRoundFrac: 0.45,     // how wide the apex point rounds into a crown (fraction of half-span, scales with the knob)
+    remapMax:   0.35,        // at curvature=1: how far the surface bends toward the horizon (interior only — the limb mask owns the silhouette)
+    arcSagFrac: 0.11,        // interior bend arc droop, fraction of texture height
+    arcPower:   1.7,         // interior bend arc shape
+    apexRoundFrac: 0.45,     // how wide the apex rounds (fraction of half-span, scales with the knob)
     pinchMaxFrac:     0.16,  // at perspective=1: horizontal narrowing of the far edge
     vertCompressFrac: 0.35,  // at perspective=1: how hard far rows bunch toward the horizon (t^(1+this))
-    // Corner haze: soft sky-colored washes over the three far corners so the
-    // points dissolve into atmosphere instead of terminating sharply. Scales
-    // with the curvature knob (0 = none, exactly the old silhouette).
-    edgeHazeAlpha: 0.55,
-    edgeHazeSize:  500,      // base radius, world px before per-corner stretch
-    // Horizon band: the haze of distance above the far shorelines — the
-    // planet's atmospheric limb. Also structurally load-bearing: it fills
-    // the sliver the seamless remap leaves near the apex. Rides the
-    // curvature knob; alpha 0 will re-expose that sliver, so prefer lowering
-    // toward ~0.4 over zeroing it.
-    edgeFeatherAlpha: 0.85,
-    edgeFeatherWidth: 56,    // per-pass stroke width, world px before blur
+    // The limb: a true circular horizon, screen-space, that clips the world.
+    // The far world disappears behind it — the ocean apron (drawn under the
+    // terrain in main.ts) means there is always sea to clip, so the
+    // silhouette is a circle arc by construction at any framing.
+    limbSagMax:   0.80,      // arc drop at the frame edge at curvature=1, fraction of half-width
+    limbHazeAlpha: 0.55,     // haze band lying along the limb
+    limbHazeWidth: 64,       // band stroke width, screen px before blur
   },
 
   weather: {
@@ -225,21 +220,6 @@ interface Scar {
   recede: boolean; // flood silt creeps back
 }
 
-// A single soft radial gradient — used (tinted) for the corner haze.
-function makeHazeTexture(): Texture {
-  const size = 256;
-  const cv = document.createElement('canvas');
-  cv.width = size; cv.height = size;
-  const ctx = cv.getContext('2d')!;
-  const grad = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
-  grad.addColorStop(0, 'rgba(255,255,255,0.85)');
-  grad.addColorStop(0.5, 'rgba(255,255,255,0.40)');
-  grad.addColorStop(1, 'rgba(255,255,255,0)');
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, size, size);
-  return Texture.from(cv);
-}
-
 // Soft blobby cloud mass on a canvas — overlapping radial gradients. Each
 // texture is reused by several sprites at different scales/flips.
 function makeCloudTexture(rand: () => number): Texture {
@@ -308,10 +288,12 @@ export interface Atmosphere {
   // The bent mesh the world draws through; attach once after creation, with
   // the diamond's corner positions in texture pixels (left, apex, right, front).
   attachPlane(plane: MeshPlane, geom: { left: { x: number; y: number }; apex: { x: number; y: number }; right: { x: number; y: number }; front: { x: number; y: number } }): void;
-  // World-space layers: shoreline feather and corner haze; add to the world
-  // container above fog (they bend with the mesh).
-  hazeLayer: Container;
-  featherLayer: Container;
+  // Screen-space limb: the mask must be added to the stage (it clips the
+  // world plane); the band draws the horizon haze above the plane.
+  limbMask: Graphics;
+  limbBand: Container;
+  // Seat the limb (call on resize; scrubs re-use the last layout).
+  layoutLimb(args: { width: number; height: number; apexX: number; apexY: number }): void;
   setCurvature(v: number): void;   // 0..1, live scrub
   setPerspective(v: number): void; // 0..1, live scrub
   curvature(): number;
@@ -374,57 +356,52 @@ export function createAtmosphere(): Atmosphere {
     d.sp.tint = ATMOS.weather.fogTint;
   }
 
-  // Horizon band: the haze of distance above the two far shorelines (left
-  // corner → apex → right corner). Drawn once in world space so it bends with
-  // the mesh; tinted live to the horizon color; alpha rides the curvature
-  // knob. It does double duty: it reads as the atmospheric limb of the
-  // planet, and it opaquely fills the sliver between the diamond's true
-  // (kinked) edge and the smooth crown the mesh remaps to — which is what
-  // lets the remap be seamless.
-  const featherLayer = new Container();
-  const featherGfx = new Graphics();
-  {
-    const L = { x: -1528, y: 764 }, T = { x: 0, y: -8 }, R = { x: 1528, y: 764 };
-    const w0 = ATMOS.curve.edgeFeatherWidth;
-    // Stacked washes climbing from the shoreline: dense at the waterline,
-    // thinning upward — ~3 stroke-widths of band above the edge.
+  // The limb: a screen-space circular horizon. limbMaskG clips the world
+  // plane (the far world disappears behind the horizon); limbBand lays a
+  // blurred haze along the arc, tinted live to the horizon color. Both are
+  // redrawn by layoutLimb (on resize and on curvature scrubs).
+  const limbMaskG = new Graphics();
+  const limbBand = new Container();
+  const limbBandGfx = new Graphics();
+  limbBandGfx.filters = [new BlurFilter({ strength: 9 })];
+  limbBand.addChild(limbBandGfx);
+  let limbLayout: { width: number; height: number; apexX: number; apexY: number } | null = null;
+
+  function layoutLimb(args?: { width: number; height: number; apexX: number; apexY: number }) {
+    if (args) limbLayout = args;
+    if (!limbLayout) return;
+    const { width, height, apexX, apexY } = limbLayout;
+    const c = ATMOS.curve;
+    limbMaskG.clear();
+    limbBandGfx.clear();
+    const sag = curCurvature * c.limbSagMax * (width / 2);
+    if (sag < 2 || !attachedPlane) {
+      // Flat: no horizon, no clipping.
+      if (attachedPlane) attachedPlane.mask = null;
+      return;
+    }
+    // Circle through the arc apex (apexX, apexY), sagging `sag` px at the
+    // frame edges: R from the chord/sagitta relation.
+    const halfW = width / 2 + 80; // overshoot the frame so the arc exits cleanly
+    const R = (halfW * halfW + sag * sag) / (2 * sag);
+    const cy = apexY + R;
+    // Mask: the circle's upper region plus everything below its center line.
+    limbMaskG.circle(apexX, cy, R).fill(0xffffff);
+    limbMaskG.rect(-200, cy, width + 400, height + 400).fill(0xffffff);
+    attachedPlane.mask = limbMaskG;
+    // Haze band hugging the limb: stacked arc strokes, dense at the horizon
+    // line, thinning upward into the sky.
+    const w0 = c.limbHazeWidth;
+    const theta = Math.asin(Math.min(1, halfW / R));
     const passes: Array<[number, number, number]> = [
-      [0.25 * w0, 1.1, 0.42],   // hugging the shoreline
-      [-0.45 * w0, 1.2, 0.38],
-      [-1.20 * w0, 1.2, 0.30],
-      [-1.95 * w0, 1.1, 0.22],
-      [-2.60 * w0, 1.0, 0.14],  // dissolving into sky
+      [w0 * 0.30, 1.1, 0.40],   // just below the line (over the far surface)
+      [-w0 * 0.35, 1.1, 0.34],
+      [-w0 * 1.00, 1.1, 0.22],
+      [-w0 * 1.65, 1.0, 0.12],  // dissolving upward
     ];
     for (const [off, wMult, aMult] of passes) {
-      featherGfx.moveTo(L.x, L.y + off).lineTo(T.x, T.y + off).lineTo(R.x, R.y + off)
-        .stroke({ color: 0xffffff, alpha: aMult, width: w0 * wMult, cap: 'round', join: 'round' });
-    }
-    featherGfx.filters = [new BlurFilter({ strength: 10 })];
-    featherLayer.addChild(featherGfx);
-  }
-
-  // Corner haze: three soft washes that melt the diamond's far points into
-  // the sky. Lives in WORLD space (so it bends with the mesh and can never
-  // strand in the sky); tinted live to the horizon color; alpha rides the
-  // curvature knob.
-  const hazeLayer = new Container();
-  const hazeTexture = makeHazeTexture();
-  const hazeSprites: Sprite[] = [];
-  {
-    const corners = [
-      { x: -1528, y: 764, sx: 2.6, sy: 1.1 },  // left
-      { x: 0, y: -8, sx: 2.2, sy: 0.95 },      // apex
-      { x: 1528, y: 764, sx: 2.6, sy: 1.1 },   // right
-    ];
-    for (const cnr of corners) {
-      const sp = new Sprite(hazeTexture);
-      sp.anchor.set(0.5);
-      sp.alpha = 0;
-      sp.position.set(cnr.x, cnr.y);
-      const base = ATMOS.curve.edgeHazeSize / 128;
-      sp.scale.set(base * cnr.sx, base * cnr.sy);
-      hazeLayer.addChild(sp);
-      hazeSprites.push(sp);
+      limbBandGfx.arc(apexX, cy, R + off, -Math.PI / 2 - theta, -Math.PI / 2 + theta)
+        .stroke({ color: 0xffffff, alpha: aMult, width: w0 * wMult, cap: 'round' });
     }
   }
 
@@ -556,15 +533,10 @@ export function createAtmosphere(): Atmosphere {
     glazeLayer.tint = glazeColor;
     glazeLayer.alpha = Math.min(ATMOS.day.glazeCap, glazeAlpha);
 
-    // Corner haze + edge feather follow the sky's horizon color (including
-    // the dread lean) and fade in with the curvature knob.
-    const hazeAlpha = ATMOS.curve.edgeHazeAlpha * curCurvature;
-    for (const sp of hazeSprites) {
-      sp.tint = horizon;
-      sp.alpha = hazeAlpha;
-    }
-    featherGfx.tint = horizon;
-    featherGfx.alpha = ATMOS.curve.edgeFeatherAlpha * curCurvature;
+    // The limb haze follows the sky's horizon color (including the dread
+    // lean) and fades in with the curvature knob.
+    limbBandGfx.tint = horizon;
+    limbBandGfx.alpha = ATMOS.curve.limbHazeAlpha * curCurvature;
 
     // The land itself drifts with the season (ambered autumns, pale winters).
     if (attachedBiomeLayer) attachedBiomeLayer.tint = season.biomeTint;
@@ -709,10 +681,12 @@ export function createAtmosphere(): Atmosphere {
       planeGeom = geom;
       planeBasePositions = plane.geometry.positions.slice();
       applyCurve();
+      layoutLimb();
     },
-    hazeLayer,
-    featherLayer,
-    setCurvature: (v: number) => { curCurvature = Math.max(0, Math.min(1, v)); applyCurve(); },
+    limbMask: limbMaskG,
+    limbBand,
+    layoutLimb,
+    setCurvature: (v: number) => { curCurvature = Math.max(0, Math.min(1, v)); applyCurve(); layoutLimb(); },
     setPerspective: (v: number) => { curPerspective = Math.max(0, Math.min(1, v)); applyCurve(); },
     curvature: () => curCurvature,
     perspective: () => curPerspective,

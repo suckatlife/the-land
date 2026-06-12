@@ -519,10 +519,6 @@ world.addChild(atmos.cloudShadowLayer);
 world.addChild(cityMarkersContainer);
 // Mist banks veil everything but the text.
 world.addChild(atmos.fogLayer);
-// Shoreline feather + corner haze melt the far edges into the sky; both are
-// world-space so they bend with the mesh.
-world.addChild(atmos.featherLayer);
-world.addChild(atmos.hazeLayer);
 world.addChild(labelLayer);
 atmos.attach({ biomeLayer });
 
@@ -547,6 +543,10 @@ const worldPlane = new MeshPlane({ texture: worldRT, verticesX: 110, verticesY: 
 
 app.stage.addChild(atmos.skyLayer);
 app.stage.addChild(worldPlane);
+// The limb mask clips the plane at the circular horizon; it must live in the
+// tree. The band lays horizon haze along the arc, above the plane.
+app.stage.addChild(atmos.limbMask);
+app.stage.addChild(atmos.limbBand);
 app.stage.addChild(atmos.glazeLayer);
 // The silhouette remap needs the diamond's corners in texture pixels.
 const toTex = (wx: number, wy: number) => ({
@@ -574,6 +574,13 @@ function centerWorld() {
   worldBaseY = window.innerHeight * ATMOS.composition.horizonFrac + WORLD_CAPTURE.y0 * captureScale;
   worldPlane.x = worldBaseX;
   worldPlane.y = worldBaseY;
+  // The circular horizon passes through the diamond apex's screen position.
+  atmos.layoutLimb({
+    width: window.innerWidth,
+    height: window.innerHeight,
+    apexX: window.innerWidth / 2,
+    apexY: window.innerHeight * ATMOS.composition.horizonFrac - 8 * captureScale,
+  });
 }
 centerWorld();
 
@@ -847,8 +854,36 @@ let running = true;
 
 const fadedDeadCivs = new Set<number>();
 
+// Ocean apron: the sea continues past the diamond in every direction, so the
+// world has no diamond boundary — the circular horizon (limb mask) is the
+// only edge the viewer ever sees. Same fill and grid treatment as water
+// tiles; first child of biomeLayer so it takes the seasonal tint.
+function drawOceanApron(): Graphics {
+  const g = new Graphics();
+  const { x0, y0, w, h } = WORLD_CAPTURE;
+  g.rect(x0, y0, w, h).fill(BIOME_COLORS.water);
+  // The iso grid, continued: tile edges satisfy x+2y = 32k and x-2y = 32m.
+  // Lines run border-to-border; overshoot past the rect is clipped by the
+  // render texture.
+  for (let k = Math.ceil((x0 + 2 * y0) / 32); k <= Math.floor((x0 + w + 2 * (y0 + h)) / 32); k++) {
+    const c = k * 32;
+    g.moveTo(c - 2 * y0, y0).lineTo(c - 2 * (y0 + h), y0 + h)
+      .stroke({ color: 0x000000, alpha: 0.08, width: 1 });
+  }
+  for (let m = Math.ceil((x0 - 2 * (y0 + h)) / 32); m <= Math.floor((x0 + w - 2 * y0) / 32); m++) {
+    const c = m * 32;
+    g.moveTo(c + 2 * y0, y0).lineTo(c + 2 * (y0 + h), y0 + h)
+      .stroke({ color: 0x000000, alpha: 0.08, width: 1 });
+  }
+  return g;
+}
+
+let oceanApron: Graphics | null = null;
+
 function drawBiomes() {
   biomeLayer.removeChildren();
+  oceanApron = drawOceanApron();
+  biomeLayer.addChild(oceanApron);
   biomeTileVisuals = Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(null));
   animatingBiomeTiles.clear();
   for (let row = 0; row < GRID_SIZE; row++) {
@@ -1589,6 +1624,9 @@ app.ticker.add((ticker) => {
   // Sky + glaze + weather + scar fades. The sky leans toward the last dread
   // hue while curDread eases, so it releases smoothly after a catastrophe.
   atmos.update(ticker.deltaMS, curDread, curHue.vignette, dominantEra(simWorld));
+  // The ocean apron belongs to the planetary look; scrubbing curvature to ~0
+  // restores the bare flat diamond.
+  if (oceanApron) oceanApron.alpha = atmos.curvature() < 0.05 ? 0 : 1;
   audio.setDread(curDread);
   frameCount++;
   // Ease per-civ saturation toward era target; refresh tints for any civ mid-transition.
