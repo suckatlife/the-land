@@ -201,3 +201,18 @@ existed as trail dots; tide breathing would need per-tile repaints per
 frame (parked). Performance held within noise of the prior baseline in the
 software-rendered harness; the one cost to watch is the city-lights rebuild
 on big worlds (WINDOW_5_NOTES doubt #1).
+
+## Window 6 — people doing things (2026-06-12)
+
+The second approved brainstorm, all ten shipped: roads growing between
+cities (era-styled, A*-cached), conquest aggregated into narrated wars with
+flickers at the front, boats and fishing dots and a rare whale, golden-age
+wonders that outlive their builders, births as visible migrations, ghost
+echoes of dead names over their ruins, traveling storms with night
+lightning, one-night festivals, a periodic chronicle line, and the
+connective narration for all of it. Performance went the right direction:
+caching the static biome/scenery layers as textures removed ~30k vertices
+from the per-frame world render, and headless FPS rose from 2.0 to 3.0 on a
+mature world despite the new systems. The deliberate non-narrations (whale,
+conquest tile-flips) are taste calls: not everything the world does should
+reach the chronicle.
