@@ -106,6 +106,45 @@ export const ATMOS = {
     ],
   },
 
+  // Celestial light — never a visible disk; the sun and moon exist only
+  // through their effects (water glitter, star fade, directional tone).
+  celestial: {
+    // dayT windows (wrap at 1). The sun crosses the sky between sunRise and
+    // sunSet; the moon owns the rest. Handoffs pass through altitude 0, so
+    // intensity naturally dips at twilight.
+    sunRise: 0.96,
+    sunSet:  0.56,
+    sunColorLow:  0xffc187,  // near the horizon
+    sunColorHigh: 0xfff3dc,  // high noon
+    moonColor:    0xbdc9dd,  // silver
+    sunIntensity:  1.0,
+    moonIntensity: 0.40,
+  },
+
+  glitter: {
+    dayAlpha:   0.45,   // band strength under full sun
+    nightAlpha: 0.30,   // moon path strength
+    dayWidthFrac:   0.30, // band width as fraction of the world's width
+    nightWidthFrac: 0.13, // the moon path is narrower
+    twinkleSpeed: 1.4,  // glint crossfade rate (cycles/second)
+  },
+
+  stars: {
+    // Field totals across the whole rotating dome — only ~4% sit in the
+    // visible sky band at any moment (Hokusai-sparse on screen).
+    count: 1300,         // faint population
+    brightCount: 110,    // bright population (fades in first at dusk)
+    fieldRadius: 1700,   // dome radius around the pole, px
+    rotationMinutes: 30, // one full turn of the sky
+    poleX: 0.64,         // celestial pole, fraction of viewport width
+    poleY: 0.09,         //   and height
+    maxAlpha: 0.85,
+  },
+
+  landLight: {
+    strength: 0.10, // additive gradient toward the light's side of the world
+  },
+
   era: {
     // The air of an age — keyed by the leading civilization's era and eased
     // slowly. `air`/`amount` lean the glaze; fogMult scales the mist.
@@ -250,6 +289,67 @@ interface Drifter {
   baseAlpha: number; // individual variation on the layer alpha
 }
 
+export interface CelestialLight {
+  azimuth: number;   // 0..1 across the sky (0 = screen-left)
+  altitude: number;  // 0..1 arc height
+  color: number;
+  intensity: number; // 0..1, dips through zero at twilight handoffs
+  isDay: boolean;
+  nightness: number; // 0 day .. 1 full night (drives stars)
+}
+
+// Position of t inside a wrapping window [a..b); returns p in [0,1) or -1.
+function windowPos(t: number, a: number, b: number): number {
+  const len = (b - a + 1) % 1;
+  const p = ((t - a + 1) % 1) / len;
+  return p < 1 ? p : -1;
+}
+
+// Sun-glitter / moon-path band: a soft gradient envelope with baked glint
+// dashes, denser at the center. Two variants crossfade for twinkle.
+function makeGlitterTexture(rand: () => number, withGlints: boolean): Texture {
+  const w = 512, h = 1024;
+  const cv = document.createElement('canvas');
+  cv.width = w; cv.height = h;
+  const ctx = cv.getContext('2d')!;
+  if (!withGlints) {
+    const grad = ctx.createLinearGradient(0, 0, w, 0);
+    grad.addColorStop(0, 'rgba(255,255,255,0)');
+    grad.addColorStop(0.3, 'rgba(255,255,255,0.25)');
+    grad.addColorStop(0.5, 'rgba(255,255,255,0.55)');
+    grad.addColorStop(0.7, 'rgba(255,255,255,0.25)');
+    grad.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, w, h);
+  } else {
+    for (let i = 0; i < 750; i++) {
+      // Center-weighted horizontal placement (sum of two uniforms).
+      const x = (0.5 + (rand() - rand()) * 0.42) * w;
+      const y = rand() * h;
+      const envelope = Math.pow(Math.cos((x / w - 0.5) * Math.PI), 2);
+      const a = (0.25 + rand() * 0.75) * envelope;
+      const dw = 2 + rand() * 6;
+      ctx.fillStyle = `rgba(255,255,255,${a.toFixed(2)})`;
+      ctx.fillRect(x - dw / 2, y, dw, 1 + rand() * 1.5);
+    }
+  }
+  return Texture.from(cv);
+}
+
+// Horizontal falloff for the land's directional light.
+function makeLandLightTexture(): Texture {
+  const cv = document.createElement('canvas');
+  cv.width = 256; cv.height = 2;
+  const ctx = cv.getContext('2d')!;
+  const grad = ctx.createLinearGradient(0, 0, 256, 0);
+  grad.addColorStop(0, 'rgba(255,255,255,1)');
+  grad.addColorStop(0.7, 'rgba(255,255,255,0.25)');
+  grad.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, 256, 2);
+  return Texture.from(cv);
+}
+
 interface SeasonState { cast: number; castAmount: number; biomeTint: number; fogMult: number }
 
 function sampleSeason(t: number): SeasonState {
@@ -292,6 +392,18 @@ export interface Atmosphere {
   limbBand: Container;
   // Seat the limb (call on resize; scrubs re-use the last layout).
   layoutLimb(args: { width: number; height: number; apexX: number; apexY: number }): void;
+  // Celestial light surfaces. glitterLayer and landLightLayer are
+  // world-space; starLayer is screen-space behind the world plane.
+  glitterLayer: Container;
+  landLightLayer: Container;
+  starLayer: Container;
+  setWaterMask(mask: Container | null): void; // restricts the glitter to water
+  light(): CelestialLight;
+  setLightAzimuth(v: number | null): void;   // pin the light's azimuth (null = resume cycle)
+  setLightAltitude(v: number | null): void;  // pin the light's altitude
+  setStarRotation(v: number): void;          // 0..1 of a full turn
+  setGlitterStrength(v: number): void;       // multiplier on the band alpha
+  setStarBrightness(v: number): void;        // multiplier on star alpha
   setCurvature(v: number): void;   // 0..1, live scrub
   setPerspective(v: number): void; // 0..1, live scrub
   curvature(): number;
@@ -406,6 +518,85 @@ export function createAtmosphere(): Atmosphere {
     applyCurve();
   }
 
+  // --- Celestial light + its surfaces -------------------------------------
+  const celestialRand = mulberry32(0x51f1ed);
+
+  // Water glitter: a band of light on the ocean, world-space (bends with the
+  // planet), masked to water by main.ts. Soft base + two glint variants
+  // crossfading in counter-phase for twinkle.
+  const glitterLayer = new Container();
+  const glitterBase = new Sprite(makeGlitterTexture(celestialRand, false));
+  const glintA = new Sprite(makeGlitterTexture(celestialRand, true));
+  const glintB = new Sprite(makeGlitterTexture(celestialRand, true));
+  for (const sp of [glitterBase, glintA, glintB]) {
+    sp.anchor.set(0.5, 0);
+    sp.blendMode = 'add';
+    sp.alpha = 0;
+    glitterLayer.addChild(sp);
+  }
+  let twinklePhase = 0;
+
+  // Land directional light: an additive gradient toward the light's side.
+  const landLightSprite = new Sprite(makeLandLightTexture());
+  landLightSprite.blendMode = 'add';
+  landLightSprite.alpha = 0;
+
+  // Stars: two populations (bright fades in first at dusk), each a single
+  // Graphics rotated around the celestial pole. Drawn once; per-frame cost is
+  // one rotation value and two alphas.
+  const starLayer = new Container();
+  const brightStarsG = new Graphics();
+  const faintStarsG = new Graphics();
+  {
+    const scatter = (g: Graphics, count: number, rMin: number, rMax: number, aMin: number, aMax: number) => {
+      for (let i = 0; i < count; i++) {
+        const ang = celestialRand() * Math.PI * 2;
+        const dist = Math.sqrt(celestialRand()) * ATMOS.stars.fieldRadius;
+        const roll = celestialRand();
+        const color = roll < 0.82 ? 0xf2f4f8 : roll < 0.92 ? 0xcdd9f0 : 0xf0ddbe;
+        g.circle(Math.cos(ang) * dist, Math.sin(ang) * dist, rMin + celestialRand() * (rMax - rMin))
+          .fill({ color, alpha: aMin + celestialRand() * (aMax - aMin) });
+      }
+    };
+    scatter(brightStarsG, ATMOS.stars.brightCount, 1.1, 2.1, 0.7, 1.0);
+    scatter(faintStarsG, ATMOS.stars.count, 0.5, 1.1, 0.35, 0.7);
+    brightStarsG.alpha = 0;
+    faintStarsG.alpha = 0;
+    starLayer.addChild(faintStarsG);
+    starLayer.addChild(brightStarsG);
+  }
+  let starRotation = 0;
+  let lightAzOverride: number | null = null;
+  let lightAltOverride: number | null = null;
+  let glitterStrengthMult = 1;
+  let starBrightnessMult = 1;
+  let curLight: CelestialLight = { azimuth: 0.5, altitude: 1, color: 0xfff3dc, intensity: 1, isDay: true, nightness: 0 };
+
+  function computeLight(): CelestialLight {
+    const c = ATMOS.celestial;
+    const sunP = windowPos(dayT, c.sunRise, c.sunSet);
+    let azimuth: number, altitude: number, isDay: boolean;
+    if (sunP >= 0) {
+      isDay = true;
+      azimuth = sunP;
+      altitude = Math.sin(sunP * Math.PI);
+    } else {
+      isDay = false;
+      const moonP = windowPos(dayT, c.sunSet, c.sunRise);
+      azimuth = moonP;
+      altitude = Math.sin(Math.max(0, moonP) * Math.PI);
+    }
+    if (lightAzOverride != null) azimuth = lightAzOverride;
+    if (lightAltOverride != null) altitude = lightAltOverride;
+    const color = isDay
+      ? lerpColor(c.sunColorLow, c.sunColorHigh, altitude)
+      : c.moonColor;
+    const intensity = Math.pow(altitude, 0.7) * (isDay ? c.sunIntensity : c.moonIntensity);
+    // Stars: come out as the sun sinks, stay all night, linger into dawn.
+    const nightness = isDay ? Math.max(0, Math.min(1, 1 - altitude * 5)) : 1;
+    return { azimuth, altitude, color, intensity, isDay, nightness };
+  }
+
   let attachedBiomeLayer: Container | null = null;
   let attachedPlane: MeshPlane | null = null;
   let planeBasePositions: Float32Array | null = null;
@@ -492,6 +683,7 @@ export function createAtmosphere(): Atmosphere {
     skyLayer.height = height;
     glazeLayer.clear();
     glazeLayer.rect(0, 0, width, height).fill(0xffffff);
+    starLayer.position.set(width * ATMOS.stars.poleX, height * ATMOS.stars.poleY);
   }
 
   function update(deltaMS: number, dread: number, dreadSkyColor: number | null, dominantEra: Era) {
@@ -540,6 +732,51 @@ export function createAtmosphere(): Atmosphere {
     // lean) and fades in with the curvature knob.
     limbBandGfx.tint = horizon;
     limbBandGfx.alpha = ATMOS.curve.limbHazeAlpha * curCurvature;
+
+    // --- Celestial light ---------------------------------------------------
+    curLight = computeLight();
+    const L = curLight;
+
+    // Water glitter / moon path: the band slides with the light's azimuth,
+    // glint variants crossfade for twinkle. Intensity passes through zero at
+    // twilight, so the day/night width and alpha changes never pop.
+    const gl = ATMOS.glitter;
+    twinklePhase += dt * gl.twinkleSpeed * Math.PI * 2;
+    const bandAlpha = (L.isDay ? gl.dayAlpha : gl.nightAlpha) * L.intensity * glitterStrengthMult;
+    const bandWidth = (L.isDay ? gl.dayWidthFrac : gl.nightWidthFrac) * 3200;
+    const bandX = -1600 + L.azimuth * 3200;
+    for (const sp of [glitterBase, glintA, glintB]) {
+      sp.tint = L.color;
+      sp.position.set(bandX, -110);
+      sp.width = bandWidth;
+      sp.height = 1720;
+    }
+    glitterBase.alpha = bandAlpha * 0.5;
+    glintA.alpha = bandAlpha * (0.55 + 0.45 * Math.sin(twinklePhase));
+    glintB.alpha = bandAlpha * (0.55 + 0.45 * Math.cos(twinklePhase));
+
+    // Land directional response: an additive gradient from the light's side.
+    // Fades to nothing at noon (no direction) and at twilight (no light).
+    const dirFactor = Math.min(1, Math.abs(L.azimuth - 0.5) * 2);
+    landLightSprite.tint = L.color;
+    landLightSprite.alpha = ATMOS.landLight.strength * L.intensity * dirFactor;
+    landLightSprite.height = 1720;
+    landLightSprite.y = -110;
+    landLightSprite.width = 3200;
+    if (L.azimuth < 0.5) {
+      landLightSprite.scale.x = Math.abs(landLightSprite.scale.x);
+      landLightSprite.x = -1600;
+    } else {
+      landLightSprite.scale.x = -Math.abs(landLightSprite.scale.x);
+      landLightSprite.x = 1600;
+    }
+
+    // Stars: the sky turns. Bright population leads at dusk, faint follows.
+    starRotation += dt * (Math.PI * 2) / (ATMOS.stars.rotationMinutes * 60);
+    starLayer.rotation = starRotation;
+    const sb = ATMOS.stars.maxAlpha * starBrightnessMult;
+    brightStarsG.alpha = sb * smoothstep(Math.min(1, L.nightness * 1.4));
+    faintStarsG.alpha = sb * smoothstep(Math.max(0, (L.nightness - 0.45) / 0.55));
 
     // The land itself drifts with the season (ambered autumns, pale winters).
     if (attachedBiomeLayer) attachedBiomeLayer.tint = season.biomeTint;
@@ -689,6 +926,16 @@ export function createAtmosphere(): Atmosphere {
     limbMask: limbMaskG,
     limbBand,
     layoutLimb,
+    glitterLayer,
+    landLightLayer: landLightSprite,
+    starLayer,
+    setWaterMask: (mask: Container | null) => { glitterLayer.mask = mask; },
+    light: () => curLight,
+    setLightAzimuth: (v: number | null) => { lightAzOverride = v == null ? null : Math.max(0, Math.min(1, v)); },
+    setLightAltitude: (v: number | null) => { lightAltOverride = v == null ? null : Math.max(0, Math.min(1, v)); },
+    setStarRotation: (v: number) => { starRotation = v * Math.PI * 2; },
+    setGlitterStrength: (v: number) => { glitterStrengthMult = Math.max(0, v); },
+    setStarBrightness: (v: number) => { starBrightnessMult = Math.max(0, v); },
     setCurvature: (v: number) => { curCurvature = Math.max(0, Math.min(1, v)); applyCurve(); layoutLimb(); },
     setPerspective: (v: number) => { curPerspective = Math.max(0, Math.min(1, v)); applyCurve(); },
     curvature: () => curCurvature,

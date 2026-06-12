@@ -509,11 +509,15 @@ const cityMarkersContainer = new Container();
 const labelLayer = new Container();
 const world = new Container();
 world.addChild(biomeLayer);
+// Sun glitter / moon path on the water, masked to water tiles below.
+world.addChild(atmos.glitterLayer);
 world.addChild(simLayer);
 // Scars sit above civ tints (catastrophes hit settled land) but below buildings.
 world.addChild(atmos.scarLayer);
 world.addChild(buildingLayer);
 world.addChild(expeditionLayer);
+// Directional land light sits under the cloud shadows (clouds block sun).
+world.addChild(atmos.landLightLayer);
 // Cloud shadows fall on land and buildings; markers and labels stay above.
 world.addChild(atmos.cloudShadowLayer);
 world.addChild(cityMarkersContainer);
@@ -542,6 +546,8 @@ world.y = -WORLD_CAPTURE.y0 * captureScale;
 const worldPlane = new MeshPlane({ texture: worldRT, verticesX: 110, verticesY: 36 });
 
 app.stage.addChild(atmos.skyLayer);
+// Stars turn behind the planet; the world plane occludes them below the limb.
+app.stage.addChild(atmos.starLayer);
 app.stage.addChild(worldPlane);
 // The limb mask clips the plane at the circular horizon; it must live in the
 // tree. The band lays horizon haze along the arc, above the plane.
@@ -880,10 +886,39 @@ function drawOceanApron(): Graphics {
 
 let oceanApron: Graphics | null = null;
 
+// Water mask for the glitter layer: a Graphics (stencil mask — the same
+// mechanism the limb mask uses) covering the ocean apron's visible corners
+// plus every water tile diamond, slightly inflated so coastal seams still
+// glint. Rebuilt on reroll and flood/quake terrain changes.
+const waterMaskG = new Graphics();
+world.addChildAt(waterMaskG, world.getChildIndex(atmos.glitterLayer));
+atmos.setWaterMask(waterMaskG);
+
+function rebuildWaterMask() {
+  const g = waterMaskG;
+  g.clear();
+  // The apron outside the diamond: four corner polygons up to the diamond edges.
+  const { x0, y0, w, h } = WORLD_CAPTURE;
+  const T = { x: 0, y: -8 }, R = { x: 1536, y: 760 }, B = { x: 0, y: 1528 }, L = { x: -1536, y: 760 };
+  g.poly([x0, y0, T.x, y0, T.x, T.y, L.x, L.y, x0, L.y]).fill(0xffffff);
+  g.poly([T.x, y0, x0 + w, y0, x0 + w, R.y, R.x, R.y, T.x, T.y]).fill(0xffffff);
+  g.poly([x0 + w, R.y, x0 + w, y0 + h, B.x, y0 + h, B.x, B.y, R.x, R.y]).fill(0xffffff);
+  g.poly([B.x, y0 + h, x0, y0 + h, x0, L.y, L.x, L.y, B.x, B.y]).fill(0xffffff);
+  // Water tile diamonds, inflated a touch.
+  for (let row = 0; row < GRID_SIZE; row++) {
+    for (let col = 0; col < GRID_SIZE; col++) {
+      if (biomeMap[row][col] !== 'water') continue;
+      const { x, y } = gridToScreen(col, row);
+      g.poly([x, y - 9, x + 17, y, x, y + 9, x - 17, y]).fill(0xffffff);
+    }
+  }
+}
+
 function drawBiomes() {
   biomeLayer.removeChildren();
   oceanApron = drawOceanApron();
   biomeLayer.addChild(oceanApron);
+  rebuildWaterMask();
   biomeTileVisuals = Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(null));
   animatingBiomeTiles.clear();
   for (let row = 0; row < GRID_SIZE; row++) {
@@ -1581,6 +1616,8 @@ app.ticker.add((ticker) => {
     frameEvents.push(...events);
     for (const { row, col } of changes) { noteTileChange(row, col); refreshTileOverlay(row, col); refreshBuildingSprite(row, col); }
     for (const { row, col } of biomeChanges) { refreshBiomeTile(row, col); }
+    // Terrain mutated (flood/quake): the water mask must follow.
+    if (biomeChanges.length > 0) rebuildWaterMask();
     // When a civ transitions to 'dead', its still-built tiles change 
     // color (toward gray). The per-tile `changes` list won't include 
     // them because their *state* didn't change. So once a tick we 
@@ -1932,6 +1969,7 @@ document.getElementById('catastrophe')!.addEventListener('click', () => {
   applyCatastrophe(simWorld, biomeMap, elevationMap, changes, biomeChanges, events);
   for (const { row, col } of changes) { noteTileChange(row, col); refreshTileOverlay(row, col); refreshBuildingSprite(row, col); }
   for (const { row, col } of biomeChanges) { refreshBiomeTile(row, col); }
+  if (biomeChanges.length > 0) rebuildWaterMask();
   pushLogEvents(events);
   for (const ev of events) {
     if (ev.kind === 'catastrophe') {
