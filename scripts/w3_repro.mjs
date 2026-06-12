@@ -1,0 +1,13 @@
+import { chromium } from 'playwright';
+const browser = await chromium.launch();
+const page = await browser.newPage({ viewport: { width: 1330, height: 916 } });
+page.on('pageerror', (e) => console.log('PAGE EXCEPTION:', e.message));
+await page.goto('http://localhost:5175/?seed=c4e5ff', { waitUntil: 'networkidle' });
+await page.waitForTimeout(9000);
+await page.evaluate(() => { window.__atmosphere.setTimeOfDay(0.30); });
+await page.waitForTimeout(500);
+await page.screenshot({ path: '/tmp/landshots/repro_default.png' });
+await page.evaluate(() => { window.__atmosphere.setCurvature(1); window.__atmosphere.setPerspective(1); });
+await page.waitForTimeout(400);
+await page.screenshot({ path: '/tmp/landshots/repro_overshoot.png' });
+await browser.close();

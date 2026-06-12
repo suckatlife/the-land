@@ -519,6 +519,8 @@ world.addChild(atmos.cloudShadowLayer);
 world.addChild(cityMarkersContainer);
 // Mist banks veil everything but the text.
 world.addChild(atmos.fogLayer);
+// Shoreline feather melts the far edges into the sky; bends with the world.
+world.addChild(atmos.featherLayer);
 world.addChild(labelLayer);
 atmos.attach({ biomeLayer });
 

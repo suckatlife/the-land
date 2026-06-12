@@ -60,9 +60,14 @@ export const ATMOS = {
   // 1 = deliberately too much, defaults in the subtle-correct middle.
   // The *Frac values calibrate what "1" means and rarely need touching.
   curve: {
-    curvature: 0.55,
+    curvature: 0.62,
     perspective: 0.45,
-    bowMaxFrac:       0.085, // at curvature=1: far-corner drop, fraction of world-texture height
+    // The limb: horizontal falling-away, curvature concentrated at the apex
+    // (the top corner becomes a rounded crown — visible at any window size).
+    limbFrac:  0.11,         // at curvature=1: side-corner drop, fraction of world-texture height
+    limbPower: 1.5,          // 1 = straight taper, 2 = curvature pushed to corners; lower = rounder apex
+    // The depth: far rows drop over the horizon.
+    depthFrac: 0.06,         // at curvature=1: extra back-edge drop, fraction of texture height
     pinchMaxFrac:     0.16,  // at perspective=1: horizontal narrowing of the far edge
     vertCompressFrac: 0.05,  // at perspective=1: vertical squeeze of the far rows
     // Corner haze: soft sky-colored washes over the three far corners so the
@@ -70,6 +75,11 @@ export const ATMOS = {
     // with the curvature knob (0 = none, exactly the old silhouette).
     edgeHazeAlpha: 0.55,
     edgeHazeSize:  340,      // base radius, screen px before per-corner stretch
+    // Edge feather: a blurred sky-tinted wash along the two far shorelines so
+    // the waterline-to-sky boundary is a gradient, not a ruled line. Rides
+    // the curvature knob; set 0 to disable.
+    edgeFeatherAlpha: 0.5,
+    edgeFeatherWidth: 42,    // world px, before blur
   },
 
   weather: {
@@ -293,6 +303,8 @@ export interface Atmosphere {
   // The bent mesh the world draws through; attach once after creation.
   attachPlane(plane: MeshPlane): void;
   hazeLayer: Container;
+  // World-space shoreline feather; add to the world container above fog.
+  featherLayer: Container;
   // Seat the three corner-haze washes (screen coords: left, top, right corner).
   layoutHaze(corners: Array<{ x: number; y: number }>): void;
   setCurvature(v: number): void;   // 0..1, live scrub
@@ -357,6 +369,22 @@ export function createAtmosphere(): Atmosphere {
     d.sp.tint = ATMOS.weather.fogTint;
   }
 
+  // Edge feather: a blurred wash along the two far shorelines (left corner →
+  // apex → right corner), drawn once in world space so it bends with the
+  // mesh. Tinted live to the horizon color; alpha rides the curvature knob.
+  const featherLayer = new Container();
+  const featherGfx = new Graphics();
+  {
+    const L = { x: -1528, y: 764 }, T = { x: 0, y: -8 }, R = { x: 1528, y: 764 };
+    const w0 = ATMOS.curve.edgeFeatherWidth;
+    for (const [wMult, aMult] of [[1.0, 0.30], [0.55, 0.30], [0.25, 0.30]] as const) {
+      featherGfx.moveTo(L.x, L.y).lineTo(T.x, T.y).lineTo(R.x, R.y)
+        .stroke({ color: 0xffffff, alpha: aMult, width: w0 * wMult, cap: 'round', join: 'round' });
+    }
+    featherGfx.filters = [new BlurFilter({ strength: 8 })];
+    featherLayer.addChild(featherGfx);
+  }
+
   // Corner haze: three soft washes that melt the diamond's far points into
   // the sky. Tinted live to the current horizon color; alpha rides the
   // curvature knob.
@@ -389,15 +417,18 @@ export function createAtmosphere(): Atmosphere {
     const base = planeBasePositions;
     const out = new Float32Array(base.length);
     const cx = texW / 2;
-    const aspect = texW / texH;
-    const d2Max = Math.pow(0.5 * aspect, 2) + 1;
     const c = ATMOS.curve;
     for (let i = 0; i < base.length; i += 2) {
       const x = base[i], y = base[i + 1];
       const u = x / texW, v = y / texH;
-      const d2 = (Math.pow((u - 0.5) * aspect, 2) + Math.pow(1 - v, 2)) / d2Max;
-      let ny = y + curCurvature * c.bowMaxFrac * texH * d2;
-      ny += curPerspective * c.vertCompressFrac * texH * Math.pow(1 - v, 2);
+      // Limb: horizontal falling-away, |u-0.5|^limbPower — with power < 2 the
+      // curvature concentrates at the apex, so the bow is visible even when a
+      // narrow window crops the side corners out of view.
+      const limb = Math.pow(Math.abs(u - 0.5) * 2, c.limbPower);
+      // Depth: the back rows drop over the horizon.
+      const depth = Math.pow(1 - v, 2);
+      let ny = y + curCurvature * texH * (c.limbFrac * limb + c.depthFrac * depth);
+      ny += curPerspective * c.vertCompressFrac * texH * depth;
       const nx = cx + (x - cx) * (1 - curPerspective * c.pinchMaxFrac * (1 - v));
       out[i] = nx;
       out[i + 1] = ny;
@@ -473,13 +504,15 @@ export function createAtmosphere(): Atmosphere {
     glazeLayer.tint = glazeColor;
     glazeLayer.alpha = Math.min(ATMOS.day.glazeCap, glazeAlpha);
 
-    // Corner haze follows the sky's horizon color (including the dread lean)
-    // and fades in with the curvature knob.
+    // Corner haze + edge feather follow the sky's horizon color (including
+    // the dread lean) and fade in with the curvature knob.
     const hazeAlpha = ATMOS.curve.edgeHazeAlpha * curCurvature;
     for (const sp of hazeSprites) {
       sp.tint = horizon;
       sp.alpha = hazeAlpha;
     }
+    featherGfx.tint = horizon;
+    featherGfx.alpha = ATMOS.curve.edgeFeatherAlpha * curCurvature;
 
     // The land itself drifts with the season (ambered autumns, pale winters).
     if (attachedBiomeLayer) attachedBiomeLayer.tint = season.biomeTint;
@@ -617,6 +650,7 @@ export function createAtmosphere(): Atmosphere {
       applyCurve();
     },
     hazeLayer,
+    featherLayer,
     layoutHaze: (corners: Array<{ x: number; y: number }>) => {
       const base = ATMOS.curve.edgeHazeSize / 128; // texture is 256px; scale to base radius
       const stretch: Array<[number, number]> = [[2.4, 1.0], [2.0, 0.85], [2.4, 1.0]]; // left, top, right
