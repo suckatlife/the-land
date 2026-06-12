@@ -78,11 +78,13 @@ export const ATMOS = {
     // with the curvature knob (0 = none, exactly the old silhouette).
     edgeHazeAlpha: 0.55,
     edgeHazeSize:  500,      // base radius, world px before per-corner stretch
-    // Edge feather: a blurred sky-tinted wash along the two far shorelines so
-    // the waterline-to-sky boundary is a gradient, not a ruled line. Rides
-    // the curvature knob; set 0 to disable.
-    edgeFeatherAlpha: 0.5,
-    edgeFeatherWidth: 42,    // world px, before blur
+    // Horizon band: the haze of distance above the far shorelines — the
+    // planet's atmospheric limb. Also structurally load-bearing: it fills
+    // the sliver the seamless remap leaves near the apex. Rides the
+    // curvature knob; alpha 0 will re-expose that sliver, so prefer lowering
+    // toward ~0.4 over zeroing it.
+    edgeFeatherAlpha: 0.85,
+    edgeFeatherWidth: 56,    // per-pass stroke width, world px before blur
   },
 
   weather: {
@@ -372,19 +374,32 @@ export function createAtmosphere(): Atmosphere {
     d.sp.tint = ATMOS.weather.fogTint;
   }
 
-  // Edge feather: a blurred wash along the two far shorelines (left corner →
-  // apex → right corner), drawn once in world space so it bends with the
-  // mesh. Tinted live to the horizon color; alpha rides the curvature knob.
+  // Horizon band: the haze of distance above the two far shorelines (left
+  // corner → apex → right corner). Drawn once in world space so it bends with
+  // the mesh; tinted live to the horizon color; alpha rides the curvature
+  // knob. It does double duty: it reads as the atmospheric limb of the
+  // planet, and it opaquely fills the sliver between the diamond's true
+  // (kinked) edge and the smooth crown the mesh remaps to — which is what
+  // lets the remap be seamless.
   const featherLayer = new Container();
   const featherGfx = new Graphics();
   {
     const L = { x: -1528, y: 764 }, T = { x: 0, y: -8 }, R = { x: 1528, y: 764 };
     const w0 = ATMOS.curve.edgeFeatherWidth;
-    for (const [wMult, aMult] of [[1.0, 0.30], [0.55, 0.30], [0.25, 0.30]] as const) {
-      featherGfx.moveTo(L.x, L.y).lineTo(T.x, T.y).lineTo(R.x, R.y)
+    // Stacked washes climbing from the shoreline: dense at the waterline,
+    // thinning upward — ~3 stroke-widths of band above the edge.
+    const passes: Array<[number, number, number]> = [
+      [0.25 * w0, 1.1, 0.42],   // hugging the shoreline
+      [-0.45 * w0, 1.2, 0.38],
+      [-1.20 * w0, 1.2, 0.30],
+      [-1.95 * w0, 1.1, 0.22],
+      [-2.60 * w0, 1.0, 0.14],  // dissolving into sky
+    ];
+    for (const [off, wMult, aMult] of passes) {
+      featherGfx.moveTo(L.x, L.y + off).lineTo(T.x, T.y + off).lineTo(R.x, R.y + off)
         .stroke({ color: 0xffffff, alpha: aMult, width: w0 * wMult, cap: 'round', join: 'round' });
     }
-    featherGfx.filters = [new BlurFilter({ strength: 8 })];
+    featherGfx.filters = [new BlurFilter({ strength: 10 })];
     featherLayer.addChild(featherGfx);
   }
 
@@ -439,26 +454,27 @@ export function createAtmosphere(): Atmosphere {
     const halfSpan = (right.x - left.x) / 2;
     for (let i = 0; i < base.length; i += 2) {
       const x = base[i], y = base[i + 1];
-      // The diamond's upper edge height at this column (clamped beyond corners).
+      // The silhouette target: the diamond's tent edge with its apex rounded
+      // into a crown (softened |dx|), pulled toward a horizon arc. Everything
+      // here is smooth in x — the mapping must have no kink anywhere or the
+      // compression rate jumps at the center column and draws a seam. The
+      // sliver between the soft tent and the true edge near the apex is
+      // filled by the horizon band (featherLayer), not by stretched tiles.
       const dx = Math.min(1, Math.abs(x - apex.x) / halfSpan);
-      const tentY = apex.y + dx * (left.y - apex.y);
-      // The silhouette target: the tent with its apex point rounded into a
-      // crown (softened |dx|, radius scaling with the knob), pulled toward a
-      // horizon arc. Both terms vanish as the knob goes to 0 — flat restores.
       const r = c.apexRoundFrac * k;
       const dxSoft = Math.sqrt(dx * dx + r * r) - r;
       const tentSoftY = apex.y + dxSoft * (left.y - apex.y);
       const arcY = apex.y + c.arcSagFrac * texH * Math.pow(dx, c.arcPower);
       const newTopY = tentSoftY + (arcY - tentSoftY) * k;
       let ny: number;
-      if (y <= tentY) {
-        // Sky margin / feather above the edge: ride with the wing.
-        ny = y + (newTopY - tentY);
+      if (y <= tentSoftY) {
+        // Sky margin above the soft edge: ride with the wing.
+        ny = y + (newTopY - tentSoftY);
       } else if (y < front.y) {
-        // Surface between the edge and the front anchor: compress toward the
-        // new top (front pinned), with perspective bunching the far rows
+        // Surface between the soft edge and the front anchor: compress toward
+        // the new top (front pinned), perspective bunching the far rows
         // toward the horizon (t^e redistribution).
-        let t = (y - tentY) / (front.y - tentY);
+        let t = (y - tentSoftY) / (front.y - tentSoftY);
         t = Math.pow(t, 1 + curPerspective * c.vertCompressFrac);
         ny = newTopY + t * (front.y - newTopY);
       } else {
