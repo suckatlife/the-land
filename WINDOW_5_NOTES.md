@@ -77,3 +77,20 @@ breathing (needs per-tile repaints every frame — poor value; in IDEAS.md).
    (same color as the map label and bar); narrated events ping their map
    location with a soft ring; each panel row shows the civ's capital and
    flashes for ~6s when the civ is mentioned. Top 8 shown, rest collapse.
+
+## Scenery terrain (the diamond's actual end)
+
+What you were still seeing was a texture seam: mottled sim water against the
+flat apron, tracing the old boundary. Now the renderer samples the same
+terrain noise beyond the sim grid and draws scenery tiles to the horizon —
+identical look, no sim. A sea moat (`SCENERY.moatTiles` = 14, main.ts)
+separates the known world from distant continents civilizations can never
+reach (across water — no invisible walls). Answer to your question: the sim
+stays a 96×96 grid, but the picture is no longer bounded by it.
+
+- Worth knowing: the far continents are pure scenery — no civs, no rivers,
+  no scars, ever. If watching them stay empty bothers you, raise the moat
+  or deepen the falloff so less scenery land appears.
+- Headless software-render FPS dipped ~20% from the extra static geometry;
+  GPU should shrug it off, but this is now the third "check on real
+  hardware" flag — worth doing once for the whole stack.
