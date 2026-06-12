@@ -33,6 +33,12 @@ sizes (`narrow_*` = 1330×916 like your morning screenshot, `wide_*` =
    genuinely disappears behind the horizon, like your mockup's upper-left.
    The haze band lies along the limb arc, tinted to the live sky. Scars,
    labels, weather, dread all render inside the cap unchanged.
+6. Your "crease top-left/right" report: the old per-column remap still
+   compressed from the invisible diamond edge, and the apron's grid folded
+   along that diagonal. The tent remap is deleted; thinning now references
+   the apex row, whose zero-compression line the mask hides by construction.
+   The surface transform is now just three smooth fields: thinning, limb
+   bow, pinch.
 
 ## The constants you'll most likely want to touch
 
@@ -46,10 +52,8 @@ All in `ATMOS.curve` in `src/atmosphere.ts`:
 | `limbBowMix` / `limbBowPower` | Surface rows bow parallel to the limb near the horizon | 0.85 / 1.5 | Mix 0 = straight grid under the arc; power higher = bow hugs the horizon only. |
 | `limbHazeAlpha` / `limbHazeWidth` | Haze band lying along the limb | 0.55 / 64 | Tinted live to the horizon color. |
 | `composition.horizonFrac` (main seat) | How much sky above the horizon | 0.24 | Raised from 0.16 to match your mockup's framing. |
-| `remapMax` | Interior surface bend toward the horizon | 0.35 | Gentler now — the limb mask owns the silhouette; this just curves the surface. |
-| `vertCompressFrac` | Far rows bunch toward the horizon (t^(1+this)) | 0.35 | The fake-perspective depth feel. |
-| `pinchMaxFrac` | Far-edge horizontal narrowing | 0.16 | |
-| `arcSagFrac` / `arcPower` / `apexRoundFrac` | Interior bend shape | 0.11 / 1.7 / 0.45 | Rarely touch now. |
+| `vertCompressFrac` | Rows thin toward the horizon (t^(1+this)) | 0.55 | The fake-perspective depth feel; referenced to the apex row, smooth everywhere. |
+| `pinchMaxFrac` | Far-field horizontal narrowing | 0.16 | |
 
 ## How it works (so the knobs make sense)
 
