@@ -60,21 +60,23 @@ export const ATMOS = {
   // 1 = deliberately too much, defaults in the subtle-correct middle.
   // The *Frac values calibrate what "1" means and rarely need touching.
   curve: {
+    // The curvature knob remaps the world's upper silhouette onto a horizon
+    // arc: the apex stays put and the diamond's side wings RISE to meet a
+    // smooth limb curve, each column compressing toward it — the world goes
+    // up to the horizon instead of sitting inside it. 0 = the flat diamond,
+    // 1 = wings fully on the arc (too much; far columns stretch visibly).
     curvature: 0.62,
     perspective: 0.45,
-    // The limb: horizontal falling-away, curvature concentrated at the apex
-    // (the top corner becomes a rounded crown — visible at any window size).
-    limbFrac:  0.11,         // at curvature=1: side-corner drop, fraction of world-texture height
-    limbPower: 1.5,          // 1 = straight taper, 2 = curvature pushed to corners; lower = rounder apex
-    // The depth: far rows drop over the horizon.
-    depthFrac: 0.06,         // at curvature=1: extra back-edge drop, fraction of texture height
+    remapMax:   0.55,        // at curvature=1: how far the wings travel from tent to arc
+    arcSagFrac: 0.11,        // horizon arc droop from apex toward the sides, fraction of texture height
+    arcPower:   1.7,         // arc shape: 2 = flat crown that dives at the ends, 1 = conical
     pinchMaxFrac:     0.16,  // at perspective=1: horizontal narrowing of the far edge
-    vertCompressFrac: 0.05,  // at perspective=1: vertical squeeze of the far rows
+    vertCompressFrac: 0.35,  // at perspective=1: how hard far rows bunch toward the horizon (t^(1+this))
     // Corner haze: soft sky-colored washes over the three far corners so the
     // points dissolve into atmosphere instead of terminating sharply. Scales
     // with the curvature knob (0 = none, exactly the old silhouette).
     edgeHazeAlpha: 0.55,
-    edgeHazeSize:  340,      // base radius, screen px before per-corner stretch
+    edgeHazeSize:  500,      // base radius, world px before per-corner stretch
     // Edge feather: a blurred sky-tinted wash along the two far shorelines so
     // the waterline-to-sky boundary is a gradient, not a ruled line. Rides
     // the curvature knob; set 0 to disable.
@@ -300,13 +302,13 @@ export interface Atmosphere {
   fogLayer: Container;
   // biomeLayer is tinted seasonally; attach it once after scene construction.
   attach(layers: { biomeLayer: Container }): void;
-  // The bent mesh the world draws through; attach once after creation.
-  attachPlane(plane: MeshPlane): void;
+  // The bent mesh the world draws through; attach once after creation, with
+  // the diamond's corner positions in texture pixels (left, apex, right, front).
+  attachPlane(plane: MeshPlane, geom: { left: { x: number; y: number }; apex: { x: number; y: number }; right: { x: number; y: number }; front: { x: number; y: number } }): void;
+  // World-space layers: shoreline feather and corner haze; add to the world
+  // container above fog (they bend with the mesh).
   hazeLayer: Container;
-  // World-space shoreline feather; add to the world container above fog.
   featherLayer: Container;
-  // Seat the three corner-haze washes (screen coords: left, top, right corner).
-  layoutHaze(corners: Array<{ x: number; y: number }>): void;
   setCurvature(v: number): void;   // 0..1, live scrub
   setPerspective(v: number): void; // 0..1, live scrub
   curvature(): number;
@@ -386,50 +388,78 @@ export function createAtmosphere(): Atmosphere {
   }
 
   // Corner haze: three soft washes that melt the diamond's far points into
-  // the sky. Tinted live to the current horizon color; alpha rides the
+  // the sky. Lives in WORLD space (so it bends with the mesh and can never
+  // strand in the sky); tinted live to the horizon color; alpha rides the
   // curvature knob.
   const hazeLayer = new Container();
   const hazeTexture = makeHazeTexture();
   const hazeSprites: Sprite[] = [];
-  for (let i = 0; i < 3; i++) {
-    const sp = new Sprite(hazeTexture);
-    sp.anchor.set(0.5);
-    sp.alpha = 0;
-    hazeLayer.addChild(sp);
-    hazeSprites.push(sp);
+  {
+    const corners = [
+      { x: -1528, y: 764, sx: 2.6, sy: 1.1 },  // left
+      { x: 0, y: -8, sx: 2.2, sy: 0.95 },      // apex
+      { x: 1528, y: 764, sx: 2.6, sy: 1.1 },   // right
+    ];
+    for (const cnr of corners) {
+      const sp = new Sprite(hazeTexture);
+      sp.anchor.set(0.5);
+      sp.alpha = 0;
+      sp.position.set(cnr.x, cnr.y);
+      const base = ATMOS.curve.edgeHazeSize / 128;
+      sp.scale.set(base * cnr.sx, base * cnr.sy);
+      hazeLayer.addChild(sp);
+      hazeSprites.push(sp);
+    }
   }
 
   let attachedBiomeLayer: Container | null = null;
   let attachedPlane: MeshPlane | null = null;
   let planeBasePositions: Float32Array | null = null;
+  let planeGeom: { left: { x: number; y: number }; apex: { x: number; y: number }; right: { x: number; y: number }; front: { x: number; y: number } } | null = null;
   let curCurvature = ATMOS.curve.curvature;
   let curPerspective = ATMOS.curve.perspective;
 
-  // Bend the world mesh: a planetary drop proportional to distance² from the
-  // front-center anchor (the back and corners fall away over the horizon),
-  // plus a perspective pinch + vertical squeeze of the far rows. Vertices
-  // only change when the knobs change — zero per-frame cost.
+  // Bend the world mesh by remapping its upper silhouette onto a horizon arc.
+  // For each column: the diamond's tent edge (apex-to-corner straight line)
+  // is pulled toward a smooth arc through the apex; everything between the
+  // tent and the front anchor compresses proportionally, the front stays
+  // pinned, and content above the tent (feather blur, sky margin) rides
+  // rigidly with the wing. Perspective adds a far-edge pinch and a vertical
+  // squeeze of the far rows. Vertices only change when the knobs change.
   function applyCurve() {
-    if (!attachedPlane || !planeBasePositions) return;
+    if (!attachedPlane || !planeBasePositions || !planeGeom) return;
     const geo = attachedPlane.geometry;
-    const texW = (geo as any).width as number;
     const texH = (geo as any).height as number;
     const base = planeBasePositions;
     const out = new Float32Array(base.length);
-    const cx = texW / 2;
+    const { left, apex, right, front } = planeGeom;
     const c = ATMOS.curve;
+    const k = curCurvature * c.remapMax;
+    const halfSpan = (right.x - left.x) / 2;
     for (let i = 0; i < base.length; i += 2) {
       const x = base[i], y = base[i + 1];
-      const u = x / texW, v = y / texH;
-      // Limb: horizontal falling-away, |u-0.5|^limbPower — with power < 2 the
-      // curvature concentrates at the apex, so the bow is visible even when a
-      // narrow window crops the side corners out of view.
-      const limb = Math.pow(Math.abs(u - 0.5) * 2, c.limbPower);
-      // Depth: the back rows drop over the horizon.
-      const depth = Math.pow(1 - v, 2);
-      let ny = y + curCurvature * texH * (c.limbFrac * limb + c.depthFrac * depth);
-      ny += curPerspective * c.vertCompressFrac * texH * depth;
-      const nx = cx + (x - cx) * (1 - curPerspective * c.pinchMaxFrac * (1 - v));
+      // The diamond's upper edge height at this column (clamped beyond corners).
+      const dx = Math.min(1, Math.abs(x - apex.x) / halfSpan);
+      const tentY = apex.y + dx * (left.y - apex.y);
+      // The target horizon arc through the apex.
+      const arcY = apex.y + c.arcSagFrac * texH * Math.pow(dx, c.arcPower);
+      const newTopY = tentY + (arcY - tentY) * k;
+      let ny: number;
+      if (y <= tentY) {
+        // Sky margin / feather above the edge: ride with the wing.
+        ny = y + (newTopY - tentY);
+      } else if (y < front.y) {
+        // Surface between the edge and the front anchor: compress toward the
+        // new top (front pinned), with perspective bunching the far rows
+        // toward the horizon (t^e redistribution).
+        let t = (y - tentY) / (front.y - tentY);
+        t = Math.pow(t, 1 + curPerspective * c.vertCompressFrac);
+        ny = newTopY + t * (front.y - newTopY);
+      } else {
+        ny = y;
+      }
+      // Perspective also pinches the far edge narrower.
+      const nx = apex.x + (x - apex.x) * (1 - curPerspective * c.pinchMaxFrac * Math.max(0, 1 - y / texH));
       out[i] = nx;
       out[i + 1] = ny;
     }
@@ -527,17 +557,25 @@ export function createAtmosphere(): Atmosphere {
     const fogStrength = ATMOS.weather.fogAlpha * season.fogMult * eraAirCur.fogMult * dawnDusk;
     const shadowStrength = ATMOS.weather.shadowAlpha
       + (ATMOS.weather.shadowAlphaDread - ATMOS.weather.shadowAlpha) * dread;
-    const advance = (d: Drifter, alpha: number) => {
+    // Fog fades out near the diamond's apex so banks never paint over the
+    // sky margin of the world texture (a clipped bank reads as a false
+    // horizon line floating above the land).
+    const advance = (d: Drifter, alpha: number, fadeNearApex: boolean) => {
       d.sp.x += wx * d.speedMult * dt;
       d.sp.y += wy * d.speedMult * dt;
       if (d.sp.x > DRIFT.maxX + 600) { d.sp.x = DRIFT.minX - 500; d.sp.y = DRIFT.minY + weatherRand() * (DRIFT.maxY - DRIFT.minY); }
       if (d.sp.x < DRIFT.minX - 600) { d.sp.x = DRIFT.maxX + 500; d.sp.y = DRIFT.minY + weatherRand() * (DRIFT.maxY - DRIFT.minY); }
       if (d.sp.y > DRIFT.maxY + 500) { d.sp.y = DRIFT.minY - 400; d.sp.x = DRIFT.minX + weatherRand() * (DRIFT.maxX - DRIFT.minX); }
       if (d.sp.y < DRIFT.minY - 500) { d.sp.y = DRIFT.maxY + 400; d.sp.x = DRIFT.minX + weatherRand() * (DRIFT.maxX - DRIFT.minX); }
-      d.sp.alpha = alpha * d.baseAlpha;
+      let envelope = 1;
+      if (fadeNearApex) {
+        const topReach = d.sp.y - d.sp.height / 2;
+        envelope = Math.max(0, Math.min(1, (topReach + 60) / 360));
+      }
+      d.sp.alpha = alpha * d.baseAlpha * envelope;
     };
-    for (const d of cloudShadows) advance(d, shadowStrength);
-    for (const d of fogBanks) advance(d, fogStrength);
+    for (const d of cloudShadows) advance(d, shadowStrength, false);
+    for (const d of fogBanks) advance(d, fogStrength, true);
 
     // Scar fade envelopes.
     for (let i = scars.length - 1; i >= 0; i--) {
@@ -644,21 +682,14 @@ export function createAtmosphere(): Atmosphere {
   return {
     skyLayer, glazeLayer, scarLayer, cloudShadowLayer, fogLayer,
     attach: (layers: { biomeLayer: Container }) => { attachedBiomeLayer = layers.biomeLayer; },
-    attachPlane: (plane: MeshPlane) => {
+    attachPlane: (plane, geom) => {
       attachedPlane = plane;
+      planeGeom = geom;
       planeBasePositions = plane.geometry.positions.slice();
       applyCurve();
     },
     hazeLayer,
     featherLayer,
-    layoutHaze: (corners: Array<{ x: number; y: number }>) => {
-      const base = ATMOS.curve.edgeHazeSize / 128; // texture is 256px; scale to base radius
-      const stretch: Array<[number, number]> = [[2.4, 1.0], [2.0, 0.85], [2.4, 1.0]]; // left, top, right
-      for (let i = 0; i < 3 && i < corners.length; i++) {
-        hazeSprites[i].position.set(corners[i].x, corners[i].y);
-        hazeSprites[i].scale.set(base * stretch[i][0], base * stretch[i][1]);
-      }
-    },
     setCurvature: (v: number) => { curCurvature = Math.max(0, Math.min(1, v)); applyCurve(); },
     setPerspective: (v: number) => { curPerspective = Math.max(0, Math.min(1, v)); applyCurve(); },
     curvature: () => curCurvature,

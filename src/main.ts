@@ -519,8 +519,10 @@ world.addChild(atmos.cloudShadowLayer);
 world.addChild(cityMarkersContainer);
 // Mist banks veil everything but the text.
 world.addChild(atmos.fogLayer);
-// Shoreline feather melts the far edges into the sky; bends with the world.
+// Shoreline feather + corner haze melt the far edges into the sky; both are
+// world-space so they bend with the mesh.
 world.addChild(atmos.featherLayer);
+world.addChild(atmos.hazeLayer);
 world.addChild(labelLayer);
 atmos.attach({ biomeLayer });
 
@@ -544,9 +546,18 @@ const worldPlane = new MeshPlane({ texture: worldRT, verticesX: 32, verticesY: 2
 
 app.stage.addChild(atmos.skyLayer);
 app.stage.addChild(worldPlane);
-app.stage.addChild(atmos.hazeLayer);
 app.stage.addChild(atmos.glazeLayer);
-atmos.attachPlane(worldPlane);
+// The silhouette remap needs the diamond's corners in texture pixels.
+const toTex = (wx: number, wy: number) => ({
+  x: (wx - WORLD_CAPTURE.x0) * captureScale,
+  y: (wy - WORLD_CAPTURE.y0) * captureScale,
+});
+atmos.attachPlane(worldPlane, {
+  left: toTex(-1528, 764),
+  apex: toTex(0, -8),
+  right: toTex(1528, 764),
+  front: toTex(0, 1536),
+});
 atmos.layout(window.innerWidth, window.innerHeight);
 (window as any).__layers = { world, cityMarkersContainer, labelLayer, biomeLayer };
 
@@ -562,13 +573,6 @@ function centerWorld() {
   worldBaseY = window.innerHeight * ATMOS.composition.horizonFrac + WORLD_CAPTURE.y0 * captureScale;
   worldPlane.x = worldBaseX;
   worldPlane.y = worldBaseY;
-  // Corner haze sits on the diamond's far points (left, top, right).
-  const toScreen = (wx: number, wy: number) => ({
-    x: worldBaseX + (wx - WORLD_CAPTURE.x0) * captureScale,
-    y: worldBaseY + (wy - WORLD_CAPTURE.y0) * captureScale,
-  });
-  const half = (GRID_SIZE * 32) / 2; // diamond half-width in world px
-  atmos.layoutHaze([toScreen(-half, half / 2), toScreen(0, 0), toScreen(half, half / 2)]);
 }
 centerWorld();
 
