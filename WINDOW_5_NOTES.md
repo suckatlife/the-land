@@ -60,3 +60,20 @@ breathing (needs per-tile repaints every frame — poor value; in IDEAS.md).
    comparisons.
 5. Headless software-renderer FPS is within noise of the pre-batch baseline
    (~2.5); the usual caveat — one real-GPU sanity check, please.
+
+## Post-review additions (your three notes)
+
+1. **No more sliced land**: a terrain edge falloff (biomes.ts, `EDGE_FALLOFF`
+   = 7 tiles) eases elevation below sea level at the grid boundary, so every
+   landmass ends in natural coastline and boundary water flows into the deep
+   apron. **Heads-up: this changes every seed's map near the edges** — your
+   bookmarked seeds will look slightly different at the borders.
+   (True land-to-the-horizon would need scenery terrain beyond the sim grid,
+   where civs could visibly never spread — an invisible wall reads worse
+   than a coastline, so I chose the falloff. Revisit if you disagree.)
+2. **Deep ocean**: `OCEAN.deepColor` (0x76a6cf) is the new third stop and the
+   apron color; `depthRange` 0.30 controls how fast the sea darkens.
+3. **Story-connected HUD**: civ names are civ-colored in the log and panel
+   (same color as the map label and bar); narrated events ping their map
+   location with a soft ring; each panel row shows the civ's capital and
+   flashes for ~6s when the civ is mentioned. Top 8 shown, rest collapse.
