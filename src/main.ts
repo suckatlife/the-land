@@ -705,17 +705,31 @@ atmos.attach({ biomeLayer });
 // bends together. The capture rect is in world units, window-independent.
 const WORLD_CAPTURE = { x0: -1600, y0: -110, w: 3200, h: 1720 };
 const captureScale = ATMOS.composition.worldScale;
-// The world is rendered into this texture EVERY frame, so its pixel count is
-// the dominant render cost. Keep it at 1× device resolution regardless of
-// dpr — on a hi-DPI screen that quarters the per-frame fill vs 2× and the
-// curved world is painterly-soft anyway (the crisp HUD/labels render on the
-// main 2× canvas, not through this texture).
-const worldRT = RenderTexture.create({
+
+// Graphics quality — the user's FPS/fidelity lever (cycled from the HUD, saved
+// to localStorage). The per-frame render of ~13k constantly-changing objects
+// into the curvature texture is the dominant cost; the two things that scale
+// it are building density (slots/tile) and the texture's pixel count.
+const QUALITY = {
+  high:   { slots: 4, rt: 1.0,  label: 'high' },
+  medium: { slots: 3, rt: 0.7,  label: 'med'  },
+  low:    { slots: 2, rt: 0.5,  label: 'low'  },
+} as const;
+type QualityLevel = keyof typeof QUALITY;
+let qualityLevel: QualityLevel =
+  (localStorage.getItem('theLand:quality') as QualityLevel) in QUALITY
+    ? (localStorage.getItem('theLand:quality') as QualityLevel)
+    : 'high';
+
+// The world is rendered into this texture EVERY frame, so its pixel count is a
+// big share of the cost. Resolution comes from the quality setting (1× device
+// regardless of dpr at 'high'); the crisp HUD/labels render on the main canvas.
+let worldRT = RenderTexture.create({
   width: Math.ceil(WORLD_CAPTURE.w * captureScale),
   height: Math.ceil(WORLD_CAPTURE.h * captureScale),
   antialias: false, // MSAA on a per-frame full-scene RT is costly; the mesh
                     // resampling and the painterly look hide its absence
-  resolution: 1,
+  resolution: QUALITY[qualityLevel].rt,
 });
 world.scale.set(captureScale);
 world.x = -WORLD_CAPTURE.x0 * captureScale;
@@ -747,7 +761,8 @@ atmos.attachPlane(worldPlane, {
   front: toTex(0, 1536),
 });
 atmos.layout(window.innerWidth, window.innerHeight);
-(window as any).__layers = { world, cityMarkersContainer, labelLayer, biomeLayer };
+(window as any).__layers = { world, cityMarkersContainer, labelLayer, biomeLayer, buildingLayer, simLayer };
+(window as any).__anim = () => ({ tiles: animatingTiles.size, buildings: animatingBuildingTiles.size, biome: animatingBiomeTiles.size });
 
 const expeditionGfx = new Graphics();
 expeditionLayer.addChild(expeditionGfx);
@@ -1328,8 +1343,9 @@ function computeTileDensity(row: number, col: number, civ: Civ): number {
 }
 
 function densityToCount(density: number): number {
-  if (density >= DENSITY.slot4) return 4;
-  if (density >= DENSITY.slot3) return 3;
+  const cap = QUALITY[qualityLevel].slots;
+  if (density >= DENSITY.slot4) return Math.min(4, cap);
+  if (density >= DENSITY.slot3) return Math.min(3, cap);
   if (density >= DENSITY.slot2) return 2;
   if (density >= DENSITY.slot1) return 1;
   return 0;
@@ -2872,6 +2888,7 @@ hud.innerHTML = `
   <button id="catastrophe" style="cursor:pointer;color:#a03020">catastrophe</button>
   <button id="skip" style="cursor:pointer;color:#607080">skip 5k</button>
   <button id="sound" style="cursor:pointer;color:#888" title="ambient sound">sound: off</button>
+  <button id="quality" style="cursor:pointer;color:#607080" title="graphics quality — lower for more FPS">gfx: high</button>
   <span>tick: <strong id="tick-label">0</strong></span>
   <span>civs: <strong id="civ-label">0</strong></span>
   <span>eras: <strong id="era-label">—</strong></span>
@@ -2991,6 +3008,33 @@ const soundBtn = document.getElementById('sound')!;
 soundBtn.addEventListener('click', () => {
   audio.setEnabled(!audio.isEnabled());
   soundBtn.textContent = audio.isEnabled() ? 'sound: on' : 'sound: off';
+});
+
+// Graphics-quality cycle: recreates the render texture at the new resolution,
+// repoints the mesh, and rebuilds buildings at the new slot cap.
+const qualityBtn = document.getElementById('quality')!;
+function applyQuality(level: QualityLevel) {
+  qualityLevel = level;
+  localStorage.setItem('theLand:quality', level);
+  qualityBtn.textContent = `gfx: ${QUALITY[level].label}`;
+  // New render texture at the chosen resolution — the main per-frame fill
+  // lever. The slot cap (densityToCount) applies to buildings gradually on
+  // the next density refresh, so no forced rebuild here.
+  const old = worldRT;
+  worldRT = RenderTexture.create({
+    width: Math.ceil(WORLD_CAPTURE.w * captureScale),
+    height: Math.ceil(WORLD_CAPTURE.h * captureScale),
+    antialias: false,
+    resolution: QUALITY[level].rt,
+  });
+  worldPlane.texture = worldRT;
+  // Defer destroy a frame so no in-flight render references the old texture.
+  setTimeout(() => old.destroy(true), 50);
+}
+qualityBtn.textContent = `gfx: ${QUALITY[qualityLevel].label}`;
+qualityBtn.addEventListener('click', () => {
+  const order: QualityLevel[] = ['high', 'medium', 'low'];
+  applyQuality(order[(order.indexOf(qualityLevel) + 1) % order.length]);
 });
 const pauseBtn = document.getElementById('pause')!;
 pauseBtn.addEventListener('click', () => {
