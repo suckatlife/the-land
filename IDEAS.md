@@ -56,3 +56,11 @@ Machinery note: flood/earthquake already mutate elevation + biomes live; rendere
 - **River work**: deltas grow fertile at mouths; floods can re-route rivers (visual avulsion).
 - Constraint: scenery beyond the sim grid stays static — geology happens in the known world.
 - Suggested pack: rifting + island birth + land bridges + crater lakes + fertile ash (+ sea-level epochs as the slow heartbeat). Pairs with already-liked: volcanoes, constellations, meteor showers.
+
+## Brainstorm round 5 (2026-06-13 — large globe-scale changes over time)
+- **Ice ages** (top pick): ice creeps from top+bottom of the world over ~15-20min, habitable band shrinks toward equator, civs retreat/decay in cold, then recedes. Cheap as a creeping white/blue overlay from the edges (no per-tile biome rewrite); sim reads an "ice line" so civs respond.
+- **Climate epochs**: slow global moisture drift — continents shift lush green <-> arid sand/brown over time; forests advance and die back. Tint drift (cheap) or biome-reclass front (terraform-queue style).
+- **Dying world before cataclysm**: extend pollution into a global color-drain / grey blight spreading from developed regions in the final minutes, so the planet visibly exhausts before the cataclysm. Pairs with smog.
+- **Sea-level epochs**: slow global ocean rise/fall, coastlines advance/retreat worldwide. Parked earlier for perf (biome rewrite); gentle version is striking.
+- **Tectonic uplift**: mountain ranges slowly rising along fault lines over the world's life; terrain grows rugged with age.
+- Recommendation: ice ages first (biggest payoff, cheap overlay), then dying-world blight (makes the pollution/cataclysm arc land). Two big planetary rhythms over a world's life on top of the era arc.
