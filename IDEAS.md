@@ -39,19 +39,19 @@ NOTE: briefs carry a hard "no network calls in production" constraint — items 
 - **[net] Local weather → land weather** (top pick if network allowed): Open-Meteo keyless; real rain → mist/storms, real wind → world wind, overcast → cloud shadows, temperature → seasonal cast. The screensaver shares your sky.
 - **[net] USGS quakes → tremor omens**: real M5+ events fire harmless tremor omens + tiny shake.
 - **[net] Stocks → fortune**: weakest idea (markets closed most hours, keys needed, modernity leaks into the deep-time texture). Tasteful version if insisted: hidden scalar nudging global fortune drift, never narrated in market terms.
-- **Volcanoes**: fifth catastrophe type — vent glow at rock peaks, ash plume via smoke system, night lava-glow, permanent caldera scar. Reuses brewing/omen/scar machinery.
-- **Constellations**: era-milestone civs name a constellation; faint line-figure joins the star dome, narrated once. The sky accumulates history.
-- **Meteor showers**: occasional quiet streak-nights between comets.
+- ~~Volcanoes~~ — SHIPPED (Window 7)
+- ~~Constellations~~ — SHIPPED (Window 7)
+- ~~Meteor showers~~ — SHIPPED (Window 7)
 - **Ice ages**: multi-season ice creep from the north (visual veil; optional sim pressure on northern civs). The slowest register.
 - Recommended: date-sync + moon phase immediately (no rule change); weather only, if the network door opens.
 
 ## Brainstorm round 4 (2026-06-12 — geology: the land changes shape)
 Machinery note: flood/earthquake already mutate elevation + biomes live; renderer + masks handle terrain change. These are event designs, not new plumbing.
-- **Continental rifting** (top): rare severe-quake variant — a crack propagates ~30s (staged narration), tiles along the line sink/flood, continent splits. Existing systems react: cities drown, severed halves breakaway, strait becomes a sea lane.
-- **Volcanic island birth**: undersea eruption — steam omens, shoal pales the water, sand, rock cone over minutes. New colonizable land that didn't exist at worldgen.
-- **Land bridges**: shallow strait lifts into a sand isthmus (sea-floor-rise code exists); separated civs suddenly share a border.
-- **Crater lakes**: severe asteroids permanently crater (rock ring + water center) instead of only leaving a fading scar.
-- **Volcanic fertile slopes**: post-eruption ash turns surroundings fertile — settlement returns to dangerous ground automatically.
+- ~~Continental rifting~~ — SHIPPED (Window 7)
+- ~~Volcanic island birth~~ — SHIPPED (Window 7)
+- ~~Land bridges~~ — SHIPPED (Window 7)
+- ~~Crater lakes~~ — SHIPPED (Window 7)
+- ~~Volcanic fertile slopes~~ — SHIPPED (Window 7, part of volcanoes)
 - **Sea-level epochs**: slow global rise/fall over tens of minutes; coastlines breathe, isthmuses drown and return.
 - **River work**: deltas grow fertile at mouths; floods can re-route rivers (visual avulsion).
 - Constraint: scenery beyond the sim grid stays static — geology happens in the known world.

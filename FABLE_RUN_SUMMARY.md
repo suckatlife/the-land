@@ -216,3 +216,18 @@ from the per-frame world render, and headless FPS rose from 2.0 to 3.0 on a
 mature world despite the new systems. The deliberate non-narrations (whale,
 conquest tile-flips) are taste calls: not everything the world does should
 reach the chronicle.
+
+## Window 7 — geology + sky (2026-06-12)
+
+The land now changes shape. Volcanoes joined the catastrophe roster with the
+full suspense treatment and an ash ring that lures settlement back to the
+slopes; severe earthquakes rift continents apart tile by visible tile, with
+the existing breakaway machinery turning severed halves into new nations;
+islands rise steaming from open ocean and get colonized; straits lift into
+causeways that hand separated civilizations a land border; severe asteroids
+leave permanent crater lakes. In the sky, the first civilization of each era
+names a constellation that joins the rotating dome, and meteor showers
+stitch the deep nights. All of it rides existing machinery — the terraform
+queue is the only new moving part, and one geology process runs at a time so
+deep time never reads as chaos. Sea-level epochs were parked deliberately:
+they fight the biome-cache optimization for the subtlest payoff of the set.
