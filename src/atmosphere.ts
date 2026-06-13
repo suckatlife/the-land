@@ -1131,7 +1131,11 @@ export function createAtmosphere(): Atmosphere {
     constellationGfx.alpha = brightStarsG.alpha * 0.55;
 
     // The land itself drifts with the season (ambered autumns, pale winters).
-    if (attachedBiomeLayer) attachedBiomeLayer.tint = season.biomeTint;
+    // Only assign when it actually moves — a redundant per-frame tint write on
+    // a cacheAsTexture container can dirty the cache on some Pixi paths.
+    if (attachedBiomeLayer && attachedBiomeLayer.tint !== season.biomeTint) {
+      attachedBiomeLayer.tint = season.biomeTint;
+    }
 
     // Weather drift: a shared wind that wanders slowly and rises with dread.
     windAngle += (weatherRand() - 0.5) * dt * 0.15;

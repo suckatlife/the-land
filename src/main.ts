@@ -705,11 +705,17 @@ atmos.attach({ biomeLayer });
 // bends together. The capture rect is in world units, window-independent.
 const WORLD_CAPTURE = { x0: -1600, y0: -110, w: 3200, h: 1720 };
 const captureScale = ATMOS.composition.worldScale;
+// The world is rendered into this texture EVERY frame, so its pixel count is
+// the dominant render cost. Keep it at 1× device resolution regardless of
+// dpr — on a hi-DPI screen that quarters the per-frame fill vs 2× and the
+// curved world is painterly-soft anyway (the crisp HUD/labels render on the
+// main 2× canvas, not through this texture).
 const worldRT = RenderTexture.create({
   width: Math.ceil(WORLD_CAPTURE.w * captureScale),
   height: Math.ceil(WORLD_CAPTURE.h * captureScale),
-  antialias: true,
-  resolution: Math.min(window.devicePixelRatio || 1, 2),
+  antialias: false, // MSAA on a per-frame full-scene RT is costly; the mesh
+                    // resampling and the painterly look hide its absence
+  resolution: 1,
 });
 world.scale.set(captureScale);
 world.x = -WORLD_CAPTURE.x0 * captureScale;
@@ -1110,20 +1116,36 @@ const OCEAN = {
   depthRange:   0.30,      // how far below sea level reaches full deep color
   midPoint:     0.45,      // where the ramp crosses the base water color
   shallowCurve: 0.6,       // <1 = shallows hug the coast tighter
+  mottle:       0.05,      // ±lightness jitter per tile so deep water is never
+                           // perfectly flat — without it, the uniformly-deep
+                           // band where the sim's edge-falloff ring meets the
+                           // scenery moat reads as a hard diamond outline
 };
 
-function waterColorFromElev(elev: number): number {
+// Deterministic per-tile lightness jitter, so a region of identical depth
+// (the deep boundary band) is textured like the rest of the ocean instead of
+// a flat slab. Baked into the cached tiles — no per-frame cost.
+function waterMottle(color: number, r: number, c: number): number {
+  let h = (Math.imul(r + 13, 2654435761) ^ Math.imul(c + 7, 1597334677)) >>> 0;
+  h = (h ^ (h >>> 15)) >>> 0;
+  const j = ((h & 0xffff) / 0xffff - 0.5) * OCEAN.mottle;
+  const [hh, s, l] = rgbToHsl(color);
+  return hslToRgb(hh, s, Math.max(0, Math.min(1, l + j)));
+}
+
+function waterColorFromElev(elev: number, r = 0, c = 0): number {
   const t = Math.pow(
     Math.max(0, Math.min(1, (SEA_LEVEL - elev) / OCEAN.depthRange)),
     OCEAN.shallowCurve,
   );
-  return t <= OCEAN.midPoint
+  const base = t <= OCEAN.midPoint
     ? lerpColor(OCEAN.shallowColor, BIOME_COLORS.water, t / OCEAN.midPoint)
     : lerpColor(BIOME_COLORS.water, OCEAN.deepColor, (t - OCEAN.midPoint) / (1 - OCEAN.midPoint));
+  return waterMottle(base, r, c);
 }
 
 function waterColorAt(row: number, col: number): number {
-  return waterColorFromElev(elevationMap[row][col]);
+  return waterColorFromElev(elevationMap[row][col], row, col);
 }
 
 // Scenery terrain: the world continues past the sim grid to the horizon.
@@ -1153,7 +1175,7 @@ function drawScenery() {
       const elev = -SCENERY.edgeDepth * (1 - ease) + sampler.elevationAt(r, c) * ease;
       const biome = classify(elev, sampler.moistureAt(r, c));
       const water = biome === 'water';
-      const color = water ? waterColorFromElev(elev) : BIOME_COLORS[biome];
+      const color = water ? waterColorFromElev(elev, r, c) : BIOME_COLORS[biome];
       const target = water ? sceneryWaterGfx : sceneryLandGfx;
       target.poly([x, y - 8, x + 16, y, x, y + 8, x - 16, y])
         .fill(color)
@@ -2624,7 +2646,7 @@ app.ticker.add((ticker) => {
   sceneryWaterGfx.alpha = planetary;
   sceneryLandGfx.alpha = planetary;
   // Scenery land follows the seasonal land tint (it lives outside biomeLayer).
-  sceneryLandGfx.tint = biomeLayer.tint;
+  if (sceneryLandGfx.tint !== biomeLayer.tint) sceneryLandGfx.tint = biomeLayer.tint;
   // City lights follow the night; rivers catch the light; smoke drifts.
   const L = atmos.light();
   const n = L.nightness;
