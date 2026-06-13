@@ -64,3 +64,9 @@
 ## FPS counter (2026-06-12) — and the perf mystery solved
 - Added a color-coded fps readout to the HUD (Pixi ticker.FPS, smoothed; green >=50 / amber >=30 / red below), throttled to the bars cadence.
 - It immediately resolved five windows of "3 fps, can't get a real number": the in-app counter reads 54fps fresh / 44fps on a mature industrial-era world with ALL systems active in the headless SOFTWARE renderer. My past rAF-loop measurements ran right after page.screenshot(), which stalls headless chromium — I was timing the screenshot, not steady state. Real GPU hardware = locked 60. Performance has been fine all along; the W6 biome/scenery texture caching holds it up.
+
+## Narration cleanup (2026-06-12) — one priority queue, war tamed
+- The watch found war ~40% of the log and 7 story systems unshifting straight to the log past the suspense-run quiet gate (could shove a catastrophe off the 5-line panel).
+- Fix: ALL narration now routes through one pushNarration(text, {priority, variant, dedupKey}). Priorities: high (disasters/deaths/wonders/world-shaping geology — always shown), normal (births/breakaways/festivals/constellations — yield 2.5s), low (war churn, ambient whispers, chronicle — yield 6s). Identical-to-top and same-war-pair repeats dropped. EVENT_PRIORITY maps every sim event kind.
+- War specifically: threshold 8->14 flips, cooldown 90s->150s, 4 phrasings (was 2) + varied 'falls quiet', and a global 60s floor between ANY two war lines so concurrent frontiers don't flood. WAR_GLOBAL_GAP_MS is the knob.
+- Measured: 3.9->3.2/min throughput, busiest 20s burst 7->3 lines, both comfortably inside the panel. Disasters can no longer be buried by ambient lines.

@@ -516,14 +516,45 @@ logPanel.style.cssText = `
 `;
 document.body.appendChild(logPanel);
 
-// Event kinds that always get a log line. Everything else yields if the log
-// was written recently — suspense needs stretches of quiet between beats.
-const PRIORITY_EVENTS = new Set<SimEvent['kind']>([
-  'omen', 'catastrophe', 'spared', 'rally', 'last_flight', 'refuge_founded',
-  'civ_died', 'civ_declining',
-]);
-const LOG_QUIET_MS = 4500;
-let lastLogPushTs = 0;
+// One throttled, priority-aware queue for ALL narration. Earlier this was a
+// quiet-gate on sim events only, while ~7 story systems pushed straight to the
+// log and could shove a catastrophe announcement off the 5-line panel. Now
+// everything goes through pushNarration: high-priority lines (disasters,
+// deaths, wonders, world-shaping geology) always show; normal lines yield if
+// something was logged in the last 2.5s; low lines (war churn, ambient
+// whispers) yield for 6s. Identical or same-war repeats are dropped.
+type NarrationPriority = 'high' | 'normal' | 'low';
+const NARRATION_GAP_MS: Record<NarrationPriority, number> = { high: 0, normal: 2500, low: 6000 };
+let lastNarrationTs = 0;
+let lastNarrationKey = '';
+
+function pushNarration(
+  text: string,
+  opts: { priority?: NarrationPriority; variant?: LogEntry['variant']; dedupKey?: string } = {},
+): boolean {
+  if (!text) return false;
+  const now = Date.now();
+  const pri = opts.priority ?? 'normal';
+  // Drop exact repeats of the line currently on top, and repeats of the same
+  // dedup bucket (e.g. the same war) within the low-priority window.
+  if (eventLog[0]?.text === text) return false;
+  if (opts.dedupKey && opts.dedupKey === lastNarrationKey && now - lastNarrationTs < NARRATION_GAP_MS.low) return false;
+  if (pri !== 'high' && now - lastNarrationTs < NARRATION_GAP_MS[pri]) return false;
+  lastNarrationTs = now;
+  lastNarrationKey = opts.dedupKey ?? '';
+  eventLog.unshift({ text, ts: now, variant: opts.variant });
+  if (eventLog.length > LOG_MAX) eventLog.length = LOG_MAX;
+  return true;
+}
+
+// Per-sim-event narration priority. High = always shown.
+const EVENT_PRIORITY: Partial<Record<SimEvent['kind'], NarrationPriority>> = {
+  catastrophe: 'high', omen: 'high', civ_died: 'high', wonder_built: 'high',
+  rift_opened: 'high', island_born: 'high', land_bridge: 'high', spared: 'high', rally: 'high',
+  civ_declining: 'normal', last_flight: 'normal', refuge_founded: 'normal',
+  breakaway: 'normal', civ_born: 'normal', migration: 'normal', island_rising: 'normal',
+  capital_moved: 'low', city_fell: 'low', colony_founded: 'low', conquest: 'low',
+};
 
 // The connective tissue between log, panel, and map: civ names render in
 // their civ's color wherever they appear, and a mention timestamps the civ
@@ -547,18 +578,14 @@ function colorizeCivNames(text: string): string {
 
 function pushLogEvents(evs: SimEvent[]) {
   for (const ev of evs) {
-    const now = Date.now();
-    if (!PRIORITY_EVENTS.has(ev.kind) && now - lastLogPushTs < LOG_QUIET_MS) continue;
     const text = colorizeCivNames(narrateEvent(ev, simWorld));
     if (!text) continue;
-    lastLogPushTs = now;
     const variant = ev.kind === 'catastrophe' ? 'catastrophe' as const
       : ev.kind === 'omen' ? 'omen' as const
       : (ev.kind === 'spared' || ev.kind === 'rally') ? 'relief' as const
       : undefined;
-    eventLog.unshift({ text, ts: Date.now(), variant });
+    pushNarration(text, { priority: EVENT_PRIORITY[ev.kind] ?? 'normal', variant });
   }
-  if (eventLog.length > LOG_MAX) eventLog.length = LOG_MAX;
 }
 
 function updateEventLog() {
@@ -1757,6 +1784,10 @@ function rebuildRoads() {
 // War heat: conquest tile-flips aggregate per civ-pair; sustained contact is
 // narrated once, and quiet afterwards is narrated too.
 const warHeat = new Map<string, { a: number; b: number; count: number; lastTs: number; narratedAt: number }>();
+// At most one war line per minute across the whole map, so a crowded frontier
+// stays a minority beat rather than a war bulletin (war was ~40% of the log).
+const WAR_GLOBAL_GAP_MS = 60000;
+let lastWarNarrationTs = 0;
 interface ConflictFlash { x: number; y: number; age: number }
 const conflictFlashes: ConflictFlash[] = [];
 
@@ -1769,18 +1800,19 @@ function noteConquest(ev: { row: number; col: number; attackerId: number; defend
   if (!w) { w = { a, b, count: 0, lastTs: now, narratedAt: 0 }; warHeat.set(k, w); }
   w.count++;
   w.lastTs = now;
-  if (w.count >= 8 && now - w.narratedAt > 90000) {
-    w.narratedAt = now;
-    w.count = 0;
+  // A war earns a line only after sustained fighting, rarely after that, and
+  // no more than one war line every WAR_GLOBAL_GAP_MS across the whole map —
+  // so a crowded frontier doesn't turn the log into a war bulletin.
+  if (w.count >= 14 && now - w.narratedAt > 150000 && now - lastWarNarrationTs > WAR_GLOBAL_GAP_MS) {
     const A = simWorld.civs.get(a), B = simWorld.civs.get(b);
     if (A && B) {
-      eventLog.unshift({
-        text: colorizeCivNames(pick([
-          `${A.name} and ${B.name} contest their border.`,
-          `There is burning on the line between ${A.name} and ${B.name}.`,
-        ])),
-        ts: now,
-      });
+      const ok = pushNarration(colorizeCivNames(pick([
+        `${A.name} and ${B.name} contest their border.`,
+        `There is burning on the line between ${A.name} and ${B.name}.`,
+        `${A.name} and ${B.name} have come to blows over the marches.`,
+        `War smoulders along the frontier of ${A.name} and ${B.name}.`,
+      ])), { priority: 'normal', dedupKey: `war:${k}` });
+      if (ok) { w.narratedAt = now; w.count = 0; lastWarNarrationTs = now; }
     }
   }
   if (conflictFlashes.length < 20) {
@@ -1795,10 +1827,10 @@ function checkWarQuiet() {
     if (w.narratedAt > 0 && now - w.lastTs > 45000) {
       const A = simWorld.civs.get(w.a), B = simWorld.civs.get(w.b);
       if (A && B && A.phase !== 'dead' && B.phase !== 'dead') {
-        eventLog.unshift({
-          text: colorizeCivNames(`The border between ${A.name} and ${B.name} falls quiet.`),
-          ts: now,
-        });
+        pushNarration(colorizeCivNames(pick([
+          `The border between ${A.name} and ${B.name} falls quiet.`,
+          `The fighting between ${A.name} and ${B.name} burns itself out.`,
+        ])), { priority: 'low', dedupKey: `war:${k}` });
       }
       warHeat.delete(k);
     } else if (w.narratedAt === 0 && now - w.lastTs > 60000) {
@@ -2052,7 +2084,7 @@ function maybeGhost(dt: number, nightness: number) {
     ghostStart = now;
     ghostUntil = now + 12000;
     if (Math.random() < 0.18) {
-      eventLog.unshift({ text: `Shepherds at the ruins of ${mem.name} say the stones hum.`, ts: now });
+      pushNarration(`Shepherds at the ruins of ${mem.name} say the stones hum.`, { priority: 'low' });
     }
     return;
   }
@@ -2082,7 +2114,7 @@ function updateFestival(nightness: number) {
   if (!activeFestival && pendingFestivals.length > 0 && nightness > 0.5) {
     const f = pendingFestivals.shift()!;
     activeFestival = { x: f.x, y: f.y, start: now, until: now + 45000 };
-    eventLog.unshift({ text: `In ${f.name}, the lamps burn all night.`, ts: now });
+    pushNarration(`In ${f.name}, the lamps burn all night.`, { priority: 'normal' });
   }
   if (!activeFestival) { festivalGfx.clear(); return; }
   if (now > activeFestival.until) { activeFestival = null; festivalGfx.clear(); return; }
@@ -2110,10 +2142,7 @@ function maybeNameConstellations() {
     constellationEraDone.add(civ.era);
     if (atmos.nameConstellation()) {
       const name = CONSTELLATION_NAMES[constellationNameIdx++ % CONSTELLATION_NAMES.length];
-      eventLog.unshift({
-        text: colorizeCivNames(`The astronomers of ${civ.name} name ${name}.`),
-        ts: Date.now(),
-      });
+      pushNarration(colorizeCivNames(`The astronomers of ${civ.name} name ${name}.`), { priority: 'normal' });
     }
   }
 }
@@ -2141,7 +2170,7 @@ function maybeChronicle() {
     : share > 0.5
       ? `An age of ${leader.name}: half the known world answers to it.`
       : `The age continues: ${living.length} nations share the land, ${leader.name} first among them.`;
-  eventLog.unshift({ text: colorizeCivNames(text), ts: Date.now() });
+  pushNarration(colorizeCivNames(text), { priority: 'low' });
 }
 
 // Reset for everything above (called wherever the world is rebuilt).
@@ -2511,7 +2540,7 @@ atmos.onCelestialEvent((kind) => {
       'The night is busy with falling stars. Wishes are made and not spoken of.',
     ],
   };
-  eventLog.unshift({ text: pick(lines[kind] ?? ['Something passes overhead.']), ts: Date.now() });
+  pushNarration(pick(lines[kind] ?? ['Something passes overhead.']), { priority: 'normal' });
 });
 
 app.ticker.add((ticker) => {
@@ -2552,7 +2581,7 @@ app.ticker.add((ticker) => {
     if (simWorld.tick > 0 && simWorld.tick % CATACLYSM_INTERVAL === 0) {
       resetWorld(randomSeed());
       frameEvents.length = 0;  // drop events from the now-defunct world
-      eventLog.unshift({ text: pick(CATACLYSM_NARRATIONS), ts: Date.now(), variant: 'catastrophe' });
+      pushNarration(pick(CATACLYSM_NARRATIONS), { priority: 'high', variant: 'catastrophe' });
     }
   }
   pushLogEvents(frameEvents);
