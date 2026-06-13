@@ -32,6 +32,8 @@ export type SimEvent =
   | { kind: 'rift_opened'; row: number; col: number }
   | { kind: 'wonder_built'; civId: number; row: number; col: number }
   | { kind: 'migration'; row: number; col: number }
+  | { kind: 'ice_advance' }
+  | { kind: 'ice_retreat' }
   | { kind: 'spared'; civId: number; catastropheType: CatastropheType }
   | { kind: 'rally'; civId: number }
   | { kind: 'last_flight'; civId: number };
@@ -254,6 +256,16 @@ export const SIM = {
   eraProgressBase:        0.000005,
   eraProgressSettleWeight: 0.00008,
 
+  // Ice ages — a slow climate cycle. iceExtent (0..1) advances and retreats;
+  // ice covers tiles whose latitude (distance from the diagonal equator)
+  // exceeds 1 - iceExtent*iceMaxExtent. Tiles deep in the ice decay faster, so
+  // civilizations retreat from the cold and return on the thaw. The renderer
+  // reads world.iceExtent to paint the white over the poles.
+  iceCycleTicks:   17000,  // one advance+retreat (~9.4 min) — ~roughly per world
+  iceMaxExtent:    0.52,   // how far toward the equator ice reaches at glacial max
+  iceShape:        1.7,    // >1 = long warm periods, shorter sharper glacials
+  iceDecayBonus:   3.0,    // extra decay multiplier for tiles deep in the ice
+
   nameMemoryRadius: 8,
 
   // Ocean routes / colonization.
@@ -384,6 +396,8 @@ export interface SimWorld {
   // minimum era a new civ is born into. Climbs over a world's life, resets on
   // reroll/cataclysm (a fresh SimWorld starts at 0).
   eraProgress: number;
+  // Climate: how far the polar ice has advanced toward the equator (0..1).
+  iceExtent: number;
   // Settlements on their way to existing — visible nomad bands.
   pendingSettlements: Array<{ row: number; col: number; ticksLeft: number }>;
   // Progressive terrain change (rifts tearing, islands rising, bridges
@@ -419,6 +433,7 @@ export function createSimWorld(width: number, height: number): SimWorld {
     pressureNoise: 1.0,
     brewing: null,
     eraProgress: 0,
+    iceExtent: 0,
     pendingSettlements: [],
     terraform: null,
   };
@@ -440,6 +455,18 @@ export function nearestCityDist(civ: Civ, row: number, col: number): number {
     if (d < min) min = d;
   }
   return min < Infinity ? min : 0;
+}
+
+// How deeply a tile is buried in polar ice (0 = ice-free, 1 = deep at the
+// pole). Latitude is the distance from the diagonal equator (row+col = H-1);
+// ice covers the iceExtent fraction of latitude nearest the two poles.
+export function iceDepthAt(world: SimWorld, row: number, col: number): number {
+  const cover = world.iceExtent;
+  if (cover <= 0.001) return 0;
+  const lat = Math.abs(row + col - (world.height - 1)) / (world.height - 1);
+  const line = 1 - cover;
+  if (lat <= line) return 0;
+  return Math.min(1, (lat - line) / Math.max(0.05, cover));
 }
 
 function pickCivSpawnTile(
@@ -1520,9 +1547,11 @@ export function step(
             ? 1.0 + (SIM.deathPeripheryAmp - 1.0) * Math.min(1, civ.phaseAge / SIM.deathPeripheryRampTicks)
             : 1.0;
           const deadDamp = civ.phase === 'dead' ? SIM.deathDecayMultiplier : 1.0;
+          // Ice age: tiles deep in the cold are abandoned faster.
+          const iceFactor = 1 + iceDepthAt(world, row, col) * SIM.iceDecayBonus;
 
           const decayP = SIM.decayBase * effectiveDecayPressure(civ) * exposureFactor
-            * distanceFactor * isolationFactor * deathPeripheryAmp * deadDamp;
+            * distanceFactor * isolationFactor * deathPeripheryAmp * deadDamp * iceFactor;
 
           if (Math.random() < decayP) {
             const list = decayCandidates.get(civ.id) || [];
@@ -1662,6 +1691,18 @@ export function step(
     const eraRateScale = SIM.eraReferenceCycle / SIM.worldCycleTicks;
     world.eraProgress += (SIM.eraProgressBase + settledFraction * SIM.eraProgressSettleWeight) * eraRateScale;
   }
+
+  // Climate: the polar ice advances and retreats on a slow cycle (sharper
+  // glacial peaks, long warm interglacials via iceShape).
+  {
+    const prevIce = world.iceExtent;
+    const icePhase = ((world.tick % SIM.iceCycleTicks) / SIM.iceCycleTicks) * Math.PI * 2;
+    const iceRaw = (1 - Math.cos(icePhase)) / 2;
+    world.iceExtent = Math.pow(iceRaw, SIM.iceShape) * SIM.iceMaxExtent;
+    if (prevIce < 0.15 && world.iceExtent >= 0.15) events.push({ kind: 'ice_advance' });
+    else if (prevIce > 0.08 && world.iceExtent <= 0.08) events.push({ kind: 'ice_retreat' });
+  }
+
   const avgEraRankNorm = eraRankCount > 0 ? eraRankSum / eraRankCount / (ERAS_ORDERED.length - 1) : 0;
   const timeFactor = Math.min(1, (world.tick - world.lastCatastropheTick) / 5000);
   world.catastrophePressure += (

@@ -1,7 +1,7 @@
 import { Application, Assets, Container, Graphics, MeshPlane, RenderTexture, Sprite, Text, TextStyle, Texture } from 'pixi.js';
 import { generateBiomeMap, generateRivers, makeTerrainSampler, classify, BIOME_COLORS, SEA_LEVEL } from './biomes';
 import { drawTile, drawStateOverlayPersistent, redrawOverlay, redrawBiomeTile, lerpColor, gridToScreen, rgbToHsl, hslToRgb } from './iso';
-import { createSimWorld, step, tileOverlayColor, seedInitialCivs, applyCatastrophe, SIM, CATASTROPHE, CITY, nearestCityDist, type SimWorld, type Civ, type CivCity, type SimEvent, type Era, type TileOverlay, type BiomeChange, type CatastropheType } from './sim';
+import { createSimWorld, step, tileOverlayColor, seedInitialCivs, applyCatastrophe, iceDepthAt, SIM, CATASTROPHE, CITY, nearestCityDist, type SimWorld, type Civ, type CivCity, type SimEvent, type Era, type TileOverlay, type BiomeChange, type CatastropheType } from './sim';
 import * as audio from './audio';
 import { createAtmosphere, ATMOS } from './atmosphere';
 
@@ -362,6 +362,18 @@ function narrateEvent(ev: SimEvent, world: SimWorld): string {
       };
       return pick(lines[bucket]);
     }
+    case 'ice_advance':
+      return pick([
+        'The cold deepens. Ice creeps down from the poles and the northern holds empty.',
+        'Winter without end takes the high latitudes. The people move toward the warm middle of the world.',
+        'The glaciers come. Where there were fields, there is white.',
+      ]);
+    case 'ice_retreat':
+      return pick([
+        'The long winter breaks. The ice draws back and green follows it north.',
+        'The thaw comes at last. The cold lands are open again, and the bold go to settle them.',
+        'The glaciers retreat. The world remembers how to be warm.',
+      ]);
     case 'wonder_built': {
       const civ = world.civs.get(ev.civId);
       if (!civ) return '';
@@ -556,6 +568,7 @@ const EVENT_PRIORITY: Partial<Record<SimEvent['kind'], NarrationPriority>> = {
   rift_opened: 'high', island_born: 'high', land_bridge: 'high', spared: 'high', rally: 'high',
   civ_declining: 'normal', last_flight: 'normal', refuge_founded: 'normal',
   breakaway: 'normal', civ_born: 'normal', migration: 'normal', island_rising: 'normal',
+  ice_advance: 'high', ice_retreat: 'high',
   capital_moved: 'low', city_fell: 'low', colony_founded: 'low', conquest: 'low',
 };
 
@@ -662,6 +675,7 @@ const airGfx = new Graphics();          // planes (modern+) and rockets (post)
 const festivalGfx = new Graphics();     // night festival glow
 festivalGfx.blendMode = 'add';
 const smokeLayer = new Container();
+const iceGfx = new Graphics();         // polar ice sheets (advances/retreats)
 const smogGfx = new Graphics();        // end-of-cycle pollution pooling over cities
 const cityLightsGfx = new Graphics();
 cityLightsGfx.blendMode = 'add';
@@ -687,6 +701,8 @@ world.addChild(simLayer);
 world.addChild(roadsGfx);
 // Scars sit above civ tints (catastrophes hit settled land) but below buildings.
 world.addChild(atmos.scarLayer);
+// Polar ice sheets — over the ground, under the buildings (cities stand in snow).
+world.addChild(iceGfx);
 // Wind shimmer brightens the ground, masked to land below.
 world.addChild(atmos.shimmerLayer);
 world.addChild(buildingLayer);
@@ -831,6 +847,28 @@ const POLLUTION = {
   eraFloor:   0.3,      // pollution multiplier even in clean (pre-industrial) ages
   narrateAt:  0.3,      // pollution level that earns one narrated line per cycle
 };
+// Polar ice overlay — white over the frozen latitudes, eased onto each tile by
+// how deep it sits in the ice. Redrawn only when the ice has moved (it
+// advances slowly), so per-frame cost is one cheap comparison.
+let lastDrawnIce = -1;
+function drawIce() {
+  if (Math.abs(simWorld.iceExtent - lastDrawnIce) < 0.004) return;
+  lastDrawnIce = simWorld.iceExtent;
+  iceGfx.clear();
+  if (simWorld.iceExtent <= 0.002) { iceGfx.visible = false; return; }
+  iceGfx.visible = true;
+  for (let r = 0; r < GRID_SIZE; r++) {
+    for (let c = 0; c < GRID_SIZE; c++) {
+      const d = iceDepthAt(simWorld, r, c);
+      if (d <= 0) continue;
+      const { x, y } = gridToScreen(c, r);
+      const color = biomeMap[r][c] === 'water' ? 0xd6e6f0 : 0xeef3f7; // sea ice vs snow
+      const a = Math.min(0.93, 0.10 + d * d * 0.88); // faint at the front, solid at the pole
+      iceGfx.poly([x, y - 8, x + 16, y, x, y + 8, x - 16, y]).fill({ color, alpha: a });
+    }
+  }
+}
+
 let pollutionNarrated = false;
 let curPollution = 0;
 
@@ -2539,6 +2577,7 @@ function maybeChronicle() {
 function resetStorySurfaces() {
   roadPathCache.clear();
   roadLines.clear();
+  lastDrawnIce = -1; iceGfx.clear(); iceGfx.visible = false;
   waterRouteCache.clear();
   warHeat.clear();
   conflictFlashes.length = 0;
@@ -3003,6 +3042,7 @@ app.ticker.add((ticker) => {
   const nowSec = performance.now() / 1000;
   updateSmoke(dtSec);
   drawRoads(dtSec);
+  drawIce();
   updateConflictFlashes(dtSec);
   updateWater(dtSec, nowSec, n);
   maybeWhale(dtSec);
