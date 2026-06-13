@@ -1983,12 +1983,35 @@ function coastalWaterNear(city: CivCity): { row: number; col: number } | null {
   return null;
 }
 
+// Little life on the surface — boats, fishing, caravans, nomads. Tuned to
+// feel busy and to glow like lanterns at night. Cheap (a few dozen dots).
+const TRAVELERS = {
+  boatCap: 16, boatPerCiv: 3, boatSpawnChance: 0.45,
+  fishCap: 28, fishMinProminence: 0.4,
+  caravanCap: 14, caravanPerCiv: 3, caravanSpawnChance: 0.55,
+  scale: 1.5,        // sprites 50% larger
+  nightGlow: 1.0,    // lantern glow strength at full night
+};
+
+// A traveler marker, lantern-lit at night: a warm halo + glowing core appear
+// as night falls, so boats and caravans read as points of light in the dark.
+function travelerDot(g: Graphics, x: number, y: number, r: number, color: number, night: number, coreAlpha = 0.9) {
+  if (night > 0.2) {
+    const ng = Math.min(1, night) * TRAVELERS.nightGlow;
+    g.circle(x, y, r * 3.0).fill({ color: 0xffca8a, alpha: 0.10 * ng });
+    g.circle(x, y, r * 1.7).fill({ color: 0xffd88a, alpha: 0.34 * ng });
+    g.circle(x, y, r).fill({ color: lerpColor(color, 0xfff0c4, 0.6 * ng), alpha: Math.max(coreAlpha, 0.85) });
+  } else {
+    g.circle(x, y, r).fill({ color, alpha: coreAlpha });
+  }
+}
+
 function maybeSpawnBoats() {
-  if (boats.length >= 6) return;
+  if (boats.length >= TRAVELERS.boatCap) return;
   for (const civ of simWorld.civs.values()) {
     if (civ.phase === 'dead' || civ.cities.length < 2) continue;
-    if (boats.filter((b) => b.color === civ.color).length >= 2) continue;
-    if (Math.random() > 0.25) continue;
+    if (boats.filter((b) => b.color === civ.color).length >= TRAVELERS.boatPerCiv) continue;
+    if (Math.random() > TRAVELERS.boatSpawnChance) continue;
     const coastal = civ.cities
       .map((city) => ({ city, w: coastalWaterNear(city) }))
       .filter((e) => e.w);
@@ -2007,7 +2030,7 @@ function maybeSpawnBoats() {
       speed: 1.6 + Math.random() * 0.8, // path points per second
       color: civ.color,
     });
-    if (boats.length >= 6) return;
+    if (boats.length >= TRAVELERS.boatCap) return;
   }
 }
 
@@ -2016,16 +2039,17 @@ function rebuildFishSpots() {
   for (const civ of simWorld.civs.values()) {
     if (civ.phase === 'dead') continue;
     for (const city of civ.cities) {
-      if (city.prominence < 0.6 || fishSpots.length >= 12) continue;
+      if (city.prominence < TRAVELERS.fishMinProminence || fishSpots.length >= TRAVELERS.fishCap) continue;
       const w = coastalWaterNear(city);
       if (w) fishSpots.push(gridToScreen(w.col, w.row));
     }
   }
 }
 
-function updateWater(dt: number, nowSec: number) {
+function updateWater(dt: number, nowSec: number, night: number) {
   const empty = boats.length === 0 && fishSpots.length === 0 && !whale;
   if (empty) { boatsGfx.clear(); return; }
+  const S = TRAVELERS.scale;
   boatsGfx.clear();
   for (let i = boats.length - 1; i >= 0; i--) {
     const b = boats[i];
@@ -2034,14 +2058,15 @@ function updateWater(dt: number, nowSec: number) {
     const k = Math.floor(b.idx), u = b.idx - k;
     const x = b.pts[k].x + (b.pts[k + 1].x - b.pts[k].x) * u;
     const y = b.pts[k].y + (b.pts[k + 1].y - b.pts[k].y) * u;
-    boatsGfx.circle(x, y, 1.8).fill({ color: 0x3c352c, alpha: 0.85 });
-    boatsGfx.circle(x, y, 0.9).fill({ color: b.color, alpha: 0.9 });
-    if (k > 1) boatsGfx.circle(b.pts[k - 1].x, b.pts[k - 1].y, 1.2).fill({ color: 0xffffff, alpha: 0.18 });
+    if (k > 1) boatsGfx.circle(b.pts[k - 1].x, b.pts[k - 1].y, 1.2 * S).fill({ color: 0xffffff, alpha: 0.18 });
+    boatsGfx.circle(x, y, 1.8 * S).fill({ color: 0x3c352c, alpha: 0.85 });
+    travelerDot(boatsGfx, x, y, 0.9 * S, b.color, night);
   }
   for (let i = 0; i < fishSpots.length; i++) {
     const s = fishSpots[i];
-    boatsGfx.circle(s.x + Math.sin(nowSec * 0.7 + i * 2.1) * 2, s.y + Math.sin(nowSec * 1.9 + i) * 0.8, 1.1)
-      .fill({ color: 0x4a4338, alpha: 0.55 });
+    const fx = s.x + Math.sin(nowSec * 0.7 + i * 2.1) * 2, fy = s.y + Math.sin(nowSec * 1.9 + i) * 0.8;
+    if (night > 0.2) travelerDot(boatsGfx, fx, fy, 1.0 * S, 0x6a5b48, night, 0.6);
+    else boatsGfx.circle(fx, fy, 1.1 * S).fill({ color: 0x4a4338, alpha: 0.55 });
   }
   if (whale) {
     whale.t += dt;
@@ -2071,10 +2096,37 @@ function maybeWhale(dt: number) {
   }
 }
 
-// Nomad bands: pending settlements walk in from the margins.
-function updateNomads(nowSec: number) {
-  if (simWorld.pendingSettlements.length === 0) { nomadGfx.clear(); return; }
+// Land caravans: small parties of travellers moving between a civ's cities
+// along its roads — the persistent "people roaming" the land.
+interface Caravan { pts: Array<{ x: number; y: number }>; idx: number; speed: number; color: number }
+const caravans: Caravan[] = [];
+
+function maybeSpawnCaravans() {
+  if (caravans.length >= TRAVELERS.caravanCap) return;
+  for (const civ of simWorld.civs.values()) {
+    if (civ.phase === 'dead' || civ.cities.length < 2) continue;
+    if (caravans.filter((c) => c.color === civ.color).length >= TRAVELERS.caravanPerCiv) continue;
+    if (Math.random() > TRAVELERS.caravanSpawnChance) continue;
+    const cities = civ.cities;
+    const i = Math.floor(Math.random() * cities.length);
+    let j = Math.floor(Math.random() * (cities.length - 1));
+    if (j >= i) j++;
+    const path = roadBetween(cities[i], cities[j]);
+    if (!path || path.length < 4) continue;
+    caravans.push({
+      pts: path.map((p) => gridToScreen(p.col, p.row)),
+      idx: 0,
+      speed: 1.0 + Math.random() * 0.6,
+      color: civ.color,
+    });
+    if (caravans.length >= TRAVELERS.caravanCap) return;
+  }
+}
+
+// Nomad bands (pending settlements walking in) + caravans, drawn together.
+function updateNomads(nowSec: number, dt: number, night: number) {
   nomadGfx.clear();
+  const S = TRAVELERS.scale;
   for (const p of simWorld.pendingSettlements) {
     const f = 1 - p.ticksLeft / SIM_MIGRATION_TICKS;
     const { x: tx, y: ty } = gridToScreen(p.col, p.row);
@@ -2086,8 +2138,27 @@ function updateNomads(nowSec: number) {
     for (let i = 0; i < 5; i++) {
       const ox = Math.sin(phase + i * 2.3) * 4 + Math.sin(nowSec * 1.1 + i) * 1.2;
       const oy = Math.cos(phase + i * 1.7) * 2.4 + Math.sin(nowSec * 1.4 + i * 0.7) * 0.8;
-      nomadGfx.circle(cx + ox, cy + oy, 1.2).fill({ color: 0x5a5044, alpha: 0.6 });
+      travelerDot(nomadGfx, cx + ox, cy + oy, 1.2 * S, 0x6a5a48, night, 0.6);
     }
+  }
+  for (let ci = caravans.length - 1; ci >= 0; ci--) {
+    const cv = caravans[ci];
+    cv.idx += cv.speed * dt;
+    if (cv.idx >= cv.pts.length - 1) { caravans.splice(ci, 1); continue; }
+    const k = Math.floor(cv.idx), u = cv.idx - k;
+    const hx = cv.pts[k].x + (cv.pts[k + 1].x - cv.pts[k].x) * u;
+    const hy = cv.pts[k].y + (cv.pts[k + 1].y - cv.pts[k].y) * u;
+    // A short string of 3 travellers trailing the lead point.
+    for (let m = 0; m < 3; m++) {
+      const bi = cv.idx - m * 0.5;
+      if (bi < 0) continue;
+      const bk = Math.floor(bi), bu = bi - bk;
+      if (bk + 1 >= cv.pts.length) continue;
+      const x = cv.pts[bk].x + (cv.pts[bk + 1].x - cv.pts[bk].x) * bu;
+      const y = cv.pts[bk].y + (cv.pts[bk + 1].y - cv.pts[bk].y) * bu;
+      travelerDot(nomadGfx, x, y, (m === 0 ? 1.2 : 1.0) * S, cv.color, night, m === 0 ? 0.85 : 0.6);
+    }
+    void hx; void hy;
   }
 }
 const SIM_MIGRATION_TICKS = 900; // mirror of SIM.migrationTicks for the renderer
@@ -2237,6 +2308,7 @@ function resetStorySurfaces() {
   warHeat.clear();
   conflictFlashes.length = 0;
   boats.length = 0;
+  caravans.length = 0;
   fishSpots = [];
   whale = null;
   ghostUntil = 0;
@@ -2688,9 +2760,9 @@ app.ticker.add((ticker) => {
   const nowSec = performance.now() / 1000;
   updateSmoke(dtSec);
   updateConflictFlashes(dtSec);
-  updateWater(dtSec, nowSec);
+  updateWater(dtSec, nowSec, n);
   maybeWhale(dtSec);
-  updateNomads(nowSec);
+  updateNomads(nowSec, dtSec, n);
   maybeGhost(dtSec, n);
   updateFestival(n);
   maybeChronicle();
@@ -2726,6 +2798,7 @@ app.ticker.add((ticker) => {
     rebuildWonders();
     rebuildFishSpots();
     maybeSpawnBoats();
+    maybeSpawnCaravans();
     queueFestivals();
     checkWarQuiet();
     maybeNameConstellations();
