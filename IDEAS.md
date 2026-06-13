@@ -30,3 +30,17 @@
 - ~~Traveling storms~~ — SHIPPED (Window 6)
 - Small: night festivals (city lamps flare at full prominence), chronicle summary line every ~5 min, a whale surfacing in deep ocean.
 - Recommended pairing: roads + visible conflict (knitting together / tearing apart).
+
+## Brainstorm round 3 (2026-06-12 — real-world mirrors + more)
+NOTE: briefs carry a hard "no network calls in production" constraint — items marked [net] need Lawrence to explicitly relax it (proposed shape: optional ?live=1, keyless fetch ~15min, silent offline fallback, data in only).
+- **Real date → season sync** (no network): phase-lock the land's year to the real calendar via system clock.
+- **Real moon phase** (no network): pure math from the date; drives moon-path brightness + night darkness. No disks.
+- **Real solar time** (no network): optional mode phase-locking dawn/dusk to local sunrise/sunset (24h day — changes the register, mode not default).
+- **[net] Local weather → land weather** (top pick if network allowed): Open-Meteo keyless; real rain → mist/storms, real wind → world wind, overcast → cloud shadows, temperature → seasonal cast. The screensaver shares your sky.
+- **[net] USGS quakes → tremor omens**: real M5+ events fire harmless tremor omens + tiny shake.
+- **[net] Stocks → fortune**: weakest idea (markets closed most hours, keys needed, modernity leaks into the deep-time texture). Tasteful version if insisted: hidden scalar nudging global fortune drift, never narrated in market terms.
+- **Volcanoes**: fifth catastrophe type — vent glow at rock peaks, ash plume via smoke system, night lava-glow, permanent caldera scar. Reuses brewing/omen/scar machinery.
+- **Constellations**: era-milestone civs name a constellation; faint line-figure joins the star dome, narrated once. The sky accumulates history.
+- **Meteor showers**: occasional quiet streak-nights between comets.
+- **Ice ages**: multi-season ice creep from the north (visual veil; optional sim pressure on northern civs). The slowest register.
+- Recommended: date-sync + moon phase immediately (no rule change); weather only, if the network door opens.
