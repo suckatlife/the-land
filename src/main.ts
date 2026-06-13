@@ -1659,8 +1659,25 @@ function rebuildCityLights() {
       const density = computeTileDensity(r, c, civ);
       if (density < LIGHTS.densityFloor) continue;
       const { x, y } = gridToScreen(c, r);
-      cityLightsGfx.circle(x, y, LIGHTS.dotRadius * (0.6 + density * 0.8))
-        .fill({ color, alpha: 0.20 + 0.45 * density });
+      // Lights sit on the building slots (not the tile center), each with a
+      // deterministic jitter, size, and brightness — so windows are scattered
+      // and uneven, never a regular grid of identical dots.
+      const count = densityToCount(density);
+      const perm = tileSlotPermutation(r, c);
+      for (let fillIdx = 0; fillIdx < count; fillIdx++) {
+        const slotIdx = perm[fillIdx];
+        const [sx, sy] = SLOT_POSITIONS[slotIdx];
+        const h = _bldHash(r, c, slotIdx, 11);
+        const jx = ((h & 0xff) / 255 - 0.5) * 5;
+        const jy = (((h >> 8) & 0xff) / 255 - 0.5) * 4 - 2; // a touch up, onto the walls
+        const szv = ((h >> 16) & 0xff) / 255;
+        const av = ((h >> 24) & 0xff) / 255;
+        // Some windows stay dark — a lit settlement isn't uniformly bright.
+        if (av < 0.18) continue;
+        const sz = (0.8 + szv * 2.0) * (0.55 + density * 0.5);
+        const a = Math.min(1, (0.22 + 0.5 * density) * (0.6 + av * 0.6));
+        cityLightsGfx.circle(x + sx + jx, y + sy + jy, sz).fill({ color, alpha: a });
+      }
     }
   }
 }
@@ -1989,7 +2006,7 @@ const TRAVELERS = {
   boatCap: 16, boatPerCiv: 3, boatSpawnChance: 0.45,
   fishCap: 28, fishMinProminence: 0.4,
   caravanCap: 14, caravanPerCiv: 3, caravanSpawnChance: 0.55,
-  scale: 1.5,        // sprites 50% larger
+  scale: 2.2,        // sprite size multiplier
   nightGlow: 1.0,    // lantern glow strength at full night
 };
 
