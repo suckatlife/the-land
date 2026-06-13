@@ -657,7 +657,8 @@ const roadsGfx = new Graphics();        // paths between cities, era-styled
 const conflictGfx = new Graphics();     // war flickers at contested tiles
 const wonderGfx = new Graphics();       // monuments (persist as ruins)
 const boatsGfx = new Graphics();        // sea craft, fishing dots, whales
-const nomadGfx = new Graphics();        // migrating bands before settlement
+const nomadGfx = new Graphics();        // migrating bands, caravans, trains
+const airGfx = new Graphics();          // planes (modern+) and rockets (post)
 const festivalGfx = new Graphics();     // night festival glow
 festivalGfx.blendMode = 'add';
 const smokeLayer = new Container();
@@ -708,6 +709,8 @@ world.addChild(festivalGfx);
 world.addChild(atmos.stormLayer);
 // Bird flocks cross at dawn and dusk.
 world.addChild(atmos.birdLayer);
+// Planes and rockets fly in the air, above everything on the ground.
+world.addChild(airGfx);
 world.addChild(cityMarkersContainer);
 // Mist banks veil everything but the text.
 world.addChild(atmos.fogLayer);
@@ -2151,9 +2154,11 @@ function maybeWhale(dt: number) {
   }
 }
 
-// Land caravans: small parties of travellers moving between a civ's cities
-// along its roads — the persistent "people roaming" the land.
-interface Caravan { pts: Array<{ x: number; y: number }>; idx: number; speed: number; color: number }
+const ERA_RANK: Record<Era, number> = { neolithic: 0, classical: 1, medieval: 2, industrial: 3, modern: 4, post: 5 };
+
+// Land caravans (pre-industrial) and trains (industrial+) moving between a
+// civ's cities along its roads — the persistent "people roaming" on land.
+interface Caravan { pts: Array<{ x: number; y: number }>; idx: number; speed: number; color: number; train: boolean }
 const caravans: Caravan[] = [];
 
 function maybeSpawnCaravans() {
@@ -2168,13 +2173,79 @@ function maybeSpawnCaravans() {
     if (j >= i) j++;
     const path = roadBetween(cities[i], cities[j]);
     if (!path || path.length < 4) continue;
+    const train = ERA_RANK[civ.era] >= 3; // industrial onward runs rails
     caravans.push({
       pts: path.map((p) => gridToScreen(p.col, p.row)),
       idx: 0,
-      speed: 1.0 + Math.random() * 0.6,
+      speed: (train ? 2.6 : 1.0) + Math.random() * 0.6,
       color: civ.color,
+      train,
     });
     if (caravans.length >= TRAVELERS.caravanCap) return;
+  }
+}
+
+// Planes (modern+) cross the world in straight lines with a contrail; rockets
+// (post) lift off vertically from a city and fade into the sky.
+interface Plane { x: number; y: number; vx: number; vy: number; trail: Array<{ x: number; y: number }>; color: number }
+interface Rocket { x: number; y0: number; t: number }
+const planes: Plane[] = [];
+const rockets: Rocket[] = [];
+
+function maybeSpawnPlanes() {
+  if (planes.length >= 5) return;
+  for (const civ of simWorld.civs.values()) {
+    if (civ.phase === 'dead' || ERA_RANK[civ.era] < 4) continue;
+    if (Math.random() > 0.4) continue;
+    const city = civ.cities[Math.floor(Math.random() * civ.cities.length)];
+    if (!city) continue;
+    const { x, y } = gridToScreen(city.col, city.row);
+    const ang = Math.random() * Math.PI * 2;
+    const sp = 130 + Math.random() * 90;
+    // Start off to one side so it flies across through the city's region.
+    planes.push({ x: x - Math.cos(ang) * 700, y: y - Math.sin(ang) * 350, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp * 0.5, trail: [], color: 0xeef2f8 });
+    if (planes.length >= 5) return;
+  }
+}
+
+function maybeSpawnRockets(dt: number) {
+  if (rockets.length >= 2 || Math.random() > dt / 25) return;
+  const posts = [...simWorld.civs.values()].filter((c) => c.phase !== 'dead' && ERA_RANK[c.era] >= 5 && c.cities.length);
+  if (!posts.length) return;
+  const civ = posts[Math.floor(Math.random() * posts.length)];
+  const city = civ.cities[Math.floor(Math.random() * civ.cities.length)];
+  const { x, y } = gridToScreen(city.col, city.row);
+  rockets.push({ x, y0: y, t: 0 });
+  triggerPing(city.row, city.col, 0xfff0d0);
+}
+
+function updateAir(dt: number, night: number) {
+  if (planes.length === 0 && rockets.length === 0) { airGfx.clear(); return; }
+  airGfx.clear();
+  for (let i = planes.length - 1; i >= 0; i--) {
+    const pl = planes[i];
+    pl.x += pl.vx * dt; pl.y += pl.vy * dt;
+    pl.trail.push({ x: pl.x, y: pl.y });
+    if (pl.trail.length > 22) pl.trail.shift();
+    if (Math.abs(pl.x) > 1900 || pl.y > 1800 || pl.y < -300) { planes.splice(i, 1); continue; }
+    for (let t = 0; t < pl.trail.length; t++) {
+      airGfx.circle(pl.trail[t].x, pl.trail[t].y, 0.8).fill({ color: 0xffffff, alpha: (t / pl.trail.length) * 0.22 });
+    }
+    travelerDot(airGfx, pl.x, pl.y, 1.5, pl.color, night, 0.95);
+  }
+  for (let i = rockets.length - 1; i >= 0; i--) {
+    const rk = rockets[i];
+    rk.t += dt;
+    if (rk.t > 3.5) { rockets.splice(i, 1); continue; }
+    const rise = rk.t * rk.t * 70; // accelerating
+    const ry = rk.y0 - rise;
+    const fade = Math.max(0, 1 - rk.t / 3.5);
+    // Flame trail.
+    for (let f = 0; f < 6; f++) {
+      airGfx.circle(rk.x + (Math.random() - 0.5) * 2, ry + 4 + f * 3, (3 - f * 0.4) * fade)
+        .fill({ color: f < 2 ? 0xffe89a : 0xff7a30, alpha: (1 - f / 6) * 0.7 * fade });
+    }
+    airGfx.circle(rk.x, ry, 1.6).fill({ color: 0xf0f0f0, alpha: fade });
   }
 }
 
@@ -2200,20 +2271,25 @@ function updateNomads(nowSec: number, dt: number, night: number) {
     const cv = caravans[ci];
     cv.idx += cv.speed * dt;
     if (cv.idx >= cv.pts.length - 1) { caravans.splice(ci, 1); continue; }
-    const k = Math.floor(cv.idx), u = cv.idx - k;
-    const hx = cv.pts[k].x + (cv.pts[k + 1].x - cv.pts[k].x) * u;
-    const hy = cv.pts[k].y + (cv.pts[k + 1].y - cv.pts[k].y) * u;
-    // A short string of 3 travellers trailing the lead point.
-    for (let m = 0; m < 3; m++) {
-      const bi = cv.idx - m * 0.5;
+    // A train is a longer string of tighter-packed cars with a headlamp; a
+    // caravan is a few loose travellers.
+    const cars = cv.train ? 6 : 3;
+    const gap = cv.train ? 0.32 : 0.5;
+    for (let m = 0; m < cars; m++) {
+      const bi = cv.idx - m * gap;
       if (bi < 0) continue;
       const bk = Math.floor(bi), bu = bi - bk;
       if (bk + 1 >= cv.pts.length) continue;
       const x = cv.pts[bk].x + (cv.pts[bk + 1].x - cv.pts[bk].x) * bu;
       const y = cv.pts[bk].y + (cv.pts[bk + 1].y - cv.pts[bk].y) * bu;
-      travelerDot(nomadGfx, x, y, (m === 0 ? 1.2 : 1.0) * S, cv.color, night, m === 0 ? 0.85 : 0.6);
+      if (cv.train) {
+        // Head car gets a warm headlamp; cars are a connected metal string.
+        nomadGfx.circle(x, y, (m === 0 ? 1.3 : 1.05) * S).fill({ color: m === 0 ? 0x2c2c30 : cv.color, alpha: 0.9 });
+        if (m === 0) travelerDot(nomadGfx, x, y, 0.7 * S, 0xfff0b0, Math.max(night, 0.5), 0.95);
+      } else {
+        travelerDot(nomadGfx, x, y, (m === 0 ? 1.2 : 1.0) * S, cv.color, night, m === 0 ? 0.85 : 0.6);
+      }
     }
-    void hx; void hy;
   }
 }
 const SIM_MIGRATION_TICKS = 900; // mirror of SIM.migrationTicks for the renderer
@@ -2365,6 +2441,8 @@ function resetStorySurfaces() {
   conflictFlashes.length = 0;
   boats.length = 0;
   caravans.length = 0;
+  planes.length = 0;
+  rockets.length = 0;
   fishSpots = [];
   whale = null;
   ghostUntil = 0;
@@ -2820,6 +2898,8 @@ app.ticker.add((ticker) => {
   updateWater(dtSec, nowSec, n);
   maybeWhale(dtSec);
   updateNomads(nowSec, dtSec, n);
+  maybeSpawnRockets(dtSec);
+  updateAir(dtSec, n);
   maybeGhost(dtSec, n);
   updateFestival(n);
   maybeChronicle();
@@ -2856,6 +2936,7 @@ app.ticker.add((ticker) => {
     rebuildFishSpots();
     maybeSpawnBoats();
     maybeSpawnCaravans();
+    maybeSpawnPlanes();
     queueFestivals();
     checkWarQuiet();
     maybeNameConstellations();
