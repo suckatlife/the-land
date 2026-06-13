@@ -764,6 +764,7 @@ atmos.layout(window.innerWidth, window.innerHeight);
 (window as any).__layers = { world, cityMarkersContainer, labelLayer, biomeLayer, buildingLayer, simLayer };
 (window as any).__anim = () => ({ tiles: animatingTiles.size, buildings: animatingBuildingTiles.size, biome: animatingBiomeTiles.size });
 (window as any).__rt = () => ({ res: worldRT.source.resolution, w: worldRT.source.pixelWidth, h: worldRT.source.pixelHeight, bound: worldPlane.texture === worldRT, tickerFPS: Math.round(app.ticker.FPS) });
+(window as any).__perf = { sky: atmos.skyLayer, plane: worldPlane, set skipRT(v: boolean) { (window as any).__skipRT = v; } };
 
 const expeditionGfx = new Graphics();
 expeditionLayer.addChild(expeditionGfx);
@@ -829,11 +830,14 @@ function makeVignetteTexture(): Texture {
 const dreadTint = new Graphics();
 dreadTint.blendMode = 'multiply';
 dreadTint.alpha = 0;
+dreadTint.visible = false;
 const dreadVignette = new Sprite(makeVignetteTexture());
 dreadVignette.alpha = 0;
+dreadVignette.visible = false;
 const omenStarGfx = new Graphics();
 const impactFlash = new Graphics();
 impactFlash.alpha = 0;
+impactFlash.visible = false;
 // Epicenter rings live in world space so the viewer sees *where* it landed.
 const epicenterGfx = new Graphics();
 world.addChild(epicenterGfx);
@@ -925,10 +929,15 @@ function updateAtmosphere(deltaMS: number) {
   const ease = targetDread > curDread ? DREAD.easeIn : DREAD.easeOut;
   curDread += (targetDread - curDread) * Math.min(1, ease * frames);
 
+  // These are fullscreen quads. Pixi pays full fill for an alpha-0 quad, so
+  // hide them outright when negligible (the calm majority of the time) — a
+  // real fill saving every frame there's no catastrophe brewing.
   dreadTint.tint = curHue.tint;
   dreadTint.alpha = curDread * DREAD.tintMaxAlpha;
+  dreadTint.visible = dreadTint.alpha > 0.004;
   dreadVignette.tint = curHue.vignette;
   dreadVignette.alpha = curDread * DREAD.vignetteMaxAlpha;
+  dreadVignette.visible = dreadVignette.alpha > 0.004;
 
   // Omen star: only for a brewing asteroid past the first omen stage — a
   // point of light that has no business being there, brightening.
@@ -960,12 +969,13 @@ function updateAtmosphere(deltaMS: number) {
       .stroke({ color: ring.color, alpha: ring.alpha * 0.5, width: 1.5 });
   }
 
-  // Impact flash decays exponentially.
+  // Impact flash decays exponentially. Fullscreen — hidden unless flashing.
   if (activeFlash) {
     activeFlash.alpha -= activeFlash.alpha * activeFlash.decayPerSec * dt * 3;
     impactFlash.tint = activeFlash.color;
     impactFlash.alpha = activeFlash.alpha;
-    if (activeFlash.alpha < 0.01) { activeFlash = null; impactFlash.alpha = 0; }
+    impactFlash.visible = true;
+    if (activeFlash.alpha < 0.01) { activeFlash = null; impactFlash.alpha = 0; impactFlash.visible = false; }
   }
 
   // Ground shake — moves the world plane (the world container has a fixed
@@ -2877,7 +2887,7 @@ app.ticker.add((ticker) => {
 app.ticker.add(() => {
   measureFps();
   updateFpsLabel();
-  app.renderer.render({ container: world, target: worldRT, clear: true });
+  if (!(window as any).__skipRT) app.renderer.render({ container: world, target: worldRT, clear: true });
 });
 
 // --- HUD ---

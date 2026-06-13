@@ -1074,6 +1074,8 @@ export function createAtmosphere(): Atmosphere {
     const glazeAlpha = day.glazeAlpha + season.castAmount * 0.5 + eraAirCur.amount * 0.5;
     glazeLayer.tint = glazeColor;
     glazeLayer.alpha = Math.min(ATMOS.day.glazeCap, glazeAlpha);
+    // Fullscreen multiply quad — skip it entirely near noon when it's ~clear.
+    glazeLayer.visible = glazeLayer.alpha > 0.004;
 
     // The limb haze follows the sky's horizon color (including the dread
     // lean) and fades in with the curvature knob.

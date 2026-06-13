@@ -97,3 +97,9 @@
 - Lawrence spotted rivers coiling into spirals. Cause: greedy descent picked the lowest UNVISITED neighbor even when uphill, so in a basin (all downhill tiles used) it spiraled around the low point, unable to revisit tiles.
 - Fix: flow strictly downhill (small 0.012 tolerance for noisy flats) — a river now STOPS/pools at a basin instead of coiling (rejected unless it reached the sea). Added directional momentum (score biases toward continuing the current heading) for smooth meanders. A strictly-downhill path can't spiral by construction.
 - Fewer sea-bound rivers result (many pool inland), so bumped attempts 400->2500. Across 5 seeds: 5-9 rivers, coil-ratio (path-len/bbox-span) down from 3+ spirals to ~1.0-1.3 (one outlier 2.06 = a legitimately winding river).
+
+## Perf deep-profile + fullscreen gating (2026-06-13, cont.)
+- User at 11fps (gfx:high) later in a dense industrial/post world. Re-profiled on a dense world (11640 buildings) at dpr2: hiding buildings = NO change (still object-independent); confirmed fill-bound.
+- Isolated cost breakdown (baseline 1.6fps=625ms): RT pass (world->texture) ~225ms/36%, curvature mesh draw ~100ms/16%, sky ~70ms/11%, rest ~230ms. CURVATURE (RT+mesh) is ~52% of the frame.
+- Conclusion: a rewrite to batch objects is NOT warranted (objects ~0% of cost). The levers are (1) main resolution [gfx:low, built, measured 2.5x on dense world] and (2) curvature on/off [~2x, not built — loses the globe look].
+- Shipped: gate fullscreen effect quads (dreadTint/vignette/glaze/impactFlash) to visible=false when negligible — Pixi pays full fill for an alpha-0 fullscreen quad otherwise. Small (~7%) but free and helps most during calm. Debug handles __perf/__skipRT left for the ongoing perf work.
