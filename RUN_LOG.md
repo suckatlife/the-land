@@ -54,3 +54,9 @@
 - Constellations: first civ of each post-neolithic era names a figure (faint lines joining bright stars, rotates with the dome, fades with star alpha, max 6). Meteor showers: fourth celestial event, quiet streaks over ~2min of deep night.
 - Sea-level epochs deliberately parked (fights the biome-cache optimization; subtlest payoff).
 - FPS ~2.0 during an active rift + meteor shower (vs 3.0 idle) — transient costs only; steady-state unchanged.
+
+## Era progression fix (2026-06-12) — the deep-time arc finally works
+- Coherence watch (9 min mature world) found the world era-locked at neolithic/classical forever: era only ratcheted up via local ruin clustering (chicken-and-egg — higher eras rare → their ruins rare → threshold never met), with no temporal driver. Half the era-flavored content from 7 windows (industrial smoke/rail, modern/post lights, late omen voices, constellations, wonders past Lighthouse) was unreachable dead code.
+- Fix: added a world era FLOOR — world.eraProgress accumulates each tick scaled by settled fraction (civilizations drive history), resets on reroll/cataclysm. New civs born at max(local-ruin-era, floor). Local inheritance preserved as an "ahead of its time" accelerator near sophisticated ruins.
+- Tuned (eraProgressBase 5e-6, settleWeight 8e-5): a world climbs neolithic→post over ~38 min, ~7-8 min/era, holding post until the 55-min cataclysm resets it. Verified on two seeds + live: post-era violet civs and constellation-naming now render.
+- Watch also found: visual coherence good (reads as one calm place); narration volume fine (3.9 lines/min) but war-churn dominant and repetitive, throttle hole (7 story systems unshift directly, bypassing the quiet gate). FPS still only measurable as software-renderer ceiling (3) — needs a real number / in-app counter. Both deferred as follow-ups.

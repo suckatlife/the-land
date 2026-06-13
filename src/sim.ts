@@ -240,6 +240,16 @@ export const SIM = {
   eraInheritanceThreshold: 3,
   eraAdvanceChance: 0.25,
 
+  // World era floor — the deep-time driver. Local ruin inheritance alone is a
+  // ratchet that never turns (higher-era ruins are rare because higher eras
+  // are rare), so the world also ages globally: eraProgress accumulates each
+  // tick, faster the more settled the world is (civilizations drive history).
+  // A new civ is born at max(local ruin era, floor(eraProgress)). Tuned so a
+  // healthy world climbs neolithic → post over roughly its pre-cataclysm life
+  // (~one era per 12k ticks of good settlement); resets with each new world.
+  eraProgressBase:        0.000005,
+  eraProgressSettleWeight: 0.00008,
+
   nameMemoryRadius: 8,
 
   // Ocean routes / colonization.
@@ -366,6 +376,10 @@ export interface SimWorld {
   lastCatastropheTick: number;
   pressureNoise: number;
   brewing: BrewingCatastrophe | null;
+  // Deep-time era floor: 0 (neolithic) .. 5 (post), float; floor() is the
+  // minimum era a new civ is born into. Climbs over a world's life, resets on
+  // reroll/cataclysm (a fresh SimWorld starts at 0).
+  eraProgress: number;
   // Settlements on their way to existing — visible nomad bands.
   pendingSettlements: Array<{ row: number; col: number; ticksLeft: number }>;
   // Progressive terrain change (rifts tearing, islands rising, bridges
@@ -400,6 +414,7 @@ export function createSimWorld(width: number, height: number): SimWorld {
     lastCatastropheTick: 0,
     pressureNoise: 1.0,
     brewing: null,
+    eraProgress: 0,
     pendingSettlements: [],
     terraform: null,
   };
@@ -500,16 +515,20 @@ function inheritedEraFor(world: SimWorld, row: number, col: number): Era {
       }
     }
   }
+  // Local ruin inheritance: the highest era with enough nearby ruins, with a
+  // chance to leap one further (a people rising in a sophisticated ruin field
+  // can run ahead of their time).
+  let localRank = 0;
   for (let i = ERAS_ORDERED.length - 1; i >= 0; i--) {
     const era = ERAS_ORDERED[i];
     if (counts[era] >= SIM.eraInheritanceThreshold) {
-      if (Math.random() < SIM.eraAdvanceChance && i < ERAS_ORDERED.length - 1) {
-        return ERAS_ORDERED[i + 1];
-      }
-      return era;
+      localRank = (Math.random() < SIM.eraAdvanceChance && i < ERAS_ORDERED.length - 1) ? i + 1 : i;
+      break;
     }
   }
-  return 'neolithic';
+  // The world also ages as a whole; a civ is born at least at the era floor.
+  const floorRank = Math.max(0, Math.min(ERAS_ORDERED.length - 1, Math.floor(world.eraProgress)));
+  return ERAS_ORDERED[Math.max(localRank, floorRank)];
 }
 
 function nameForNewCiv(world: SimWorld, row: number, col: number, era: Era): string {
@@ -1633,6 +1652,10 @@ export function step(
   if (world.pressureNoise > 1 + CATASTROPHE.pressureNoiseMax) world.pressureNoise = 1 + CATASTROPHE.pressureNoiseMax;
 
   const settledFraction = landTiles > 0 ? settledTiles / landTiles : 0;
+  // Deep time advances: the world ages faster the more it is settled.
+  if (world.eraProgress < ERAS_ORDERED.length - 1) {
+    world.eraProgress += SIM.eraProgressBase + settledFraction * SIM.eraProgressSettleWeight;
+  }
   const avgEraRankNorm = eraRankCount > 0 ? eraRankSum / eraRankCount / (ERAS_ORDERED.length - 1) : 0;
   const timeFactor = Math.min(1, (world.tick - world.lastCatastropheTick) / 5000);
   world.catastrophePressure += (
