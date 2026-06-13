@@ -666,6 +666,10 @@ const atmos = createAtmosphere();
 const riverGfx = new Graphics();
 const sceneryWaterGfx = new Graphics(); // beyond-the-grid sea (under glitter)
 const sceneryLandGfx = new Graphics();  // beyond-the-grid land (over glitter)
+// Beyond-the-grid tile positions (+ water/land), precomputed once in
+// drawScenery so the ice cap can extend over the whole visible globe, not
+// just the sim diamond. r/c keep the same latitude math as the grid.
+let sceneryTiles: { x: number; y: number; r: number; c: number; water: boolean }[] = [];
 const roadsGfx = new Graphics();        // paths between cities, era-styled
 const conflictGfx = new Graphics();     // war flickers at contested tiles
 const wonderGfx = new Graphics();       // monuments (persist as ruins)
@@ -852,21 +856,51 @@ const POLLUTION = {
 // advances slowly), so per-frame cost is one cheap comparison.
 let lastDrawnIce = -1;
 function drawIce() {
-  if (Math.abs(simWorld.iceExtent - lastDrawnIce) < 0.004) return;
-  lastDrawnIce = simWorld.iceExtent;
+  const force = (window as any).__forceIce;
+  const ext = force != null ? force : simWorld.iceExtent;
+  if (force == null && Math.abs(ext - lastDrawnIce) < 0.004) return;
+  lastDrawnIce = ext;
+  // ~19k filled+stroked polys at glacial peak. They only change when the ice
+  // actually moves (throttled above), so cache the result to a texture and let
+  // the in-between frames render it as a single quad — the app is fill-bound.
+  iceGfx.cacheAsTexture?.(false);
   iceGfx.clear();
-  if (simWorld.iceExtent <= 0.002) { iceGfx.visible = false; return; }
+  if (ext <= 0.002) { iceGfx.visible = false; return; }
   iceGfx.visible = true;
+  // Sample latitude against the (possibly forced) extent.
+  const ice = (r: number, c: number) => iceDepthAt({ iceExtent: ext, height: GRID_SIZE } as any, r, c);
+  // The sim grid (the known world).
   for (let r = 0; r < GRID_SIZE; r++) {
     for (let c = 0; c < GRID_SIZE; c++) {
-      const d = iceDepthAt(simWorld, r, c);
+      const d = ice(r, c);
       if (d <= 0) continue;
       const { x, y } = gridToScreen(c, r);
-      const color = biomeMap[r][c] === 'water' ? 0xd6e6f0 : 0xeef3f7; // sea ice vs snow
-      const a = Math.min(0.93, 0.10 + d * d * 0.88); // faint at the front, solid at the pole
-      iceGfx.poly([x, y - 8, x + 16, y, x, y + 8, x - 16, y]).fill({ color, alpha: a });
+      paintIce(x, y, d, biomeMap[r][c] === 'water');
     }
   }
+  // The scenery beyond the grid, so the ice cap reaches the whole globe up to
+  // the horizon (same latitude math; precomputed positions, no re-sampling).
+  for (let i = 0; i < sceneryTiles.length; i++) {
+    const t = sceneryTiles[i];
+    const d = ice(t.r, t.c);
+    if (d <= 0) continue;
+    paintIce(t.x, t.y, d, t.water);
+  }
+  iceGfx.cacheAsTexture?.(true);
+}
+
+// One iced tile. Snow on land, paler blue on sea; the leading edge carries a
+// faint cool rim so the ice reads even against the bright daytime ocean, going
+// to near-solid white toward the poles.
+function paintIce(x: number, y: number, d: number, water: boolean) {
+  // Near-white fill so it brightens whatever it covers, plus a steel-blue seam
+  // on every tile. The seams give the sheet a cracked-pack-ice texture that
+  // reads even over the pale ocean (where a flat white fill would vanish).
+  const color = water ? 0xe6f0f6 : 0xf4f9ff; // sea ice slightly cooler than snow
+  const a = Math.min(0.96, 0.5 + d * 0.46);
+  iceGfx.poly([x, y - 8, x + 16, y, x, y + 8, x - 16, y])
+    .fill({ color, alpha: a })
+    .stroke({ color: 0x8aa6bc, alpha: 0.55 * a, width: 1 }); // frost seams
 }
 
 let pollutionNarrated = false;
@@ -1340,6 +1374,7 @@ const SCENERY = {
 function drawScenery() {
   sceneryWaterGfx.clear();
   sceneryLandGfx.clear();
+  sceneryTiles = [];
   const sampler = makeTerrainSampler(currentSeed);
   const { x0, y0, w, h } = WORLD_CAPTURE;
   for (let r = -60; r <= 155; r++) {
@@ -1359,6 +1394,7 @@ function drawScenery() {
       target.poly([x, y - 8, x + 16, y, x, y + 8, x - 16, y])
         .fill(color)
         .stroke({ color: 0x000000, alpha: 0.08, width: 1 });
+      sceneryTiles.push({ x, y, r, c, water });
     }
   }
   // Static once drawn — collapse the ~20k polys to one cached quad.
@@ -2606,7 +2642,7 @@ function maybeChronicle() {
 function resetStorySurfaces() {
   roadPathCache.clear();
   roadLines.clear();
-  lastDrawnIce = -1; iceGfx.clear(); iceGfx.visible = false;
+  lastDrawnIce = -1; iceGfx.cacheAsTexture?.(false); iceGfx.clear(); iceGfx.visible = false;
   waterRouteCache.clear();
   warHeat.clear();
   conflictFlashes.length = 0;

@@ -262,9 +262,9 @@ export const SIM = {
   // civilizations retreat from the cold and return on the thaw. The renderer
   // reads world.iceExtent to paint the white over the poles.
   iceCycleTicks:   17000,  // one advance+retreat (~9.4 min) — ~roughly per world
-  iceMaxExtent:    0.52,   // how far toward the equator ice reaches at glacial max
-  iceShape:        1.7,    // >1 = long warm periods, shorter sharper glacials
-  iceDecayBonus:   3.0,    // extra decay multiplier for tiles deep in the ice
+  iceMaxExtent:    0.86,   // how far toward the equator ice reaches at glacial max
+  iceShape:        2.1,    // >1 = long warm periods, shorter sharper glacials
+  iceDecayBonus:   1.8,    // extra decay multiplier for tiles deep in the ice
 
   nameMemoryRadius: 8,
 
