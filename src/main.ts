@@ -1830,8 +1830,17 @@ function roadBetween(a: CivCity, b: CivCity): Array<{ row: number; col: number }
   return roadPathCache.get(ck)!;
 }
 
+// Roads are built over time: each one draws on from its older endpoint toward
+// the newer city over ROAD_BUILD_SEC, so the network visibly grows as cities
+// connect rather than popping in complete.
+const ROAD_BUILD_SEC = 6;
+interface RoadLine { pts: Array<{ x: number; y: number }>; progress: number; color: number; width: number; alpha: number }
+const roadLines = new Map<string, RoadLine>();
+
+// Reconcile the road set on the city cadence: add new connections (at
+// progress 0), drop roads whose cities are gone.
 function rebuildRoads() {
-  roadsGfx.clear();
+  const live = new Set<string>();
   for (const civ of simWorld.civs.values()) {
     if (civ.phase === 'dead' || civ.cities.length < 2) continue;
     const style = ROAD_STYLE[civ.era];
@@ -1842,16 +1851,45 @@ function rebuildRoads() {
         const d = Math.hypot(ordered[i].row - ordered[j].row, ordered[i].col - ordered[j].col);
         if (d < nd) { nd = d; nearest = j; }
       }
-      const path = roadBetween(ordered[i], ordered[nearest]);
-      if (!path || path.length < 2) continue;
-      const p0 = gridToScreen(path[0].col, path[0].row);
-      roadsGfx.moveTo(p0.x, p0.y);
-      for (let k = 1; k < path.length; k++) {
-        const p = gridToScreen(path[k].col, path[k].row);
-        roadsGfx.lineTo(p.x, p.y);
+      const a = ordered[nearest], b = ordered[i];
+      const key = `${a.row},${a.col}-${b.row},${b.col}`;
+      live.add(key);
+      const existing = roadLines.get(key);
+      if (existing) {
+        // Keep its build progress; refresh era styling (eras change over time).
+        existing.color = style.color; existing.width = style.width; existing.alpha = style.alpha;
+        continue;
       }
-      roadsGfx.stroke({ color: style.color, alpha: style.alpha, width: style.width, join: 'round', cap: 'round' });
+      const path = roadBetween(a, b);
+      if (!path || path.length < 2) continue;
+      roadLines.set(key, {
+        pts: path.map((p) => gridToScreen(p.col, p.row)),
+        progress: 0, color: style.color, width: style.width, alpha: style.alpha,
+      });
     }
+  }
+  for (const k of [...roadLines.keys()]) if (!live.has(k)) roadLines.delete(k);
+}
+
+// Advance each road's build and redraw, drawing only the completed fraction.
+function drawRoads(dt: number) {
+  if (roadLines.size === 0) { roadsGfx.clear(); return; }
+  roadsGfx.clear();
+  for (const road of roadLines.values()) {
+    road.progress = Math.min(1, road.progress + dt / ROAD_BUILD_SEC);
+    const n = road.pts.length;
+    const reach = road.progress * (n - 1);
+    const full = Math.floor(reach);
+    roadsGfx.moveTo(road.pts[0].x, road.pts[0].y);
+    for (let k = 1; k <= full && k < n; k++) roadsGfx.lineTo(road.pts[k].x, road.pts[k].y);
+    if (full < n - 1) {
+      const u = reach - full;
+      const pa = road.pts[full], pb = road.pts[full + 1];
+      roadsGfx.lineTo(pa.x + (pb.x - pa.x) * u, pa.y + (pb.y - pa.y) * u);
+    }
+    // Fade in alpha over the first stretch so a fresh road isn't a hard line.
+    const a = road.alpha * Math.min(1, road.progress * 3);
+    roadsGfx.stroke({ color: road.color, alpha: a, width: road.width, join: 'round', cap: 'round' });
   }
 }
 
@@ -2321,6 +2359,7 @@ function maybeChronicle() {
 // Reset for everything above (called wherever the world is rebuilt).
 function resetStorySurfaces() {
   roadPathCache.clear();
+  roadLines.clear();
   waterRouteCache.clear();
   warHeat.clear();
   conflictFlashes.length = 0;
@@ -2776,6 +2815,7 @@ app.ticker.add((ticker) => {
   const dtSec = ticker.deltaMS / 1000;
   const nowSec = performance.now() / 1000;
   updateSmoke(dtSec);
+  drawRoads(dtSec);
   updateConflictFlashes(dtSec);
   updateWater(dtSec, nowSec, n);
   maybeWhale(dtSec);
