@@ -1,7 +1,7 @@
 import { Application, Assets, Container, Graphics, MeshPlane, RenderTexture, Sprite, Text, TextStyle, Texture } from 'pixi.js';
 import { generateBiomeMap, generateRivers, makeTerrainSampler, classify, BIOME_COLORS, SEA_LEVEL } from './biomes';
 import { drawTile, drawStateOverlayPersistent, redrawOverlay, redrawBiomeTile, lerpColor, gridToScreen, rgbToHsl, hslToRgb } from './iso';
-import { createSimWorld, step, tileOverlayColor, seedInitialCivs, applyCatastrophe, CATASTROPHE, CITY, nearestCityDist, type SimWorld, type Civ, type CivCity, type SimEvent, type Era, type TileOverlay, type BiomeChange, type CatastropheType } from './sim';
+import { createSimWorld, step, tileOverlayColor, seedInitialCivs, applyCatastrophe, SIM, CATASTROPHE, CITY, nearestCityDist, type SimWorld, type Civ, type CivCity, type SimEvent, type Era, type TileOverlay, type BiomeChange, type CatastropheType } from './sim';
 import * as audio from './audio';
 import { createAtmosphere, ATMOS } from './atmosphere';
 
@@ -17,7 +17,10 @@ const ERA_TINT: Record<string, string> = {
 const GRID_SIZE = 96;
 const ticksPerSecond = 30;
 const SKIP_TICKS = 5000;
-const CATACLYSM_INTERVAL = 100000; // ticks between auto-rerolls — the world ends and a new one is rolled.
+// Ticks between auto-rerolls — the world ends and a new one is rolled. Driven
+// by the single deep-time knob in sim.ts (SIM.worldCycleTicks), which also
+// rescales the era arc so the full stone-age-to-post climb always fits.
+const CATACLYSM_INTERVAL = SIM.worldCycleTicks;
 const CATACLYSM_NARRATIONS = [
   'A cataclysm unmakes the world. A new land emerges from the dust.',
   'The world ends in fire. The cycle begins again, on a new shore.',

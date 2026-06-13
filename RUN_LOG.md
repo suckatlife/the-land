@@ -70,3 +70,8 @@
 - Fix: ALL narration now routes through one pushNarration(text, {priority, variant, dedupKey}). Priorities: high (disasters/deaths/wonders/world-shaping geology — always shown), normal (births/breakaways/festivals/constellations — yield 2.5s), low (war churn, ambient whispers, chronicle — yield 6s). Identical-to-top and same-war-pair repeats dropped. EVENT_PRIORITY maps every sim event kind.
 - War specifically: threshold 8->14 flips, cooldown 90s->150s, 4 phrasings (was 2) + varied 'falls quiet', and a global 60s floor between ANY two war lines so concurrent frontiers don't flood. WAR_GLOBAL_GAP_MS is the knob.
 - Measured: 3.9->3.2/min throughput, busiest 20s burst 7->3 lines, both comfortably inside the panel. Disasters can no longer be buried by ambient lines.
+
+## World cycle knob (2026-06-13) — coupled deep-time cadence
+- SIM.worldCycleTicks (default 30000 = 16.7 min) is now the single source of truth for the world cycle: main.ts CATACLYSM_INTERVAL reads it, and the era-progress rate scales by (eraReferenceCycle 100000 / worldCycleTicks) so the full stone-age→post arc always lands at ~74% of the world's life whatever length is chosen.
+- Default dropped 100k→30k per Lawrence: a viewer now sees the complete deep-time arc (stone age → post, ~2.5-3 min/era) PLUS the grand cataclysm reset in one ~17-min sitting, instead of a 55-min cycle almost nobody saw. Knob range: ~30k sweet spot, 100k = original slow deep time, below ~20k eras blur.
+- Verified headless on two seeds (arc fits, eras reach post by ~11 min, hold to reset) and live (post/modern/medieval mix + constellation naming at ~14 min).

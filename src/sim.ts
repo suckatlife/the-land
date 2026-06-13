@@ -240,13 +240,17 @@ export const SIM = {
   eraInheritanceThreshold: 3,
   eraAdvanceChance: 0.25,
 
-  // World era floor — the deep-time driver. Local ruin inheritance alone is a
-  // ratchet that never turns (higher-era ruins are rare because higher eras
-  // are rare), so the world also ages globally: eraProgress accumulates each
-  // tick, faster the more settled the world is (civilizations drive history).
-  // A new civ is born at max(local ruin era, floor(eraProgress)). Tuned so a
-  // healthy world climbs neolithic → post over roughly its pre-cataclysm life
-  // (~one era per 12k ticks of good settlement); resets with each new world.
+  // --- Deep-time cadence: the single knob for the whole world cycle --------
+  // worldCycleTicks is how long a world lives before the cataclysm unmakes it
+  // and a new one is rolled (main.ts reads this for the auto-reroll). The era
+  // arc is coupled to it: the rates below are tuned against a 100k reference,
+  // and the accumulation scales by (reference / worldCycleTicks), so a world
+  // always climbs neolithic → post at ~74% of its life and holds post until
+  // the reset — whatever length you choose. ~30k ≈ 17 min (a full arc + the
+  // grand reset in one sitting); 100k ≈ 55 min (the original slow deep time).
+  // Below ~20k the eras start to blur.
+  worldCycleTicks:        30000,
+  eraReferenceCycle:      100000,
   eraProgressBase:        0.000005,
   eraProgressSettleWeight: 0.00008,
 
@@ -1652,9 +1656,11 @@ export function step(
   if (world.pressureNoise > 1 + CATASTROPHE.pressureNoiseMax) world.pressureNoise = 1 + CATASTROPHE.pressureNoiseMax;
 
   const settledFraction = landTiles > 0 ? settledTiles / landTiles : 0;
-  // Deep time advances: the world ages faster the more it is settled.
+  // Deep time advances: the world ages faster the more it is settled, scaled
+  // so the era arc always fits the chosen world-cycle length (see SIM).
   if (world.eraProgress < ERAS_ORDERED.length - 1) {
-    world.eraProgress += SIM.eraProgressBase + settledFraction * SIM.eraProgressSettleWeight;
+    const eraRateScale = SIM.eraReferenceCycle / SIM.worldCycleTicks;
+    world.eraProgress += (SIM.eraProgressBase + settledFraction * SIM.eraProgressSettleWeight) * eraRateScale;
   }
   const avgEraRankNorm = eraRankCount > 0 ? eraRankSum / eraRankCount / (ERAS_ORDERED.length - 1) : 0;
   const timeFactor = Math.min(1, (world.tick - world.lastCatastropheTick) / 5000);
