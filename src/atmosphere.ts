@@ -179,6 +179,7 @@ export const ATMOS = {
     cometMeanSec: 480,    cometDurationSec: 80,   // any night
     eclipseMeanSec: 720,  eclipseDurationSec: 45, // moon high
     auroraMeanSec: 420,   auroraDurationSec: 160, // winter nights
+    meteorsMeanSec: 360,  meteorsDurationSec: 120, // any deep night
     cooldownSec: 120,
   },
 
@@ -207,6 +208,7 @@ export const ATMOS = {
     earthquake: { lifeMs: 320_000, holdFrac: 0.20, alpha: 0.50 },
     flood:      { lifeMs: 380_000, holdFrac: 0.25, alpha: 0.50 },
     plague:     { lifeMs: 780_000, holdFrac: 0.30, alpha: 0.40 },
+    volcano:    { lifeMs: 900_000, holdFrac: 0.30, alpha: 0.60 },
     // Scar palette, per type (painterly washes, not symbols).
     colors: {
       asteroidCore:  0x2b211a,  // charred umber
@@ -218,6 +220,9 @@ export const ATMOS = {
       floodSiltPale: 0xa99a78,  // dried silt margin
       plagueVeil:    0xcfc9b8,  // bone-pale wash
       plagueTinge:   0xb4b8a2,  // grey-green undertone
+      volcanoBasalt: 0x26201c,  // cooled flows
+      volcanoAsh:    0x8a8478,  // ash blanket
+      volcanoEmber:  0x9a3c1a,  // dying glow at the vent
     },
   },
 };
@@ -444,11 +449,13 @@ export interface Atmosphere {
   setLandMask(mask: Container | null): void;  // restricts the shimmer to land
   wind(): { x: number; y: number };
   onCelestialEvent(cb: (kind: string) => void): void;
-  triggerCelestial(kind: 'comet' | 'eclipse' | 'aurora'): void;
+  triggerCelestial(kind: 'comet' | 'eclipse' | 'aurora' | 'meteors'): void;
   light(): CelestialLight;
   setLightAzimuth(v: number | null): void;   // pin the light's azimuth (null = resume cycle)
   setLightAltitude(v: number | null): void;  // pin the light's altitude
   setStarRotation(v: number): void;          // 0..1 of a full turn
+  nameConstellation(): boolean;              // join bright stars into a figure (max 6)
+  clearConstellations(): void;
   setGlitterStrength(v: number): void;       // multiplier on the band alpha
   setStarBrightness(v: number): void;        // multiplier on star alpha
   setCurvature(v: number): void;   // 0..1, live scrub
@@ -594,23 +601,61 @@ export function createAtmosphere(): Atmosphere {
   const starLayer = new Container();
   const brightStarsG = new Graphics();
   const faintStarsG = new Graphics();
+  const constellationGfx = new Graphics();
+  const brightStarPos: Array<{ x: number; y: number }> = [];
+  let constellationCount = 0;
   {
-    const scatter = (g: Graphics, count: number, rMin: number, rMax: number, aMin: number, aMax: number) => {
+    const scatter = (g: Graphics, count: number, rMin: number, rMax: number, aMin: number, aMax: number, record: boolean) => {
       for (let i = 0; i < count; i++) {
         const ang = celestialRand() * Math.PI * 2;
         const dist = Math.sqrt(celestialRand()) * ATMOS.stars.fieldRadius;
         const roll = celestialRand();
         const color = roll < 0.82 ? 0xf2f4f8 : roll < 0.92 ? 0xcdd9f0 : 0xf0ddbe;
-        g.circle(Math.cos(ang) * dist, Math.sin(ang) * dist, rMin + celestialRand() * (rMax - rMin))
+        const x = Math.cos(ang) * dist, y = Math.sin(ang) * dist;
+        if (record) brightStarPos.push({ x, y });
+        g.circle(x, y, rMin + celestialRand() * (rMax - rMin))
           .fill({ color, alpha: aMin + celestialRand() * (aMax - aMin) });
       }
     };
-    scatter(brightStarsG, ATMOS.stars.brightCount, 1.1, 2.1, 0.7, 1.0);
-    scatter(faintStarsG, ATMOS.stars.count, 0.5, 1.1, 0.35, 0.7);
+    scatter(brightStarsG, ATMOS.stars.brightCount, 1.1, 2.1, 0.7, 1.0, true);
+    scatter(faintStarsG, ATMOS.stars.count, 0.5, 1.1, 0.35, 0.7, false);
     brightStarsG.alpha = 0;
     faintStarsG.alpha = 0;
+    constellationGfx.alpha = 0;
     starLayer.addChild(faintStarsG);
+    starLayer.addChild(constellationGfx);
     starLayer.addChild(brightStarsG);
+  }
+
+  // Constellations: astronomers join bright stars into a figure. The lines
+  // live in the rotating dome and fade with the bright population.
+  function nameConstellation(): boolean {
+    if (constellationCount >= 6 || brightStarPos.length < 8) return false;
+    // Anchor at a bright star in the comfortable viewing band.
+    let anchor = -1;
+    for (let tries = 0; tries < 30; tries++) {
+      const i = Math.floor(Math.random() * brightStarPos.length);
+      const d = Math.hypot(brightStarPos[i].x, brightStarPos[i].y);
+      if (d > 250 && d < 1100) { anchor = i; break; }
+    }
+    if (anchor < 0) return false;
+    const a = brightStarPos[anchor];
+    const near = brightStarPos
+      .map((p, i) => ({ p, i, d: Math.hypot(p.x - a.x, p.y - a.y) }))
+      .filter((e) => e.i !== anchor && e.d < 380)
+      .sort((e1, e2) => e1.d - e2.d)
+      .slice(0, 4 + Math.floor(Math.random() * 2));
+    if (near.length < 3) return false;
+    // Order around the centroid for a plausible figure.
+    const cx2 = (a.x + near.reduce((s, e) => s + e.p.x, 0)) / (near.length + 1);
+    const cy2 = (a.y + near.reduce((s, e) => s + e.p.y, 0)) / (near.length + 1);
+    const pts = [a, ...near.map((e) => e.p)]
+      .sort((p1, p2) => Math.atan2(p1.y - cy2, p1.x - cx2) - Math.atan2(p2.y - cy2, p2.x - cx2));
+    constellationGfx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) constellationGfx.lineTo(pts[i].x, pts[i].y);
+    constellationGfx.stroke({ color: 0xc8d4ea, alpha: 0.5, width: 0.7 });
+    constellationCount++;
+    return true;
   }
   // Wind shimmer over land: bright strips on the wind, masked to land.
   const shimmerLayer = new Container();
@@ -653,16 +698,18 @@ export function createAtmosphere(): Atmosphere {
       auroraSprites.push(sp);
     }
   }
-  let activeEvent: { kind: 'comet' | 'eclipse' | 'aurora'; t: number; dur: number; a?: { x: number; y: number }; b?: { x: number; y: number } } | null = null;
+  let activeEvent: { kind: 'comet' | 'eclipse' | 'aurora' | 'meteors'; t: number; dur: number; a?: { x: number; y: number }; b?: { x: number; y: number } } | null = null;
+  const meteorStreaks: Array<{ x: number; y: number; vx: number; vy: number; age: number }> = [];
   let eventCooldown = 0;
   let eclipseMult = 1;
   let eventCb: ((kind: string) => void) | null = null;
 
-  function startCelestial(kind: 'comet' | 'eclipse' | 'aurora') {
+  function startCelestial(kind: 'comet' | 'eclipse' | 'aurora' | 'meteors') {
     const E = ATMOS.events;
     const w = limbLayout?.width ?? 1600;
     const h = limbLayout?.height ?? 900;
-    const dur = kind === 'comet' ? E.cometDurationSec : kind === 'eclipse' ? E.eclipseDurationSec : E.auroraDurationSec;
+    const dur = kind === 'comet' ? E.cometDurationSec : kind === 'eclipse' ? E.eclipseDurationSec
+      : kind === 'meteors' ? E.meteorsDurationSec : E.auroraDurationSec;
     activeEvent = { kind, t: 0, dur };
     if (kind === 'comet') {
       const leftToRight = weatherRand() < 0.5;
@@ -690,6 +737,7 @@ export function createAtmosphere(): Atmosphere {
       if (L.nightness > 0.5 && roll(E.cometMeanSec)) startCelestial('comet');
       else if (!L.isDay && L.altitude > 0.4 && roll(E.eclipseMeanSec)) startCelestial('eclipse');
       else if (L.nightness > 0.8 && winter && roll(E.auroraMeanSec)) startCelestial('aurora');
+      else if (L.nightness > 0.8 && roll(E.meteorsMeanSec)) startCelestial('meteors');
     }
     eclipseMult = 1;
     cometGfx_clear();
@@ -717,6 +765,20 @@ export function createAtmosphere(): Atmosphere {
       cometLayer.circle(x, y, 1.5).fill({ color: 0xffffff, alpha });
     } else if (activeEvent.kind === 'eclipse') {
       eclipseMult = 1 - 0.85 * env;
+    } else if (activeEvent.kind === 'meteors') {
+      const w = limbLayout?.width ?? 1600;
+      const h = limbLayout?.height ?? 900;
+      if (Math.random() < dt / 4) {
+        const ang2 = Math.PI * (0.15 + Math.random() * 0.25);
+        const sp = 260 + Math.random() * 180;
+        meteorStreaks.push({
+          x: w * (0.1 + Math.random() * 0.8),
+          y: h * (0.02 + Math.random() * 0.18),
+          vx: Math.cos(ang2) * sp * (Math.random() < 0.5 ? 1 : -1),
+          vy: Math.sin(ang2) * sp,
+          age: 0,
+        });
+      }
     } else if (activeEvent.kind === 'aurora') {
       for (let i = 0; i < auroraSprites.length; i++) {
         const sp = auroraSprites[i];
@@ -727,6 +789,21 @@ export function createAtmosphere(): Atmosphere {
     }
   }
   function cometGfx_clear() { cometLayer.clear(); }
+
+  function updateMeteorStreaks(dt: number, nightness: number) {
+    if (meteorStreaks.length === 0) return;
+    for (let i = meteorStreaks.length - 1; i >= 0; i--) {
+      const m = meteorStreaks[i];
+      m.age += dt;
+      if (m.age > 0.7) { meteorStreaks.splice(i, 1); continue; }
+      m.x += m.vx * dt;
+      m.y += m.vy * dt;
+      const a = (1 - m.age / 0.7) * 0.8 * nightness;
+      cometLayer.moveTo(m.x, m.y)
+        .lineTo(m.x - m.vx * 0.06, m.y - m.vy * 0.06)
+        .stroke({ color: 0xe8eef8, alpha: a, width: 1.1 });
+    }
+  }
 
   // Traveling storm: a heavy, rarer drifter with rain and lightning.
   const stormLayer = new Container();
@@ -1006,6 +1083,7 @@ export function createAtmosphere(): Atmosphere {
     // --- Celestial light ---------------------------------------------------
     curLight = computeLight();
     updateCelestialEvents(dt, curLight);
+    updateMeteorStreaks(dt, curLight.nightness);
     if (!curLight.isDay) curLight.intensity *= eclipseMult;
     updateBirds(dt, curLight);
     const L = curLight;
@@ -1050,6 +1128,7 @@ export function createAtmosphere(): Atmosphere {
     const sb = ATMOS.stars.maxAlpha * starBrightnessMult;
     brightStarsG.alpha = sb * smoothstep(Math.min(1, L.nightness * 1.4));
     faintStarsG.alpha = sb * smoothstep(Math.max(0, (L.nightness - 0.45) / 0.55));
+    constellationGfx.alpha = brightStarsG.alpha * 0.55;
 
     // The land itself drifts with the season (ambered autumns, pale winters).
     if (attachedBiomeLayer) attachedBiomeLayer.tint = season.biomeTint;
@@ -1168,6 +1247,27 @@ export function createAtmosphere(): Atmosphere {
         blotch(g, rand, x, y, r * 0.2, r * 0.8, C.plagueTinge, 0.18, 24, 0.9);
         break;
       }
+      case 'volcano': {
+        // Cooled flows radiating from the vent, an ash blanket, and an ember
+        // at the center that the long fade slowly extinguishes.
+        blotch(g, rand, x, y, 0, r * 0.30, C.volcanoBasalt, 0.55, 22, 0.9);
+        for (let i = 0; i < 5; i++) {
+          const ang = rand() * Math.PI * 2;
+          const segs = 5 + Math.floor(rand() * 4);
+          let px = x, py = y;
+          for (let s2 = 0; s2 < segs; s2++) {
+            const nx2 = px + Math.cos(ang + (rand() - 0.5) * 0.5) * r * 0.12;
+            const ny2 = py + Math.sin(ang + (rand() - 0.5) * 0.5) * r * 0.06;
+            g.moveTo(px, py).lineTo(nx2, ny2)
+              .stroke({ color: C.volcanoBasalt, alpha: 0.5 * (1 - s2 / segs), width: 3.5 * (1 - s2 / segs) + 1 });
+            px = nx2; py = ny2;
+          }
+        }
+        blotch(g, rand, x, y, r * 0.25, r * 0.9, C.volcanoAsh, 0.20, 40, 0.8);
+        g.circle(x, y, 2.4).fill({ color: C.volcanoEmber, alpha: 0.8 });
+        g.circle(x, y, 5).fill({ color: C.volcanoEmber, alpha: 0.25 });
+        break;
+      }
     }
 
     g.filters = [new BlurFilter({ strength: ATMOS.scar.blur })];
@@ -1222,11 +1322,13 @@ export function createAtmosphere(): Atmosphere {
     setLandMask: (mask: Container | null) => { shimmerLayer.mask = mask; },
     wind: () => lastWind,
     onCelestialEvent: (cb: (kind: string) => void) => { eventCb = cb; },
-    triggerCelestial: (kind: 'comet' | 'eclipse' | 'aurora') => { startCelestial(kind); },
+    triggerCelestial: (kind: 'comet' | 'eclipse' | 'aurora' | 'meteors') => { startCelestial(kind); },
     light: () => curLight,
     setLightAzimuth: (v: number | null) => { lightAzOverride = v == null ? null : Math.max(0, Math.min(1, v)); },
     setLightAltitude: (v: number | null) => { lightAltOverride = v == null ? null : Math.max(0, Math.min(1, v)); },
     setStarRotation: (v: number) => { starRotation = v * Math.PI * 2; },
+    nameConstellation,
+    clearConstellations: () => { constellationGfx.clear(); constellationCount = 0; },
     setGlitterStrength: (v: number) => { glitterStrengthMult = Math.max(0, v); },
     setStarBrightness: (v: number) => { starBrightnessMult = Math.max(0, v); },
     setCurvature: (v: number) => { curCurvature = Math.max(0, Math.min(1, v)); applyCurve(); layoutLimb(); },

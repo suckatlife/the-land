@@ -209,6 +209,17 @@ const OMEN_LINES: Record<string, Record<EraBucket, string[]>[]> = {
       middle:  ['The sea wall weeps at every joint.', 'Carts leave the low quarters loaded with everything.'],
       late:    ['The evacuation routes are published, too late to read.', 'The sea stands above the datum and does not recede.'] },
   ],
+  volcano: [
+    { ancient: ['The mountain smokes. The old people watch it.', 'There is a smell of sulphur on the high paths.'],
+      middle:  ['Sulphur taints the wells below the peak.', 'The mountain\'s snow is melting out of season.'],
+      late:    ['Gas readings climb on the mountain. Access is restricted.', 'The survey marks on the mountain no longer agree.'] },
+    { ancient: ['Ash falls like grey snow on the high pastures.', 'The mountain glows where it should be dark.'],
+      middle:  ['The herds refuse the mountain road.', 'Hot springs appear where there were none.'],
+      late:    ['The mountain swells. The instruments agree.', 'Tremors cluster under the peak, shallower each week.'] },
+    { ancient: ['The birds have left the mountain.', 'The ground on the high slopes is warm at night.'],
+      middle:  ['The mountain rumbles without pause. Prayers are continuous.', 'Stones roll downhill on their own.'],
+      late:    ['The exclusion zone empties. The mountain waits.', 'The final ascent teams are recalled.'] },
+  ],
   earthquake: [
     { ancient: ['The dogs will not settle at night.', 'The well water has gone cloudy.'],
       middle:  ['Miners report knocking in the deep galleries.', 'Hairline cracks walk up the cathedral wall.'],
@@ -357,6 +368,34 @@ function narrateEvent(ev: SimEvent, world: SimWorld): string {
         `${title} is finished. ${civ.name} did not build it quickly.`,
       ]);
     }
+    case 'island_rising': {
+      const loc = cardinalDesc(ev.row, ev.col);
+      return pick([
+        `The sea boils in the ${loc}. Fishermen keep their distance.`,
+        `Steam stands on the ${loc} water like a pillar.`,
+      ]);
+    }
+    case 'island_born': {
+      const loc = cardinalDesc(ev.row, ev.col);
+      return pick([
+        `A new land stands in the ${loc} sea, black and steaming.`,
+        `The ${loc} sea has made an island. Nothing grows there yet.`,
+      ]);
+    }
+    case 'land_bridge': {
+      const loc = cardinalDesc(ev.row, ev.col);
+      return pick([
+        `The sea withdraws from the ${loc} strait. A causeway of sand stands where ships went.`,
+        `The ${loc} strait has closed. What was crossed by boat is walked.`,
+      ]);
+    }
+    case 'rift_opened': {
+      const loc = cardinalDesc(ev.row, ev.col);
+      return pick([
+        `The land is tearing in the ${loc}. The sea follows the crack.`,
+        `A rift opens across the ${loc}. The two sides are already strangers.`,
+      ]);
+    }
     case 'refuge_founded': {
       const civ = world.civs.get(ev.civId);
       if (!civ) return '';
@@ -436,6 +475,17 @@ function narrateEvent(ev: SimEvent, world: SimWorld): string {
         return n
           ? pick([`Fire from the heavens strikes the ${loc}. ${n} is brought low.`, `A stone from the sky reshapes the ${loc}. ${n} reels.`])
           : pick([`Fire from the heavens strikes the ${loc}.`, `A stone from the sky falls upon the ${loc}.`]);
+      }
+      if (ev.catastropheType === 'volcano') {
+        if (isSevere) return n
+          ? pick([`The mountain opens. Fire stands over ${n} for three days.`, `${n} is buried in a night. The sky stays grey for a season.`])
+          : pick([`The mountain opens over the ${loc}. An age burns.`, `Fire stands on the ${loc} horizon for three days.`]);
+        if (isMinor) return n
+          ? `The mountain grumbles, and ash dusts the fields of ${n}.`
+          : `The ${loc} mountain grumbles and is quiet again.`;
+        return n
+          ? pick([`The mountain throws fire. The villages of ${n} below it burn.`, `Ash buries the ${loc} fields. ${n} carries what it can.`])
+          : pick([`The ${loc} mountain throws fire over empty land.`, `Ash drifts across the ${loc} for days.`]);
       }
       // plague
       if (isSevere) return n
@@ -705,6 +755,7 @@ const DREAD = {
     asteroid:   { tint: 0xb98e66, vignette: 0x2e1d0c },  // wrong-colored dusk
     flood:      { tint: 0x7e94ad, vignette: 0x131f2b },  // cold and silver
     earthquake: { tint: 0x9f8f78, vignette: 0x261e14 },  // dust in the air
+    volcano:    { tint: 0x9c7a68, vignette: 0x2c120a },  // ash and ember
   } as Record<CatastropheType, { tint: number; vignette: number }>,
 };
 
@@ -796,6 +847,10 @@ function triggerImpact(type: CatastropheType, severity: number) {
       break;
     case 'plague':
       activeFlash = { color: 0x1d2414, alpha: 0.4 * s, decayPerSec: 0.45 };
+      break;
+    case 'volcano':
+      activeFlash = { color: 0xff7a42, alpha: 0.7 * s, decayPerSec: 1.1 };
+      shakeAmp = 9 * s; shakeDecayPerSec = 4;
       break;
   }
 }
@@ -1563,6 +1618,12 @@ const puffs: Puff[] = [];
 
 function rebuildSmokeEmitters() {
   smokeEmitters = [];
+  // A rising island steams while it builds.
+  if (simWorld.terraform?.steamAt) {
+    const s = simWorld.terraform.steamAt;
+    const { x, y } = gridToScreen(s.col, s.row);
+    smokeEmitters.push({ x, y, color: 0xe8eef2, alpha: 0.2, count: 3 });
+  }
   for (const civ of simWorld.civs.values()) {
     if (civ.phase === 'dead') continue;
     const style = SMOKE.eraStyle[civ.era];
@@ -2033,6 +2094,30 @@ function updateFestival(nightness: number) {
   festivalGfx.circle(activeFestival.x, activeFestival.y, 6 * pulse).fill({ color: 0xffe2b0, alpha: 0.28 * env * nightness });
 }
 
+// Constellations: the first civilization of each era past the neolithic
+// names a figure in the stars. The sky accumulates history.
+const CONSTELLATION_NAMES = [
+  'the Plough', 'the Heron', 'the Ferryman', 'the Broken Crown',
+  'the Lantern', 'the Salt Road', 'the Swimmer', 'the Two Sisters',
+];
+const constellationEraDone = new Set<Era>();
+let constellationNameIdx = 0;
+
+function maybeNameConstellations() {
+  for (const civ of simWorld.civs.values()) {
+    if (civ.phase === 'dead' || civ.era === 'neolithic') continue;
+    if (constellationEraDone.has(civ.era)) continue;
+    constellationEraDone.add(civ.era);
+    if (atmos.nameConstellation()) {
+      const name = CONSTELLATION_NAMES[constellationNameIdx++ % CONSTELLATION_NAMES.length];
+      eventLog.unshift({
+        text: colorizeCivNames(`The astronomers of ${civ.name} name ${name}.`),
+        ts: Date.now(),
+      });
+    }
+  }
+}
+
 // Chronicle: a line for whoever just tuned in, every ~5 minutes of sim time.
 let lastChronicleTick = 0;
 
@@ -2074,6 +2159,8 @@ function resetStorySurfaces() {
   pendingFestivals = [];
   activeFestival = null;
   lastChronicleTick = 0;
+  constellationEraDone.clear();
+  atmos.clearConstellations();
   rebuildRoads();
   rebuildWonders();
   rebuildFishSpots();
@@ -2419,6 +2506,10 @@ atmos.onCelestialEvent((kind) => {
       'Lights move in the winter sky, and no one who sees them sleeps soon.',
       'The night sky stands in curtains of pale fire.',
     ],
+    meteors: [
+      'Stars fall over the northern sky, one after another.',
+      'The night is busy with falling stars. Wishes are made and not spoken of.',
+    ],
   };
   eventLog.unshift({ text: pick(lines[kind] ?? ['Something passes overhead.']), ts: Date.now() });
 });
@@ -2485,6 +2576,9 @@ app.ticker.add((ticker) => {
     } else if (ev.kind === 'wonder_built') {
       rebuildWonders();
       triggerPing(ev.row, ev.col, 0xfff0d0);
+    } else if (ev.kind === 'island_rising' || ev.kind === 'island_born'
+        || ev.kind === 'land_bridge' || ev.kind === 'rift_opened') {
+      triggerPing(ev.row, ev.col, 0xd8e4ee);
     }
   }
   updateAtmosphere(ticker.deltaMS);
@@ -2548,6 +2642,7 @@ app.ticker.add((ticker) => {
     maybeSpawnBoats();
     queueFestivals();
     checkWarQuiet();
+    maybeNameConstellations();
   }
   // Animate tile color/alpha toward targets.
   const EASE = 0.15; // higher = faster transitions

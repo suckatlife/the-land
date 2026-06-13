@@ -11,7 +11,7 @@ export function eraRank(e: Era): number {
   return ERAS_ORDERED.indexOf(e);
 }
 
-export type CatastropheType = 'plague' | 'asteroid' | 'flood' | 'earthquake';
+export type CatastropheType = 'plague' | 'asteroid' | 'flood' | 'earthquake' | 'volcano';
 
 export type SimEvent =
   | { kind: 'civ_born'; civId: number }
@@ -26,6 +26,10 @@ export type SimEvent =
   | { kind: 'omen'; stage: 1 | 2 | 3; catastropheType: CatastropheType; severity: number }
   | { kind: 'refuge_founded'; civId: number; parentName: string }
   | { kind: 'conquest'; row: number; col: number; attackerId: number; defenderId: number }
+  | { kind: 'island_rising'; row: number; col: number }
+  | { kind: 'island_born'; row: number; col: number }
+  | { kind: 'land_bridge'; row: number; col: number }
+  | { kind: 'rift_opened'; row: number; col: number }
   | { kind: 'wonder_built'; civId: number; row: number; col: number }
   | { kind: 'migration'; row: number; col: number }
   | { kind: 'spared'; civId: number; catastropheType: CatastropheType }
@@ -364,6 +368,17 @@ export interface SimWorld {
   brewing: BrewingCatastrophe | null;
   // Settlements on their way to existing — visible nomad bands.
   pendingSettlements: Array<{ row: number; col: number; ticksLeft: number }>;
+  // Progressive terrain change (rifts tearing, islands rising, bridges
+  // lifting): a queue of per-tile elevation targets processed a few per tick
+  // so the land visibly transforms. civHits tracks tiles lost per civ so
+  // vitality consequences land once per civ.
+  terraform: {
+    queue: Array<{ row: number; col: number; targetElev: number }>;
+    perTick: number; // may be fractional; acc accumulates
+    acc: number;
+    civHits: Map<number, number>;
+    steamAt: { row: number; col: number } | null; // render hint (island births steam)
+  } | null;
 }
 
 export function createSimWorld(width: number, height: number): SimWorld {
@@ -386,6 +401,7 @@ export function createSimWorld(width: number, height: number): SimWorld {
     pressureNoise: 1.0,
     brewing: null,
     pendingSettlements: [],
+    terraform: null,
   };
 }
 
@@ -1004,7 +1020,8 @@ function rollCatastropheSeverity(): number {
 
 function rollCatastropheType(): CatastropheType {
   const roll = Math.random();
-  return roll < 0.25 ? 'plague' : roll < 0.5 ? 'asteroid' : roll < 0.75 ? 'flood' : 'earthquake';
+  return roll < 0.2 ? 'plague' : roll < 0.4 ? 'asteroid' : roll < 0.6 ? 'flood'
+    : roll < 0.8 ? 'earthquake' : 'volcano';
 }
 
 export function applyCatastrophe(
@@ -1048,7 +1065,24 @@ export function applyCatastrophe(
   world.lastCatastropheTick = world.tick;
   if (builtTiles.length === 0) return;
 
-  const center = builtTiles[Math.floor(Math.random() * builtTiles.length)];
+  let center = builtTiles[Math.floor(Math.random() * builtTiles.length)];
+  if (catastropheType === 'volcano') {
+    // Volcanoes erupt from high rock, preferring peaks that menace settlement.
+    let best: { row: number; col: number } | null = null;
+    let bestScore = -1;
+    for (let tries = 0; tries < 160; tries++) {
+      const r = Math.floor(Math.random() * world.height);
+      const c = Math.floor(Math.random() * world.width);
+      if (biomes[r][c] !== 'rock') continue;
+      let score = Math.random();
+      for (const bt of builtTiles) {
+        const dr = bt.row - r, dc = bt.col - c;
+        if (dr * dr + dc * dc <= CATASTROPHE.regionRadius * CATASTROPHE.regionRadius) score += 1;
+      }
+      if (score > bestScore) { bestScore = score; best = { row: r, col: c }; }
+    }
+    if (best) center = best;
+  }
   const centerRow = center.row, centerCol = center.col;
 
   // Safe civs: capitals outside the radius.
@@ -1110,6 +1144,39 @@ export function applyCatastrophe(
     }
     // Flood also erases name memory from the drowned zone.
     world.nameMemory = world.nameMemory.filter(m => biomes[m.row]?.[m.col] !== 'water');
+  } else if (catastropheType === 'earthquake' && isSevere) {
+    // Rifting: the land tears along a line through the center; the sea pours
+    // in over the following ticks (progressive terraform). The existing
+    // breakaway machinery handles whatever the tear severs.
+    const ang = Math.random() * Math.PI;
+    const ux = Math.cos(ang), uy = Math.sin(ang);
+    const queue: Array<{ row: number; col: number; targetElev: number }> = [];
+    const pushedT = new Set<number>();
+    for (const dir of [1, -1]) {
+      let waterRun = 0;
+      for (let s = dir === 1 ? 0 : 1; s <= 64; s++) {
+        const cr = Math.round(centerRow + uy * s * dir);
+        const cc = Math.round(centerCol + ux * s * dir);
+        if (cr < 0 || cr >= world.height || cc < 0 || cc >= world.width) break;
+        if (biomes[cr][cc] === 'water') { waterRun++; if (waterRun >= 3) break; continue; }
+        waterRun = 0;
+        for (let wOff = -1; wOff <= 1; wOff++) {
+          const r = Math.round(cr + ux * wOff);
+          const c = Math.round(cc - uy * wOff);
+          if (r < 0 || r >= world.height || c < 0 || c >= world.width) continue;
+          if (biomes[r][c] === 'water') continue;
+          const k = r * world.width + c;
+          if (pushedT.has(k)) continue;
+          pushedT.add(k);
+          queue.push({ row: r, col: c, targetElev: SEA_LEVEL - 0.06 - Math.random() * 0.04 });
+        }
+      }
+    }
+    queue.sort((a, b) =>
+      (Math.abs(a.row - centerRow) + Math.abs(a.col - centerCol)) -
+      (Math.abs(b.row - centerRow) + Math.abs(b.col - centerCol)));
+    world.terraform = { queue, perTick: 0.8, acc: 0, civHits: new Map(), steamAt: null };
+    events.push({ kind: 'rift_opened', row: centerRow, col: centerCol });
   } else if (catastropheType === 'earthquake') {
     // Sine-wave elevation perturbation: some land sinks below SEA_LEVEL, some sea floor rises.
     const phase1 = Math.random() * Math.PI * 2;
@@ -1151,6 +1218,45 @@ export function applyCatastrophe(
       }
     }
     world.nameMemory = world.nameMemory.filter(m => biomes[m.row]?.[m.col] !== 'water');
+  } else if (catastropheType === 'volcano') {
+    // Eruption: devastation with a tight core, a new rock cone at the vent,
+    // and an ash ring that will feed farms for an age.
+    const burnR = Math.max(4, Math.round(radius * 0.7));
+    for (let r = Math.max(0, centerRow - radius); r <= Math.min(world.height - 1, centerRow + radius); r++) {
+      for (let c = Math.max(0, centerCol - radius); c <= Math.min(world.width - 1, centerCol + radius); c++) {
+        const dr = r - centerRow, dc = c - centerCol;
+        const distSq = dr * dr + dc * dc;
+        if (distSq > radius * radius) continue;
+        if (biomes[r][c] === 'water') continue;
+        const dist = Math.sqrt(distSq);
+        const tile = world.tiles[r][c];
+        const cid = tile.civId;
+        if (dist <= 2.5) {
+          // The cone.
+          elevation[r][c] = Math.max(elevation[r][c], 0.7 - dist * 0.1);
+          if (biomes[r][c] !== 'rock') { biomes[r][c] = 'rock'; biomeChanged.push({ row: r, col: c }); }
+        }
+        if (cid != null && safeIds.has(cid)) continue;
+        if (dist <= burnR && (tile.state === 'built' || tile.state === 'cleared')) {
+          const falloff = dist <= 3 ? 1 : Math.pow((burnR - dist) / (burnR - 3), 1.4);
+          if (Math.random() < falloff) {
+            const ownerCiv = cid != null ? world.civs.get(cid) : null;
+            tile.state = isSevere ? 'wild' : 'ruin';
+            tile.ruinEra = isSevere ? null : (ownerCiv ? ownerCiv.era : tile.ruinEra);
+            tile.civId = null;
+            tile.lastChangedTick = world.tick;
+            changed.push({ row: r, col: c });
+            if (cid != null) civTilesHit.set(cid, (civTilesHit.get(cid) || 0) + 1);
+          }
+        } else if (dist > burnR && !isMinor
+            && (biomes[r][c] === 'grass' || biomes[r][c] === 'sand' || biomes[r][c] === 'forest')
+            && tile.state === 'wild') {
+          // Ash ring: surviving open land is enriched.
+          biomes[r][c] = 'fertile';
+          biomeChanged.push({ row: r, col: c });
+        }
+      }
+    }
   } else {
     // Plague / asteroid: devastate built, cleared, and (for non-minor) ruin tiles.
     // Ruin tiles must also be affected — otherwise old high-era ruins survive inside the blast
@@ -1211,6 +1317,30 @@ export function applyCatastrophe(
         const dr = m.row - centerRow, dc = m.col - centerCol;
         return dr * dr + dc * dc > radius * radius;
       });
+    }
+    // A severe asteroid permanently craters: a water-filled center ringed
+    // with raised rock. Old worlds stay readable by their wounds.
+    if (catastropheType === 'asteroid' && isSevere) {
+      for (let r = Math.max(0, centerRow - 4); r <= Math.min(world.height - 1, centerRow + 4); r++) {
+        for (let c = Math.max(0, centerCol - 4); c <= Math.min(world.width - 1, centerCol + 4); c++) {
+          const dr = r - centerRow, dc = c - centerCol;
+          const dist = Math.sqrt(dr * dr + dc * dc);
+          if (dist > 4) continue;
+          const tile = world.tiles[r][c];
+          if (dist <= 1.6) {
+            elevation[r][c] = SEA_LEVEL - 0.1;
+            if (biomes[r][c] !== 'water') { biomes[r][c] = 'water'; biomeChanged.push({ row: r, col: c }); }
+            if (tile.state !== 'wild') {
+              tile.state = 'wild'; tile.civId = null; tile.ruinEra = null;
+              tile.lastChangedTick = world.tick;
+              changed.push({ row: r, col: c });
+            }
+          } else if (dist <= 3 && biomes[r][c] !== 'water') {
+            elevation[r][c] = Math.max(elevation[r][c], 0.68);
+            if (biomes[r][c] !== 'rock') { biomes[r][c] = 'rock'; biomeChanged.push({ row: r, col: c }); }
+          }
+        }
+      }
     }
   }
 
@@ -1563,6 +1693,113 @@ export function step(
     const newCiv = spawnCiv(world, p.row, p.col);
     changed.push({ row: p.row, col: p.col });
     events.push({ kind: 'civ_born', civId: newCiv.id });
+  }
+
+  // Progressive terraform: rifts tear, islands rise, bridges lift — a few
+  // tiles per tick so the change is watchable.
+  if (world.terraform) {
+    const tf = world.terraform;
+    tf.acc += tf.perTick;
+    while (tf.acc >= 1 && tf.queue.length > 0) {
+      tf.acc -= 1;
+      const q = tf.queue.shift()!;
+      elevation[q.row][q.col] = q.targetElev;
+      const newBiome: Biome = q.targetElev < SEA_LEVEL ? 'water'
+        : q.targetElev < SHORE_LEVEL ? 'sand'
+        : q.targetElev > 0.65 ? 'rock' : 'grass';
+      if (biomes[q.row][q.col] !== newBiome) {
+        biomes[q.row][q.col] = newBiome;
+        biomeChanges.push({ row: q.row, col: q.col });
+      }
+      const tile = world.tiles[q.row][q.col];
+      if (newBiome === 'water' && tile.state !== 'wild') {
+        const cid = tile.civId;
+        tile.state = 'wild';
+        tile.civId = null;
+        tile.ruinEra = null;
+        tile.lastChangedTick = world.tick;
+        changed.push({ row: q.row, col: q.col });
+        if (cid != null) {
+          const h = (tf.civHits.get(cid) || 0) + 1;
+          tf.civHits.set(cid, h);
+          if (h === 5) {
+            const civ = world.civs.get(cid);
+            if (civ && (civ.phase === 'rising' || civ.phase === 'stable')) {
+              civ.vitality = Math.max(0.05, civ.vitality - 0.4);
+              enterPhase(civ, 'declining');
+              events.push({ kind: 'civ_declining', civId: cid });
+            }
+          }
+        }
+      }
+    }
+    if (tf.queue.length === 0) {
+      if (tf.steamAt) events.push({ kind: 'island_born', row: tf.steamAt.row, col: tf.steamAt.col });
+      world.nameMemory = world.nameMemory.filter((m) => biomes[m.row]?.[m.col] !== 'water');
+      world.terraform = null;
+    }
+  } else {
+    // Rare spontaneous geology (one process at a time).
+    const geoRoll = Math.random();
+    if (geoRoll < 0.000025) {
+      // An island rises in open water: shoal, then sand, then a rock cone.
+      for (let tries = 0; tries < 30; tries++) {
+        const r = 8 + Math.floor(Math.random() * (world.height - 16));
+        const c = 8 + Math.floor(Math.random() * (world.width - 16));
+        if (biomes[r][c] !== 'water') continue;
+        let nearLand = false;
+        for (let dr = -6; dr <= 6 && !nearLand; dr++) {
+          for (let dc = -6; dc <= 6; dc++) {
+            const rr = r + dr, cc = c + dc;
+            if (rr < 0 || rr >= world.height || cc < 0 || cc >= world.width) continue;
+            if (biomes[rr][cc] !== 'water') { nearLand = true; break; }
+          }
+        }
+        if (nearLand) continue;
+        const queue: Array<{ row: number; col: number; targetElev: number }> = [];
+        const stages: Array<[number, number]> = [[3, SEA_LEVEL - 0.02], [2, SHORE_LEVEL - 0.03], [1, SHORE_LEVEL + 0.08], [0, 0.7]];
+        for (const [rad, target] of stages) {
+          for (let dr = -3; dr <= 3; dr++) {
+            for (let dc = -3; dc <= 3; dc++) {
+              if (Math.sqrt(dr * dr + dc * dc) > rad + 0.4) continue;
+              const rr = r + dr, cc = c + dc;
+              if (rr < 0 || rr >= world.height || cc < 0 || cc >= world.width) continue;
+              queue.push({ row: rr, col: cc, targetElev: target });
+            }
+          }
+        }
+        world.terraform = { queue, perTick: 0.06, acc: 0, civHits: new Map(), steamAt: { row: r, col: c } };
+        events.push({ kind: 'island_rising', row: r, col: c });
+        break;
+      }
+    } else if (geoRoll < 0.000045) {
+      // A land bridge lifts across a narrow strait.
+      outer:
+      for (let tries = 0; tries < 40; tries++) {
+        const r = 4 + Math.floor(Math.random() * (world.height - 8));
+        const c = 4 + Math.floor(Math.random() * (world.width - 8));
+        if (biomes[r][c] !== 'water') continue;
+        for (const [dr, dc] of [[1, 0], [0, 1]] as const) {
+          // Walk both ways to find land at each end with 3-7 water between.
+          let back = 0;
+          while (back < 2 && biomes[r - dr * (back + 1)]?.[c - dc * (back + 1)] === 'water') back++;
+          if (biomes[r - dr * (back + 1)]?.[c - dc * (back + 1)] === undefined) continue;
+          if (biomes[r - dr * (back + 1)][c - dc * (back + 1)] === 'water') continue;
+          let len = back;
+          while (len < 8 && biomes[r + dr * (len - back + 1)]?.[c + dc * (len - back + 1)] === 'water') len++;
+          const er = r + dr * (len - back + 1), ec = c + dc * (len - back + 1);
+          if (biomes[er]?.[ec] === undefined || biomes[er][ec] === 'water') continue;
+          if (len < 3 || len > 7) continue;
+          const queue: Array<{ row: number; col: number; targetElev: number }> = [];
+          for (let s = -back; s <= len - back; s++) {
+            queue.push({ row: r + dr * s, col: c + dc * s, targetElev: SHORE_LEVEL - 0.05 });
+          }
+          world.terraform = { queue, perTick: 0.15, acc: 0, civHits: new Map(), steamAt: null };
+          events.push({ kind: 'land_bridge', row: r, col: c });
+          break outer;
+        }
+      }
+    }
   }
 
   return { changes: changed, events, biomeChanges };
