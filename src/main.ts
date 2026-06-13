@@ -871,10 +871,39 @@ function drawIce() {
 
 let pollutionNarrated = false;
 let curPollution = 0;
+// The dying-world blight: in the final stretch before the cataclysm the colour
+// drains out of the land toward a sickly grey, so the whole globe visibly winds
+// down before it breaks. Applied to biomeLayer.tint in the ticker (the scenery
+// to the horizon follows it), layered over the deepening smog.
+let curBlight = 0;
+let blightNarrated = false;
+const BLIGHT = {
+  startFrac: 0.80, // begins draining at 80% through the world's life
+  endFrac: 0.97,   // fully drained just before the cataclysm
+  color: 0x8a877d, // desaturated grey-tan the land bleeds toward
+  maxDrain: 0.74,  // how far toward grey at full blight (0..1)
+  narrateAt: 0.35,
+};
 
 function updatePollution() {
   // How far through the world's life, and how industrial it has become.
   const cycleFrac = (simWorld.tick % CATACLYSM_INTERVAL) / CATACLYSM_INTERVAL;
+
+  // Blight ramp — eased, gated on some industry so a pristine pre-industrial
+  // world doesn't grey out (it withers hardest where it was most developed).
+  const braw = Math.max(0, Math.min(1, (cycleFrac - BLIGHT.startFrac) / (BLIGHT.endFrac - BLIGHT.startFrac)));
+  const beased = braw * braw * (3 - 2 * braw);
+  const blightTarget = beased * (0.45 + 0.55 * Math.max(0, Math.min(1, curPollution * 1.4)));
+  curBlight += (blightTarget - curBlight) * 0.04;
+  if (!blightNarrated && curBlight > BLIGHT.narrateAt) {
+    blightNarrated = true;
+    pushNarration(pick([
+      'The colour goes out of the land. The green greys, and does not come back.',
+      'A pallor spreads across the world. The fields forget how to be green.',
+    ]), { priority: 'high' });
+  }
+  if (cycleFrac < 0.1) blightNarrated = false; // re-arm for the next world
+  if ((window as any).__forceBlight != null) curBlight = (window as any).__forceBlight;
   let bestRank = 0, bestCount = -1;
   for (const civ of simWorld.civs.values()) {
     if (civ.phase === 'dead') continue;
@@ -2587,6 +2616,8 @@ function resetStorySurfaces() {
   rockets.length = 0;
   curPollution = 0;
   pollutionNarrated = false;
+  curBlight = 0;
+  blightNarrated = false;
   pollutionGfx.visible = false;
   smogGfx.clear();
   smogGfx.visible = false;
@@ -3025,6 +3056,11 @@ app.ticker.add((ticker) => {
   // Sky + glaze + weather + scar fades. The sky leans toward the last dread
   // hue while curDread eases, so it releases smoothly after a catastrophe.
   atmos.update(ticker.deltaMS, curDread, curHue.vignette, dominantEra(simWorld));
+  // Dying-world blight: drain the land toward grey as the cataclysm nears.
+  // atmos.update just wrote the seasonal tint, so this layers on top each frame.
+  if (curBlight > 0.002) {
+    biomeLayer.tint = lerpColor(biomeLayer.tint, BLIGHT.color, curBlight * BLIGHT.maxDrain);
+  }
   // The ocean apron + scenery belong to the planetary look; scrubbing
   // curvature to ~0 restores the bare flat diamond.
   const planetary = atmos.curvature() >= 0.05 ? 1 : 0;
