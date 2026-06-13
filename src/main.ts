@@ -1145,8 +1145,10 @@ interface TileBuildingState {
   targetAlphas: number[];
   roofCurY:    number[];       // current roof y per slot (eases on era change)
   roofTargetY: number[];
-  ruined:      boolean[];      // per-slot: abandoned (density dropped) or dead-civ — dims sprite alpha
-  curRuinMult: number[];       // per-slot opacity multiplier (1.0 active, decays from 0.35 → 0 while ruined)
+  ruined:      boolean[];      // per-slot: abandoned (density dropped) or dead-civ
+  curRuinMult: number[];       // per-slot opacity multiplier (1.0 active; only drops in the final reclaim phase)
+  ruinAge:     number[];       // per-slot decay progress 0→1: grey → collapse → land reclaims
+  ruinColor0:  number[];       // the slot's colour at the moment it ruined (desaturates from here)
 }
 let buildingTileStates: (TileBuildingState | null)[][] = Array.from({ length: GRID_SIZE }, () =>
   Array(GRID_SIZE).fill(null)
@@ -1457,10 +1459,21 @@ function clearBuildingLayer() {
   animatingBuildingTiles.clear();
 }
 
-const RUIN_TINT = 0x5a544c;       // dark warm grey-brown for abandoned/dead-civ buildings
-const RUIN_ALPHA_MULT = 0.35;     // initial opacity when a building first becomes ruined
-const RUIN_DECAY_EASE = 0.00167;  // per-frame ease toward 0 — ruins crumble over real-time (~3× slower)
-const RUIN_DESTROY_THRESHOLD = 0.01; // alpha mult below which we destroy the slot sprites
+const RUIN_TINT = 0x5a544c;       // fallback stone tone (rubble base)
+// A ruin's life, as a fraction of its decay (ruinAge 0→1): it first drains of
+// colour to grey stone, then its upper floors collapse into a low rubble
+// stub, and finally the land reclaims the stub. Time-based (frame-rate
+// independent) — the whole arc takes RUIN_DECAY_SECONDS.
+const RUIN_DECAY_SECONDS = 30;
+const RUIN_PHASE = { greyBy: 0.22, collapseFrom: 0.15, collapseTo: 0.62, reclaimFrom: 0.62 };
+
+// Luminance greyscale of a colour, nudged to warm stone (not a dead grey).
+function greyOf(color: number): number {
+  const r = (color >> 16) & 0xff, g = (color >> 8) & 0xff, bl = color & 0xff;
+  const l = Math.round(0.32 * r + 0.55 * g + 0.13 * bl) * 0.85 + 18;
+  const v = Math.max(0, Math.min(255, l));
+  return ((Math.min(255, v + 8)) << 16) | (v << 8) | Math.max(0, v - 10);
+}
 
 function refreshBuildingSprite(row: number, col: number) {
   if (!SHOW_BUILDING_SPRITES || bodyTextures.length === 0) return;
@@ -1482,12 +1495,13 @@ function refreshBuildingSprite(row: number, col: number) {
     if (!state) return;
     for (let s = 0; s < 4; s++) {
       if (!state.floor1[s]) continue;
-      state.floor1[s]!.tint = RUIN_TINT;
-      for (const mf of state.midFloors[s]) mf.sprite.tint = RUIN_TINT;
-      if (state.roof[s])   state.roof[s]!.tint   = RUIN_TINT;
-      // Newly ruined this call — snap mult to RUIN_ALPHA_MULT so it starts at 35%, then decays.
-      if (!state.ruined[s]) state.curRuinMult[s] = RUIN_ALPHA_MULT;
-      state.ruined[s] = true;
+      // Begin the decay progression (grey → collapse → reclaim), capturing the
+      // colour to drain from. The animation loop drives it from here.
+      if (!state.ruined[s]) {
+        state.ruined[s] = true;
+        state.ruinAge[s] = 0;
+        state.ruinColor0[s] = state.floor1[s]!.tint as number;
+      }
     }
     animatingBuildingTiles.add(`${row},${col}`);
     return;
@@ -1513,6 +1527,8 @@ function refreshBuildingSprite(row: number, col: number) {
       roofCurY: [0,0,0,0], roofTargetY: [0,0,0,0],
       ruined: [false,false,false,false],
       curRuinMult: [1,1,1,1],
+      ruinAge: [0,0,0,0],
+      ruinColor0: [0,0,0,0],
     };
     buildingTileStates[row][col] = state;
   }
@@ -1526,11 +1542,13 @@ function refreshBuildingSprite(row: number, col: number) {
     state.targetAlphas[slotIdx] = (wantActive || hasSprite) ? 1 : 0;
     const nowRuined = !wantActive && hasSprite;
     if (nowRuined && !state.ruined[slotIdx]) {
-      // Just transitioned to ruined — snap mult to RUIN_ALPHA_MULT so decay starts at 35%.
-      state.curRuinMult[slotIdx] = RUIN_ALPHA_MULT;
+      // Slot abandoned (density dropped past it) — start the decay progression.
+      state.ruinAge[slotIdx] = 0;
+      state.ruinColor0[slotIdx] = (state.floor1[slotIdx]!.tint as number);
     } else if (!nowRuined && state.ruined[slotIdx]) {
-      // Reactivated (density rose back) — snap back to full.
+      // Reactivated (density rose back) — rebuilt, full and coloured again.
       state.curRuinMult[slotIdx] = 1.0;
+      state.ruinAge[slotIdx] = 0;
     }
     state.ruined[slotIdx] = nowRuined;
 
@@ -1570,9 +1588,13 @@ function refreshBuildingSprite(row: number, col: number) {
 
     } else if (hasSprite) {
       // Existing building — retint, then reconcile mid-floor count if active.
-      state.floor1[slotIdx]!.tint = tint;
-      for (const mf of state.midFloors[slotIdx]) mf.sprite.tint = tint;
-      if (state.roof[slotIdx]) state.roof[slotIdx]!.tint = tint;
+      // Ruined slots are owned by the decay animation (grey/collapse/reclaim),
+      // so don't stamp a flat tint over them here.
+      if (!state.ruined[slotIdx]) {
+        state.floor1[slotIdx]!.tint = tint;
+        for (const mf of state.midFloors[slotIdx]) mf.sprite.tint = tint;
+        if (state.roof[slotIdx]) state.roof[slotIdx]!.tint = tint;
+      }
 
       if (wantActive) {
         // Grow midFloors array to `extras` length (add new sprites fading in from alpha 0).
@@ -3104,56 +3126,76 @@ app.ticker.add((ticker) => {
       if (slotNotSettled) settled = false; else bts.curAlphas[s] = bts.targetAlphas[s];
       const a = bts.curAlphas[s];
 
-      // Ruin decay — while a slot is ruined, curRuinMult eases from RUIN_ALPHA_MULT toward 0.
-      // The tint also blends from RUIN_TINT toward the biome color underneath, so the
-      // building visually merges with the ground as it crumbles.
-      if (bts.ruined[s] && bts.curRuinMult[s] > 0) {
-        bts.curRuinMult[s] = Math.max(0, bts.curRuinMult[s] - bts.curRuinMult[s] * RUIN_DECAY_EASE);
-        if (bts.curRuinMult[s] > RUIN_DESTROY_THRESHOLD) settled = false;
-        const blendT = Math.max(0, Math.min(1, 1 - bts.curRuinMult[s] / RUIN_ALPHA_MULT));
-        const btv = biomeTileVisuals[r][c];
-        const biomeColor = btv ? btv.curColor : BIOME_COLORS[biomeMap[r][c]];
-        const ruinedTint = lerpColor(RUIN_TINT, biomeColor, blendT);
-        if (bts.floor1[s]) bts.floor1[s]!.tint = ruinedTint;
-        if (bts.roof[s])   bts.roof[s]!.tint   = ruinedTint;
-        for (const mf of bts.midFloors[s]) mf.sprite.tint = ruinedTint;
-      }
-      const ruinMult = bts.curRuinMult[s];
-
-      // Floor1 and roof multiplied by building visibility (and ruin dimming if abandoned).
-      if (bts.floor1[s]) bts.floor1[s]!.alpha = a * ruinMult;
-      if (bts.roof[s])   bts.roof[s]!.alpha   = a * ruinMult;
-
-      // Mid-floors: per-floor alpha (era) * building visibility * ruin dimming.
       const mfs = bts.midFloors[s];
-      for (let i = mfs.length - 1; i >= 0; i--) {
-        const mf = mfs[i];
-        mf.curAlpha += (mf.targetAlpha - mf.curAlpha) * MID_FLOOR_EASE;
-        const mfNotSettled = Math.abs(mf.curAlpha - mf.targetAlpha) > 0.01;
-        if (mfNotSettled) settled = false; else mf.curAlpha = mf.targetAlpha;
-        mf.sprite.alpha = a * mf.curAlpha * ruinMult;
-        // If a mid-floor faded out completely AND is at the tail of the list, destroy + trim.
-        // (Mid-fade interior floors keep their slot — we only destroy trailing ones.)
-        if (!mfNotSettled && mf.targetAlpha === 0 && i === mfs.length - 1) {
-          buildingLayer.removeChild(mf.sprite);
-          mf.sprite.destroy();
-          mfs.pop();
-        }
-      }
 
-      // Roof Y eases on era change.
-      if (bts.roof[s]) {
-        bts.roofCurY[s] += (bts.roofTargetY[s] - bts.roofCurY[s]) * ROOF_EASE;
-        if (Math.abs(bts.roofCurY[s] - bts.roofTargetY[s]) > 0.1) settled = false;
-        else bts.roofCurY[s] = bts.roofTargetY[s];
-        bts.roof[s]!.y = bts.roofCurY[s];
+      if (bts.ruined[s]) {
+        // A ruin's life: drain to grey stone, collapse the upper floors into a
+        // low rubble stub, then let the land reclaim it.
+        bts.ruinAge[s] = Math.min(1, bts.ruinAge[s] + (ticker.deltaMS / 1000) / RUIN_DECAY_SECONDS);
+        const age = bts.ruinAge[s];
+        if (age < 1) settled = false;
+        const desat = Math.max(0, Math.min(1, age / RUIN_PHASE.greyBy));
+        const collapse = Math.max(0, Math.min(1, (age - RUIN_PHASE.collapseFrom) / (RUIN_PHASE.collapseTo - RUIN_PHASE.collapseFrom)));
+        const reclaim = Math.max(0, Math.min(1, (age - RUIN_PHASE.reclaimFrom) / (1 - RUIN_PHASE.reclaimFrom)));
+        const biomeColor = biomeTileVisuals[r][c]?.curColor ?? BIOME_COLORS[biomeMap[r][c]];
+        const grey = greyOf(bts.ruinColor0[s]);
+        // Colour: original → grey (desaturate), then grey → the land (reclaim).
+        let tint = lerpColor(bts.ruinColor0[s], grey, desat);
+        tint = lerpColor(tint, biomeColor, reclaim * 0.92);
+        const elemAlpha = a * (1 - reclaim);
+
+        // floor1 is the rubble base: it squats down as the structure collapses,
+        // then sinks into the ground as the land reclaims it.
+        if (bts.floor1[s]) {
+          const f1 = bts.floor1[s]!;
+          f1.tint = tint;
+          f1.alpha = elemAlpha;
+          f1.scale.y = BUILDING_SCALE * (1 - 0.5 * collapse);
+        }
+        // Mid-floors collapse top-down — the upper storeys fall first.
+        for (let i = mfs.length - 1; i >= 0; i--) {
+          const mf = mfs[i];
+          mf.sprite.tint = tint;
+          const floorFall = Math.max(0, Math.min(1, collapse * mfs.length - (mfs.length - 1 - i)));
+          mf.sprite.alpha = elemAlpha * (1 - floorFall);
+        }
+        // Roof caves in: drops toward the rubble and fades as it collapses.
+        if (bts.roof[s]) {
+          const rf = bts.roof[s]!;
+          rf.tint = tint;
+          rf.alpha = elemAlpha * (1 - collapse);
+          const groundY = bts.floor1[s] ? bts.floor1[s]!.y : bts.roofCurY[s];
+          rf.y = bts.roofCurY[s] + (groundY - bts.roofCurY[s]) * collapse;
+        }
+      } else {
+        // Active building: visibility-driven alpha + era mid-floor/roof eases.
+        if (bts.floor1[s]) { bts.floor1[s]!.alpha = a; bts.floor1[s]!.scale.y = BUILDING_SCALE; }
+        if (bts.roof[s])   bts.roof[s]!.alpha   = a;
+        for (let i = mfs.length - 1; i >= 0; i--) {
+          const mf = mfs[i];
+          mf.curAlpha += (mf.targetAlpha - mf.curAlpha) * MID_FLOOR_EASE;
+          const mfNotSettled = Math.abs(mf.curAlpha - mf.targetAlpha) > 0.01;
+          if (mfNotSettled) settled = false; else mf.curAlpha = mf.targetAlpha;
+          mf.sprite.alpha = a * mf.curAlpha;
+          if (!mfNotSettled && mf.targetAlpha === 0 && i === mfs.length - 1) {
+            buildingLayer.removeChild(mf.sprite);
+            mf.sprite.destroy();
+            mfs.pop();
+          }
+        }
+        if (bts.roof[s]) {
+          bts.roofCurY[s] += (bts.roofTargetY[s] - bts.roofCurY[s]) * ROOF_EASE;
+          if (Math.abs(bts.roofCurY[s] - bts.roofTargetY[s]) > 0.1) settled = false;
+          else bts.roofCurY[s] = bts.roofTargetY[s];
+          bts.roof[s]!.y = bts.roofCurY[s];
+        }
       }
 
       // Whole slot torn down — destroy all sprites. Triggered by either:
       //  (a) building visibility hit 0 (tile left 'built' state), or
-      //  (b) ruin decay reached the destroy threshold (ghostly remnant fully crumbled).
-      const ruinCrumbled = bts.ruined[s] && bts.curRuinMult[s] <= RUIN_DESTROY_THRESHOLD;
-      if ((!slotNotSettled && bts.targetAlphas[s] === 0) || ruinCrumbled) {
+      //  (b) the ruin fully decayed (rubble reclaimed by the land).
+      const ruinCrumbled = bts.ruined[s] && bts.ruinAge[s] >= 1;
+      if ((!slotNotSettled && bts.targetAlphas[s] === 0 && !bts.ruined[s]) || ruinCrumbled) {
         if (bts.floor1[s]) { buildingLayer.removeChild(bts.floor1[s]!); bts.floor1[s]!.destroy(); bts.floor1[s] = null; }
         if (bts.roof[s])   { buildingLayer.removeChild(bts.roof[s]!);   bts.roof[s]!.destroy();   bts.roof[s]   = null; }
         for (const mf of bts.midFloors[s]) { buildingLayer.removeChild(mf.sprite); mf.sprite.destroy(); }
@@ -3161,6 +3203,7 @@ app.ticker.add((ticker) => {
         // Reset ruin state in case a new building is later placed in this slot.
         bts.ruined[s] = false;
         bts.curRuinMult[s] = 1.0;
+        bts.ruinAge[s] = 0;
       }
     }
 
