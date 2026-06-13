@@ -616,12 +616,28 @@ function updateEventLog() {
   }).join('');
 }
 
+// Graphics quality — the user's FPS/fidelity lever (cycled from the HUD, saved
+// to localStorage, applied on load). The dominant costs are fill-related: the
+// main canvas at device resolution (×dpr — 4× the pixels on a hi-DPI screen)
+// and the per-frame render-texture. mainRes caps the canvas resolution (the
+// biggest lever), rt the texture, slots/extraFloors the building object count.
+const QUALITY = {
+  high:   { mainRes: 2,   rt: 1.0, slots: 4, extraFloors: 5, label: 'high' },
+  medium: { mainRes: 1.25, rt: 0.8, slots: 3, extraFloors: 1, label: 'med'  },
+  low:    { mainRes: 1,   rt: 0.6, slots: 2, extraFloors: 0, label: 'low'  },
+} as const;
+type QualityLevel = keyof typeof QUALITY;
+let qualityLevel: QualityLevel =
+  (localStorage.getItem('theLand:quality') as QualityLevel) in QUALITY
+    ? (localStorage.getItem('theLand:quality') as QualityLevel)
+    : 'high';
+
 const app = new Application();
 await app.init({
   width: window.innerWidth,
   height: window.innerHeight,
   background: '#e8e2d4',
-  resolution: window.devicePixelRatio || 1,
+  resolution: Math.min(window.devicePixelRatio || 1, QUALITY[qualityLevel].mainRes),
   autoDensity: true,
   antialias: true,
 });
@@ -706,24 +722,8 @@ atmos.attach({ biomeLayer });
 const WORLD_CAPTURE = { x0: -1600, y0: -110, w: 3200, h: 1720 };
 const captureScale = ATMOS.composition.worldScale;
 
-// Graphics quality — the user's FPS/fidelity lever (cycled from the HUD, saved
-// to localStorage). The per-frame render of ~13k constantly-changing objects
-// into the curvature texture is the dominant cost; the two things that scale
-// it are building density (slots/tile) and the texture's pixel count.
-const QUALITY = {
-  high:   { slots: 4, rt: 1.0,  label: 'high' },
-  medium: { slots: 3, rt: 0.7,  label: 'med'  },
-  low:    { slots: 2, rt: 0.5,  label: 'low'  },
-} as const;
-type QualityLevel = keyof typeof QUALITY;
-let qualityLevel: QualityLevel =
-  (localStorage.getItem('theLand:quality') as QualityLevel) in QUALITY
-    ? (localStorage.getItem('theLand:quality') as QualityLevel)
-    : 'high';
-
-// The world is rendered into this texture EVERY frame, so its pixel count is a
-// big share of the cost. Resolution comes from the quality setting (1× device
-// regardless of dpr at 'high'); the crisp HUD/labels render on the main canvas.
+// The world is rendered into this texture EVERY frame; its resolution comes
+// from the quality setting.
 let worldRT = RenderTexture.create({
   width: Math.ceil(WORLD_CAPTURE.w * captureScale),
   height: Math.ceil(WORLD_CAPTURE.h * captureScale),
@@ -763,6 +763,7 @@ atmos.attachPlane(worldPlane, {
 atmos.layout(window.innerWidth, window.innerHeight);
 (window as any).__layers = { world, cityMarkersContainer, labelLayer, biomeLayer, buildingLayer, simLayer };
 (window as any).__anim = () => ({ tiles: animatingTiles.size, buildings: animatingBuildingTiles.size, biome: animatingBiomeTiles.size });
+(window as any).__rt = () => ({ res: worldRT.source.resolution, w: worldRT.source.pixelWidth, h: worldRT.source.pixelHeight, bound: worldPlane.texture === worldRT, tickerFPS: Math.round(app.ticker.FPS) });
 
 const expeditionGfx = new Graphics();
 expeditionLayer.addChild(expeditionGfx);
@@ -1293,12 +1294,17 @@ function pickRoofFrame(row: number, col: number, fillIdx: number): number {
 // Per-slot mid-floor count: lerp by density within the era's height range, then
 // add stable per-slot noise so dense tiles aren't a perfectly smooth gradient.
 function extrasForBuilding(row: number, col: number, slotIdx: number, density: number, era: Era): number {
+  // Each mid-floor is its own sprite; height-stacking is a big share of the
+  // ~10k building sprites. The quality cap flattens it (low = no mid-floors),
+  // which is the real object-count lever for weak/object-bound GPUs.
+  const floorCap = QUALITY[qualityLevel].extraFloors;
+  if (floorCap === 0) return 0;
   const [minFloors, maxFloors] = ERA_HEIGHT_RANGE[era];
   const d = Math.max(0, Math.min(1, density));
   const gradient = minFloors + (maxFloors - minFloors) * d;
   const noise = ((_bldHash(row, col, slotIdx, 7) / 0xffffffff) * 2 - 1) * HEIGHT_NOISE;
   const floors = Math.max(minFloors, Math.min(maxFloors, Math.round(gradient + noise)));
-  return Math.min(MAX_EXTRA_FLOORS, floors - 1);
+  return Math.min(MAX_EXTRA_FLOORS, floorCap, floors - 1);
 }
 
 // Per-civ eased saturation multiplier (eases toward ERA_SAT_MULT[civ.era]).
@@ -2861,7 +2867,7 @@ app.ticker.add((ticker) => {
   updateLabels();
   updateHud();
   // DOM rebuild for the civ bars is expensive — throttle it.
-  if (frameCount % BARS_REFRESH_FRAMES === 0) { updateBars(); updateFpsLabel(); }
+  if (frameCount % BARS_REFRESH_FRAMES === 0) updateBars();
   updateEventLog();
 });
 
@@ -2869,6 +2875,8 @@ app.ticker.add((ticker) => {
 // main tick callback (so it sees this frame's updates) and not gated by
 // `running`, so manual actions while paused still show.
 app.ticker.add(() => {
+  measureFps();
+  updateFpsLabel();
   app.renderer.render({ container: world, target: worldRT, clear: true });
 });
 
@@ -2990,9 +2998,16 @@ updateHud();
 // FPS readout — Pixi's measured render rate, smoothed and color-coded so the
 // real-hardware number is always visible (green ≥50, amber ≥30, red below).
 const fpsLabel = document.getElementById('fps-label')!;
-let fpsSmoothed = 60;
+// Pixi's ticker.FPS is the trustworthy source (verified against a wall-clock
+// rAF count). Snap-init the EMA to the first reading so the label never lags
+// from a bogus starting value; sample every frame via measureFps().
+let fpsSmoothed = -1;
+function measureFps() {
+  const f = app.ticker.FPS;
+  fpsSmoothed = fpsSmoothed < 0 ? f : fpsSmoothed + (f - fpsSmoothed) * 0.1;
+}
 function updateFpsLabel() {
-  fpsSmoothed += (app.ticker.FPS - fpsSmoothed) * 0.1;
+  if (fpsSmoothed < 0) return;
   const v = Math.round(fpsSmoothed);
   fpsLabel.textContent = String(v);
   fpsLabel.style.color = v >= 50 ? '#2e8540' : v >= 30 ? '#b07a1e' : '#c0392b';
@@ -3010,31 +3025,16 @@ soundBtn.addEventListener('click', () => {
   soundBtn.textContent = audio.isEnabled() ? 'sound: on' : 'sound: off';
 });
 
-// Graphics-quality cycle: recreates the render texture at the new resolution,
-// repoints the mesh, and rebuilds buildings at the new slot cap.
+// Graphics-quality cycle. The biggest lever (the main canvas resolution) is
+// set at renderer init, so changing quality saves the choice and reloads —
+// a deliberate action, and the seed persists so the same world returns.
 const qualityBtn = document.getElementById('quality')!;
-function applyQuality(level: QualityLevel) {
-  qualityLevel = level;
-  localStorage.setItem('theLand:quality', level);
-  qualityBtn.textContent = `gfx: ${QUALITY[level].label}`;
-  // New render texture at the chosen resolution — the main per-frame fill
-  // lever. The slot cap (densityToCount) applies to buildings gradually on
-  // the next density refresh, so no forced rebuild here.
-  const old = worldRT;
-  worldRT = RenderTexture.create({
-    width: Math.ceil(WORLD_CAPTURE.w * captureScale),
-    height: Math.ceil(WORLD_CAPTURE.h * captureScale),
-    antialias: false,
-    resolution: QUALITY[level].rt,
-  });
-  worldPlane.texture = worldRT;
-  // Defer destroy a frame so no in-flight render references the old texture.
-  setTimeout(() => old.destroy(true), 50);
-}
 qualityBtn.textContent = `gfx: ${QUALITY[qualityLevel].label}`;
 qualityBtn.addEventListener('click', () => {
   const order: QualityLevel[] = ['high', 'medium', 'low'];
-  applyQuality(order[(order.indexOf(qualityLevel) + 1) % order.length]);
+  const next = order[(order.indexOf(qualityLevel) + 1) % order.length];
+  localStorage.setItem('theLand:quality', next);
+  location.reload();
 });
 const pauseBtn = document.getElementById('pause')!;
 pauseBtn.addEventListener('click', () => {
