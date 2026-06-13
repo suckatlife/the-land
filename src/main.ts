@@ -815,6 +815,43 @@ const DREAD = {
   } as Record<CatastropheType, { tint: number; vignette: number }>,
 };
 
+// Pollution: a brown smog that thickens as the world nears its end.
+const POLLUTION = {
+  color:      0x8a724a, // brown-grey smog (multiply)
+  maxAlpha:   0.42,     // at full pollution
+  startFrac:  0.5,      // fraction of the world cycle before it begins
+  eraFloor:   0.35,     // pollution multiplier even in clean (pre-industrial) ages
+  narrateAt:  0.35,     // pollution level that earns one narrated line per cycle
+};
+let pollutionNarrated = false;
+let curPollution = 0;
+
+function updatePollution() {
+  // How far through the world's life, and how industrial it has become.
+  const cycleFrac = (simWorld.tick % CATACLYSM_INTERVAL) / CATACLYSM_INTERVAL;
+  let bestRank = 0, bestCount = -1;
+  for (const civ of simWorld.civs.values()) {
+    if (civ.phase === 'dead') continue;
+    const n = civStats.tileCounts.get(civ.id) || 0;
+    if (n > bestCount) { bestCount = n; bestRank = ERA_RANK[civ.era]; }
+  }
+  const industrialness = Math.max(0, Math.min(1, (bestRank - 2) / 3)); // industrial+ choke
+  const ramp = Math.max(0, (cycleFrac - POLLUTION.startFrac) / (1 - POLLUTION.startFrac));
+  const target = ramp * ramp * (POLLUTION.eraFloor + (1 - POLLUTION.eraFloor) * industrialness);
+  curPollution += (target - curPollution) * 0.04; // ease so the cataclysm reset clears smoothly
+  pollutionGfx.tint = POLLUTION.color;
+  pollutionGfx.alpha = curPollution * POLLUTION.maxAlpha;
+  pollutionGfx.visible = pollutionGfx.alpha > 0.004;
+  if (!pollutionNarrated && curPollution > POLLUTION.narrateAt) {
+    pollutionNarrated = true;
+    pushNarration(pick([
+      'The air thickens. A brown haze settles over the world and does not lift.',
+      'The sky browns with the smoke of an age that cannot stop making it.',
+    ]), { priority: 'normal' });
+  }
+  if (cycleFrac < 0.1) pollutionNarrated = false; // re-arm for the next world
+}
+
 // Vignette texture from a DOM canvas radial gradient (API-stable, one-time).
 function makeVignetteTexture(): Texture {
   const size = 512;
@@ -841,9 +878,18 @@ const omenStarGfx = new Graphics();
 const impactFlash = new Graphics();
 impactFlash.alpha = 0;
 impactFlash.visible = false;
+// Pollution: a brown smog that thickens as the world ages toward the
+// cataclysm (worse in industrial+ eras), then clears when the world is
+// remade. Fullscreen multiply — hidden until the late cycle, so no cost
+// during the clean early ages.
+const pollutionGfx = new Graphics();
+pollutionGfx.blendMode = 'multiply';
+pollutionGfx.alpha = 0;
+pollutionGfx.visible = false;
 // Epicenter rings live in world space so the viewer sees *where* it landed.
 const epicenterGfx = new Graphics();
 world.addChild(epicenterGfx);
+app.stage.addChild(pollutionGfx);
 app.stage.addChild(dreadTint);
 app.stage.addChild(dreadVignette);
 app.stage.addChild(omenStarGfx);
@@ -856,6 +902,8 @@ function layoutAtmosphere() {
   dreadVignette.height = window.innerHeight;
   impactFlash.clear();
   impactFlash.rect(0, 0, window.innerWidth, window.innerHeight).fill(0xffffff);
+  pollutionGfx.clear();
+  pollutionGfx.rect(0, 0, window.innerWidth, window.innerHeight).fill(0xffffff);
 }
 layoutAtmosphere();
 
@@ -2443,6 +2491,9 @@ function resetStorySurfaces() {
   caravans.length = 0;
   planes.length = 0;
   rockets.length = 0;
+  curPollution = 0;
+  pollutionNarrated = false;
+  pollutionGfx.visible = false;
   fishSpots = [];
   whale = null;
   ghostUntil = 0;
@@ -2874,6 +2925,7 @@ app.ticker.add((ticker) => {
     }
   }
   updateAtmosphere(ticker.deltaMS);
+  updatePollution();
   // Sky + glaze + weather + scar fades. The sky leans toward the last dread
   // hue while curDread eases, so it releases smoothly after a catastrophe.
   atmos.update(ticker.deltaMS, curDread, curHue.vignette, dominantEra(simWorld));
