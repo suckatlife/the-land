@@ -44,3 +44,15 @@ NOTE: briefs carry a hard "no network calls in production" constraint — items 
 - **Meteor showers**: occasional quiet streak-nights between comets.
 - **Ice ages**: multi-season ice creep from the north (visual veil; optional sim pressure on northern civs). The slowest register.
 - Recommended: date-sync + moon phase immediately (no rule change); weather only, if the network door opens.
+
+## Brainstorm round 4 (2026-06-12 — geology: the land changes shape)
+Machinery note: flood/earthquake already mutate elevation + biomes live; renderer + masks handle terrain change. These are event designs, not new plumbing.
+- **Continental rifting** (top): rare severe-quake variant — a crack propagates ~30s (staged narration), tiles along the line sink/flood, continent splits. Existing systems react: cities drown, severed halves breakaway, strait becomes a sea lane.
+- **Volcanic island birth**: undersea eruption — steam omens, shoal pales the water, sand, rock cone over minutes. New colonizable land that didn't exist at worldgen.
+- **Land bridges**: shallow strait lifts into a sand isthmus (sea-floor-rise code exists); separated civs suddenly share a border.
+- **Crater lakes**: severe asteroids permanently crater (rock ring + water center) instead of only leaving a fading scar.
+- **Volcanic fertile slopes**: post-eruption ash turns surroundings fertile — settlement returns to dangerous ground automatically.
+- **Sea-level epochs**: slow global rise/fall over tens of minutes; coastlines breathe, isthmuses drown and return.
+- **River work**: deltas grow fertile at mouths; floods can re-route rivers (visual avulsion).
+- Constraint: scenery beyond the sim grid stays static — geology happens in the known world.
+- Suggested pack: rifting + island birth + land bridges + crater lakes + fertile ash (+ sea-level epochs as the slow heartbeat). Pairs with already-liked: volcanoes, constellations, meteor showers.
