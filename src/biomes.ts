@@ -93,25 +93,40 @@ export function generateRivers(
   const used = new Set<number>();
   const rivers: Array<Array<{ row: number; col: number }>> = [];
   let attempts = 0;
-  while (rivers.length < count && attempts++ < 400) {
+  // Many sources pool in basins before reaching the sea (and are rejected),
+  // so try generously to still find a good handful of sea-bound rivers.
+  while (rivers.length < count && attempts++ < 2500) {
     let r = Math.floor(rand() * height);
     let c = Math.floor(rand() * width);
     if (elevation[r][c] < 0.30) continue; // sources rise in the hills
     const path = [{ row: r, col: c }];
     const seen = new Set([r * width + c]);
+    let flowR = 0, flowC = 0; // current flow direction, for momentum
     for (let steps = 0; steps < 300 && biomes[r][c] !== 'water'; steps++) {
+      const curE = elevation[r][c];
       let best = -1;
-      let bestE = Infinity;
+      let bestScore = Infinity;
       for (let d = 0; d < dirs.length; d++) {
         const nr = r + dirs[d][0], nc = c + dirs[d][1];
         if (nr < 0 || nr >= height || nc < 0 || nc >= width) continue;
         if (seen.has(nr * width + nc)) continue;
-        const e = elevation[nr][nc] + (rand() - 0.5) * 0.02; // slight wander
-        if (e < bestE) { bestE = e; best = d; }
+        const ne = elevation[nr][nc];
+        // Water only flows downhill. A small tolerance lets it cross noisy
+        // flats; anything meaningfully uphill is off-limits, so the river
+        // STOPS at a basin instead of coiling around it (the spiral bug).
+        if (ne > curE + 0.012) continue;
+        // Prefer the steepest drop, biased toward continuing the current
+        // heading — straight, gently-meandering channels, never tight coils.
+        const align = (flowR | flowC) === 0 ? 0
+          : (dirs[d][0] * flowR + dirs[d][1] * flowC);
+        const score = ne - 0.05 * align + (rand() - 0.5) * 0.008;
+        if (score < bestScore) { bestScore = score; best = d; }
       }
-      if (best < 0) break;
-      r += dirs[best][0];
-      c += dirs[best][1];
+      if (best < 0) break; // pooled — no downhill exit (rejected unless at sea)
+      flowR = dirs[best][0];
+      flowC = dirs[best][1];
+      r += flowR;
+      c += flowC;
       seen.add(r * width + c);
       path.push({ row: r, col: c });
     }
