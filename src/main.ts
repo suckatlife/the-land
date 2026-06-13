@@ -662,6 +662,7 @@ const airGfx = new Graphics();          // planes (modern+) and rockets (post)
 const festivalGfx = new Graphics();     // night festival glow
 festivalGfx.blendMode = 'add';
 const smokeLayer = new Container();
+const smogGfx = new Graphics();        // end-of-cycle pollution pooling over cities
 const cityLightsGfx = new Graphics();
 cityLightsGfx.blendMode = 'add';
 cityLightsGfx.alpha = 0;
@@ -700,6 +701,8 @@ world.addChild(boatsGfx);
 world.addChild(atmos.landLightLayer);
 // City smoke rises beneath the clouds.
 world.addChild(smokeLayer);
+// End-of-cycle smog pools over the cities.
+world.addChild(smogGfx);
 // Cloud shadows fall on land and buildings; markers and labels stay above.
 world.addChild(atmos.cloudShadowLayer);
 // City lights pierce the night (and sit above cloud shadow).
@@ -815,13 +818,18 @@ const DREAD = {
   } as Record<CatastropheType, { tint: number; vignette: number }>,
 };
 
-// Pollution: a brown smog that thickens as the world nears its end.
+// Pollution: smog that pools over the cities as the world nears its end, with
+// a faint global haze behind it. Thickens with the age (industrial+ choke
+// hardest) and clears when the world is remade.
 const POLLUTION = {
-  color:      0x8a724a, // brown-grey smog (multiply)
-  maxAlpha:   0.42,     // at full pollution
-  startFrac:  0.5,      // fraction of the world cycle before it begins
-  eraFloor:   0.35,     // pollution multiplier even in clean (pre-industrial) ages
-  narrateAt:  0.35,     // pollution level that earns one narrated line per cycle
+  smogColor:  0x6a5c3e, // brown smog blobs over cities
+  hazeColor:  0x8a724a, // faint global tint behind them
+  hazeMaxAlpha: 0.18,   // the global haze is subtle; the city smog carries it
+  smogRadius: 42,       // base smog radius at full pollution, world px
+  smogAlpha:  1.0,      // peak per-city smog opacity
+  startFrac:  0.45,     // fraction of the world cycle before it begins
+  eraFloor:   0.3,      // pollution multiplier even in clean (pre-industrial) ages
+  narrateAt:  0.3,      // pollution level that earns one narrated line per cycle
 };
 let pollutionNarrated = false;
 let curPollution = 0;
@@ -839,14 +847,39 @@ function updatePollution() {
   const ramp = Math.max(0, (cycleFrac - POLLUTION.startFrac) / (1 - POLLUTION.startFrac));
   const target = ramp * ramp * (POLLUTION.eraFloor + (1 - POLLUTION.eraFloor) * industrialness);
   curPollution += (target - curPollution) * 0.04; // ease so the cataclysm reset clears smoothly
-  pollutionGfx.tint = POLLUTION.color;
-  pollutionGfx.alpha = curPollution * POLLUTION.maxAlpha;
+
+  // Faint global haze.
+  pollutionGfx.tint = POLLUTION.hazeColor;
+  pollutionGfx.alpha = curPollution * POLLUTION.hazeMaxAlpha;
   pollutionGfx.visible = pollutionGfx.alpha > 0.004;
+
+  // Smog pooling over the cities — denser where settlement is dense, browner
+  // in industrial ages. The visible source of the pollution.
+  smogGfx.clear();
+  if (curPollution > 0.02) {
+    smogGfx.visible = true;
+    for (const civ of simWorld.civs.values()) {
+      if (civ.phase === 'dead') continue;
+      const dirty = 0.5 + 0.5 * Math.max(0, Math.min(1, (ERA_RANK[civ.era] - 2) / 3));
+      for (const city of civ.cities) {
+        const { x, y } = gridToScreen(city.col, city.row);
+        const w = Math.min(1, curPollution * dirty * (0.5 + 0.6 * city.prominence) * 1.6);
+        if (w < 0.03) continue;
+        const r = POLLUTION.smogRadius * (0.6 + 0.9 * w);
+        smogGfx.circle(x, y - 4, r).fill({ color: POLLUTION.smogColor, alpha: POLLUTION.smogAlpha * 0.45 * w });
+        smogGfx.circle(x, y - 8, r * 0.62).fill({ color: POLLUTION.smogColor, alpha: POLLUTION.smogAlpha * 0.7 * w });
+        smogGfx.circle(x, y - 12, r * 0.34).fill({ color: POLLUTION.smogColor, alpha: POLLUTION.smogAlpha * 0.95 * w });
+      }
+    }
+  } else {
+    smogGfx.visible = false;
+  }
+
   if (!pollutionNarrated && curPollution > POLLUTION.narrateAt) {
     pollutionNarrated = true;
     pushNarration(pick([
-      'The air thickens. A brown haze settles over the world and does not lift.',
-      'The sky browns with the smoke of an age that cannot stop making it.',
+      'Smog gathers over the cities and will not lift.',
+      'The air above the great cities turns brown and stays that way.',
     ]), { priority: 'normal' });
   }
   if (cycleFrac < 0.1) pollutionNarrated = false; // re-arm for the next world
@@ -1831,12 +1864,12 @@ function updateSmoke(dt: number) {
 // Paths are A* over land, cached by endpoints (terrain is near-static), so
 // the periodic rebuild is usually pure drawing.
 const ROAD_STYLE: Record<Era, { color: number; width: number; alpha: number }> = {
-  neolithic:  { color: 0x8a7a5e, width: 0.8, alpha: 0.18 },
-  classical:  { color: 0xa08c66, width: 1.0, alpha: 0.30 },
-  medieval:   { color: 0xa08c66, width: 1.1, alpha: 0.34 },
-  industrial: { color: 0x4f4a44, width: 1.4, alpha: 0.48 },
-  modern:     { color: 0x63646a, width: 1.7, alpha: 0.50 },
-  post:       { color: 0x9a8fd0, width: 1.2, alpha: 0.50 },
+  neolithic:  { color: 0x7a6748, width: 1.3, alpha: 0.42 },  // worn dirt trails
+  classical:  { color: 0x8f7748, width: 1.6, alpha: 0.52 },
+  medieval:   { color: 0x8f7748, width: 1.8, alpha: 0.55 },
+  industrial: { color: 0x46423c, width: 2.2, alpha: 0.62 },  // dark rail/road
+  modern:     { color: 0x55565c, width: 2.6, alpha: 0.62 },
+  post:       { color: 0xa899e0, width: 2.0, alpha: 0.62 },  // lit threads
 };
 const roadPathCache = new Map<string, Array<{ row: number; col: number }> | null>();
 
@@ -2494,6 +2527,8 @@ function resetStorySurfaces() {
   curPollution = 0;
   pollutionNarrated = false;
   pollutionGfx.visible = false;
+  smogGfx.clear();
+  smogGfx.visible = false;
   fishSpots = [];
   whale = null;
   ghostUntil = 0;
