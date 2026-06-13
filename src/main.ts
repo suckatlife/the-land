@@ -2791,7 +2791,7 @@ app.ticker.add((ticker) => {
   updateLabels();
   updateHud();
   // DOM rebuild for the civ bars is expensive — throttle it.
-  if (frameCount % BARS_REFRESH_FRAMES === 0) updateBars();
+  if (frameCount % BARS_REFRESH_FRAMES === 0) { updateBars(); updateFpsLabel(); }
   updateEventLog();
 });
 
@@ -2822,6 +2822,7 @@ hud.innerHTML = `
   <span>civs: <strong id="civ-label">0</strong></span>
   <span>eras: <strong id="era-label">—</strong></span>
   <span>exp: <strong id="exp-label">0</strong></span>
+  <span>fps: <strong id="fps-label">—</strong></span>
 `;
 document.body.appendChild(hud);
 
@@ -2914,6 +2915,17 @@ function updateHud() {
   document.getElementById('era-label')!.textContent = eraSummary || '—';
 }
 updateHud();
+
+// FPS readout — Pixi's measured render rate, smoothed and color-coded so the
+// real-hardware number is always visible (green ≥50, amber ≥30, red below).
+const fpsLabel = document.getElementById('fps-label')!;
+let fpsSmoothed = 60;
+function updateFpsLabel() {
+  fpsSmoothed += (app.ticker.FPS - fpsSmoothed) * 0.1;
+  const v = Math.round(fpsSmoothed);
+  fpsLabel.textContent = String(v);
+  fpsLabel.style.color = v >= 50 ? '#2e8540' : v >= 30 ? '#b07a1e' : '#c0392b';
+}
 
 document.getElementById('reroll')!.addEventListener('click', () => {
   resetWorld(randomSeed());

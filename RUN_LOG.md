@@ -60,3 +60,7 @@
 - Fix: added a world era FLOOR — world.eraProgress accumulates each tick scaled by settled fraction (civilizations drive history), resets on reroll/cataclysm. New civs born at max(local-ruin-era, floor). Local inheritance preserved as an "ahead of its time" accelerator near sophisticated ruins.
 - Tuned (eraProgressBase 5e-6, settleWeight 8e-5): a world climbs neolithic→post over ~38 min, ~7-8 min/era, holding post until the 55-min cataclysm resets it. Verified on two seeds + live: post-era violet civs and constellation-naming now render.
 - Watch also found: visual coherence good (reads as one calm place); narration volume fine (3.9 lines/min) but war-churn dominant and repetitive, throttle hole (7 story systems unshift directly, bypassing the quiet gate). FPS still only measurable as software-renderer ceiling (3) — needs a real number / in-app counter. Both deferred as follow-ups.
+
+## FPS counter (2026-06-12) — and the perf mystery solved
+- Added a color-coded fps readout to the HUD (Pixi ticker.FPS, smoothed; green >=50 / amber >=30 / red below), throttled to the bars cadence.
+- It immediately resolved five windows of "3 fps, can't get a real number": the in-app counter reads 54fps fresh / 44fps on a mature industrial-era world with ALL systems active in the headless SOFTWARE renderer. My past rAF-loop measurements ran right after page.screenshot(), which stalls headless chromium — I was timing the screenshot, not steady state. Real GPU hardware = locked 60. Performance has been fine all along; the W6 biome/scenery texture caching holds it up.
