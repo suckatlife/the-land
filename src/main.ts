@@ -695,6 +695,7 @@ cityLightsGfx.alpha = 0;
 
 const biomeLayer = new Container();
 const simLayer = new Container();
+const farmGfx = new Graphics();   // cultivated fields (cached, rebuilt on a throttle)
 const buildingLayer = new Container();
 buildingLayer.sortableChildren = true;
 const expeditionLayer = new Container();
@@ -709,6 +710,8 @@ world.addChild(sceneryLandGfx);
 // Rivers run over the terrain, under settlement tints.
 world.addChild(riverGfx);
 world.addChild(simLayer);
+// Cultivated fields over the ownership tint, under everything built on them.
+world.addChild(farmGfx);
 // Roads over the tints (still under scars and buildings).
 world.addChild(roadsGfx);
 // Scars sit above civ tints (catastrophes hit settled land) but below buildings.
@@ -803,7 +806,7 @@ atmos.layout(window.innerWidth, window.innerHeight);
 (window as any).__anim = () => ({ tiles: animatingTiles.size, buildings: animatingBuildingTiles.size, biome: animatingBiomeTiles.size });
 (window as any).__rt = () => ({ res: worldRT.source.resolution, w: worldRT.source.pixelWidth, h: worldRT.source.pixelHeight, bound: worldPlane.texture === worldRT, tickerFPS: Math.round(app.ticker.FPS) });
 (window as any).__perf = { sky: atmos.skyLayer, plane: worldPlane, set skipRT(v: boolean) { (window as any).__skipRT = v; } };
-(window as any).__fx = { iceGfx, smogGfx, buildingLayer, sky: atmos.skyLayer, fog: atmos.fogLayer };
+(window as any).__fx = { iceGfx, smogGfx, farmGfx, buildingLayer, sky: atmos.skyLayer, fog: atmos.fogLayer };
 (window as any).__life = () => ({ herds: herds.length, power: powerLines.length, caravans: caravans.length, boats: boats.length });
 
 const expeditionGfx = new Graphics();
@@ -1224,8 +1227,6 @@ interface TileVisual {
   curBorderColor: number;  curBorderAlpha: number;  curBorderWidth: number;
   targetBorderColor: number; targetBorderAlpha: number; targetBorderWidth: number;
   animating: boolean;
-  row: number; col: number;
-  farm: boolean; // cleared + living owner → drawn as cultivated fields
 }
 
 interface BiomeTileVisual {
@@ -2888,6 +2889,7 @@ function resetStorySurfaces() {
   roadPathCache.clear();
   roadLines.clear();
   lastDrawnIce = -1; iceGfx.cacheAsTexture?.(false); iceGfx.clear(); iceGfx.visible = false;
+  lastFarmRebuild = -1e9; farmGfx.cacheAsTexture?.(false); farmGfx.clear();
   waterRouteCache.clear();
   warHeat.clear();
   conflictFlashes.length = 0;
@@ -3113,58 +3115,57 @@ function scaleColor(c: number, f: number): number {
   return (r << 16) | (g << 8) | b;
 }
 
-// Cultivated fields: the tile diamond split into a 3×3 iso grid of plots in
-// alternating crop tones (wheat-gold / field-green), each jittered and faintly
-// tinted toward the owner's colour — so cleared land reads as worked farmland,
-// not a flat ownership wash. Civ-style patchwork.
+// Farmland is a living civ's worked countryside — but only on arable ground
+// (grass/fertile), so fields grow AROUND forests and mountains rather than
+// levelling them; only away from dense city cores; and only in patches, so the
+// land is a quilt of fields and open pasture, not wall-to-wall crops.
 const FARM_GOLD = 0xcdb96a, FARM_GREEN = 0x9ec06a;
-function paintFarm(
-  g: Graphics, row: number, col: number, civColor: number, alpha: number,
-  borderColor: number, borderAlpha: number, borderWidth: number,
-) {
-  g.clear();
-  // Fields are deliberate texture, not a faint ownership wash — paint them
-  // several times more solid than the generic tint alpha (still fades in).
-  const fa = Math.min(0.9, alpha * 3.4);
-  const sw = 16 / 3, sh = 8 / 3; // sub-plot half-extents (tile is 32×16)
-  for (let gi = -1; gi <= 1; gi++) {
-    for (let gj = -1; gj <= 1; gj++) {
-      const cx = (gi - gj) * sw, cy = (gi + gj) * sh;
-      const base = ((gi + gj) & 1) ? FARM_GOLD : FARM_GREEN;
-      const jit = 0.82 + tileRand(row, col, gi * 5 + gj + 900) * 0.34;
-      const color = lerpColor(scaleColor(base, jit), civColor, 0.18);
-      g.poly([cx, cy - sh, cx + sw, cy, cx, cy + sh, cx - sw, cy]).fill({ color, alpha: fa });
-      // a furrow line down the plot (parallel to the col axis) — crop rows
-      g.moveTo(cx - sw * 0.5, cy - sh * 0.5).lineTo(cx + sw * 0.5, cy + sh * 0.5)
-        .stroke({ color: scaleColor(base, 0.7), alpha: fa * 0.5, width: 0.6 });
-    }
-  }
-  if (borderAlpha > 0.01 && borderWidth > 0) {
-    g.poly([0, -8, 16, 0, 0, 8, -16, 0]).stroke({ color: borderColor, alpha: borderAlpha, width: borderWidth });
-  }
+
+// Coarse, smooth field/pasture mask — organic blobs of cultivation, ~half the
+// arable countryside under the plough.
+function farmPatch(row: number, col: number): boolean {
+  const n = Math.sin(row * 0.45 + 1.7) + Math.sin(col * 0.5 - 0.6)
+          + Math.sin((row + col) * 0.28) + Math.sin((row - col) * 0.33);
+  return n > 0.4;
 }
 
-// Paint a tile overlay as farmland or a flat ownership tint, per tv.farm.
-function paintTileOverlay(
-  tv: TileVisual, color: number, alpha: number,
-  bc: number, ba: number, bw: number,
-) {
-  if (tv.farm) paintFarm(tv.g, tv.row, tv.col, color, alpha, bc, ba, bw);
-  else redrawOverlay(tv.g, color, alpha, bc, ba, bw);
-}
-
-// Farmland is a living civ's worked countryside: freshly cleared land, plus
-// developed land that's far enough from a city centre to be low-density (fields
-// and farmsteads, not town). Dense city cores and ruins keep the flat tint.
-// 'cleared' is near-instant in the sim, so without the built-countryside case
-// farmland would only flicker for half a second at the expanding frontier.
 function isFarmTile(row: number, col: number): boolean {
   const tile = simWorld.tiles[row][col];
   if (tile.civId == null || (tile.state !== 'cleared' && tile.state !== 'built')) return false;
+  const b = biomeMap[row][col];
+  if (b !== 'grass' && b !== 'fertile') return false; // farms skirt forest/rock/sand
   const civ = simWorld.civs.get(tile.civId);
   if (!civ || civ.phase === 'dead') return false;
-  if (tile.state === 'cleared') return true;
-  return computeTileDensity(row, col, civ) < DENSITY.slot2; // countryside, not city core
+  if (computeTileDensity(row, col, civ) >= DENSITY.slot2) return false; // not city cores
+  return farmPatch(row, col);
+}
+
+// Farmland lives in its own layer, cached to one texture and only rebuilt on a
+// slow throttle — so thousands of field tiles cost nothing per frame (the old
+// per-tile overlay version dragged a big world from 11 to 5 fps).
+let lastFarmRebuild = -1e9;
+function rebuildFarmland() {
+  farmGfx.cacheAsTexture?.(false);
+  farmGfx.clear();
+  const sw = 16 / 3, sh = 8 / 3;
+  for (let row = 0; row < GRID_SIZE; row++) {
+    for (let col = 0; col < GRID_SIZE; col++) {
+      if (!isFarmTile(row, col)) continue;
+      const civ = simWorld.civs.get(simWorld.tiles[row][col].civId!);
+      const civColor = civ ? civ.color : 0xffffff;
+      const { x, y } = gridToScreen(col, row);
+      for (let gi = -1; gi <= 1; gi++) {
+        for (let gj = -1; gj <= 1; gj++) {
+          const cx = x + (gi - gj) * sw, cy = y + (gi + gj) * sh;
+          const base = ((gi + gj) & 1) ? FARM_GOLD : FARM_GREEN;
+          const jit = 0.82 + tileRand(row, col, gi * 5 + gj + 900) * 0.34;
+          const color = lerpColor(scaleColor(base, jit), civColor, 0.16);
+          farmGfx.poly([cx, cy - sh, cx + sw, cy, cx, cy + sh, cx - sw, cy]).fill({ color, alpha: 0.82 });
+        }
+      }
+    }
+  }
+  farmGfx.cacheAsTexture?.(true);
 }
 
 function refreshTileOverlay(row: number, col: number) {
@@ -3200,15 +3201,13 @@ function refreshTileOverlay(row: number, col: number) {
       curBorderColor: colorInfo.borderColor,  curBorderAlpha: 0,  curBorderWidth: colorInfo.borderWidth,
       targetBorderColor: colorInfo.borderColor, targetBorderAlpha: colorInfo.borderAlpha, targetBorderWidth: colorInfo.borderWidth,
       animating: true,
-      row, col, farm: isFarmTile(row, col),
     };
     tileVisuals[row][col] = tv;
-    paintTileOverlay(tv, tv.curColor, tv.curAlpha, tv.curBorderColor, tv.curBorderAlpha, tv.curBorderWidth);
+    redrawOverlay(g, tv.curColor, tv.curAlpha, tv.curBorderColor, tv.curBorderAlpha, tv.curBorderWidth);
     animatingTiles.add(`${row},${col}`);
     return;
   }
 
-  tv.farm = isFarmTile(row, col);
   tv.targetColor = colorInfo.color;
   let alphaFactor = 1.0;
   if (tile.civId != null && tile.state !== 'ruin') {
@@ -3467,6 +3466,7 @@ app.ticker.add((ticker) => {
     rebuildSmokeEmitters();
     rebuildRoads();
     rebuildPowerLines();
+    if (simWorld.tick - lastFarmRebuild >= 150) { lastFarmRebuild = simWorld.tick; rebuildFarmland(); }
     rebuildWonders();
     rebuildFishSpots();
     maybeSpawnBoats();
@@ -3491,7 +3491,7 @@ app.ticker.add((ticker) => {
     tv.curBorderAlpha += (tv.targetBorderAlpha - tv.curBorderAlpha) * EASE;
     tv.curBorderWidth += (tv.targetBorderWidth - tv.curBorderWidth) * EASE;
 
-    paintTileOverlay(tv, tv.curColor, tv.curAlpha, tv.curBorderColor, tv.curBorderAlpha, tv.curBorderWidth);
+    redrawOverlay(tv.g, tv.curColor, tv.curAlpha, tv.curBorderColor, tv.curBorderAlpha, tv.curBorderWidth);
 
     const colorClose = colorsWithin(tv.curColor, tv.targetColor, 2);
     const alphaClose = Math.abs(tv.curAlpha - tv.targetAlpha) < 0.01;
@@ -3502,7 +3502,7 @@ app.ticker.add((ticker) => {
       tv.curBorderColor = tv.targetBorderColor;
       tv.curBorderAlpha = tv.targetBorderAlpha;
       tv.curBorderWidth = tv.targetBorderWidth;
-      paintTileOverlay(tv, tv.targetColor, tv.curAlpha, tv.curBorderColor, tv.curBorderAlpha, tv.curBorderWidth);
+      redrawOverlay(tv.g, tv.targetColor, tv.curAlpha, tv.curBorderColor, tv.curBorderAlpha, tv.curBorderWidth);
       tv.animating = false;
       done.push(key);
       if (tv.targetAlpha === 0) {
