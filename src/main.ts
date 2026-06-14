@@ -635,9 +635,9 @@ function updateEventLog() {
 // and the per-frame render-texture. mainRes caps the canvas resolution (the
 // biggest lever), rt the texture, slots/extraFloors the building object count.
 const QUALITY = {
-  high:   { mainRes: 2,   rt: 1.0, slots: 4, extraFloors: 5, label: 'high' },
-  medium: { mainRes: 1.25, rt: 0.8, slots: 3, extraFloors: 1, label: 'med'  },
-  low:    { mainRes: 1,   rt: 0.6, slots: 2, extraFloors: 0, label: 'low'  },
+  high:   { mainRes: 1.6,  rt: 0.85, slots: 4, extraFloors: 5, label: 'high' },
+  medium: { mainRes: 1.25, rt: 0.7,  slots: 3, extraFloors: 1, label: 'med'  },
+  low:    { mainRes: 1,    rt: 0.55, slots: 2, extraFloors: 0, label: 'low'  },
 } as const;
 type QualityLevel = keyof typeof QUALITY;
 let qualityLevel: QualityLevel =
@@ -645,12 +645,18 @@ let qualityLevel: QualityLevel =
     ? (localStorage.getItem('theLand:quality') as QualityLevel)
     : 'high';
 
+// Perf A/B overrides (?mres= / ?rt=) so resolution levers can be measured on
+// clean loads without rebuilding.
+const _qp = new URLSearchParams(location.search);
+const _mresOverride = _qp.has('mres') ? parseFloat(_qp.get('mres')!) : null;
+const _rtOverride = _qp.has('rt') ? parseFloat(_qp.get('rt')!) : null;
+
 const app = new Application();
 await app.init({
   width: window.innerWidth,
   height: window.innerHeight,
   background: '#e8e2d4',
-  resolution: Math.min(window.devicePixelRatio || 1, QUALITY[qualityLevel].mainRes),
+  resolution: _mresOverride ?? Math.min(window.devicePixelRatio || 1, QUALITY[qualityLevel].mainRes),
   autoDensity: true,
   antialias: true,
 });
@@ -755,7 +761,7 @@ let worldRT = RenderTexture.create({
   height: Math.ceil(WORLD_CAPTURE.h * captureScale),
   antialias: false, // MSAA on a per-frame full-scene RT is costly; the mesh
                     // resampling and the painterly look hide its absence
-  resolution: QUALITY[qualityLevel].rt,
+  resolution: _rtOverride ?? QUALITY[qualityLevel].rt,
 });
 world.scale.set(captureScale);
 world.x = -WORLD_CAPTURE.x0 * captureScale;
@@ -791,6 +797,7 @@ atmos.layout(window.innerWidth, window.innerHeight);
 (window as any).__anim = () => ({ tiles: animatingTiles.size, buildings: animatingBuildingTiles.size, biome: animatingBiomeTiles.size });
 (window as any).__rt = () => ({ res: worldRT.source.resolution, w: worldRT.source.pixelWidth, h: worldRT.source.pixelHeight, bound: worldPlane.texture === worldRT, tickerFPS: Math.round(app.ticker.FPS) });
 (window as any).__perf = { sky: atmos.skyLayer, plane: worldPlane, set skipRT(v: boolean) { (window as any).__skipRT = v; } };
+(window as any).__fx = { iceGfx, smogGfx, buildingLayer, sky: atmos.skyLayer, fog: atmos.fogLayer };
 
 const expeditionGfx = new Graphics();
 expeditionLayer.addChild(expeditionGfx);
