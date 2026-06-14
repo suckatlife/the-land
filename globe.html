@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>the land — three.js spike</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #0b0e13; overflow: hidden; }
+      #hud {
+        position: fixed; top: 10px; left: 12px; z-index: 10;
+        font: 12px ui-monospace, Menlo, Consolas, monospace; color: #cdd6e3;
+        background: rgba(20,26,34,0.6); padding: 6px 10px; border-radius: 4px;
+        pointer-events: none; line-height: 1.5;
+      }
+      #hud b { color: #fff; }
+    </style>
+  </head>
+  <body>
+    <div id="hud">three.js spike · drag to orbit · scroll to zoom<br /><span id="stat"></span></div>
+    <script type="module" src="/src/globe3d.ts"></script>
+  </body>
+</html>
