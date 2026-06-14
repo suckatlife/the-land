@@ -498,7 +498,7 @@ function pickCivSpawnTile(
   for (let attempt = 0; attempt < 120; attempt++) {
     const row = Math.floor(Math.random() * world.height);
     const col = Math.floor(Math.random() * world.width);
-    if (biomes[row][col] === 'water') continue;
+    if (biomes[row][col] === 'water' || biomes[row][col] === 'rock') continue; // no founding on sea or peak
     const st = world.tiles[row][col].state;
     if (st !== 'wild' && st !== 'ruin') continue;
 
@@ -833,7 +833,7 @@ function advanceExpeditions(world: SimWorld, biomes: Biome[][], changed: Array<{
       ];
       for (const [tr, tc] of landingCandidates) {
         if (tr < 0 || tr >= world.height || tc < 0 || tc >= world.width) continue;
-        if (biomes[tr][tc] === 'water') continue;
+        if (biomes[tr][tc] === 'water' || biomes[tr][tc] === 'rock') continue; // can't settle the peaks
         const target = world.tiles[tr][tc];
         if (target.civId !== exp.civId && (target.state === 'wild' || target.state === 'ruin')) {
           if (civ.phase === 'dead' && exp.desperate) {
@@ -1586,7 +1586,9 @@ export function step(
           const neighbors = [[row - 1, col], [row + 1, col], [row, col - 1], [row, col + 1]];
           for (const [r, c] of neighbors) {
             if (r < 0 || r >= world.height || c < 0 || c >= world.width) continue;
-            if (biomes[r][c] === 'water') continue;
+            // Sea and mountain are unsettleable — civilizations flow around
+            // them, so coasts and high rock read as natural borders.
+            if (biomes[r][c] === 'water' || biomes[r][c] === 'rock') continue;
             const neighborSnap = snapshot[r][c];
             const neighborTile = world.tiles[r][c];
 

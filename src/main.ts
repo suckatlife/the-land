@@ -1697,7 +1697,9 @@ function refreshBuildingSprite(row: number, col: number) {
   if (!SHOW_BUILDING_SPRITES || bodyTextures.length === 0) return;
   const tile = simWorld.tiles[row][col];
   const civ = tile.civId != null ? simWorld.civs.get(tile.civId) : null;
-  const active = tile.state === 'built' && civ != null;
+  // Nothing is built on the peaks — even if a volcano raised rock under a tile,
+  // or an older world settled it; any stranded buildings fade out.
+  const active = tile.state === 'built' && civ != null && biomeMap[row][col] !== 'rock';
 
   let state = buildingTileStates[row][col];
 
