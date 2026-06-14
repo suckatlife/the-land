@@ -681,6 +681,8 @@ const conflictGfx = new Graphics();     // war flickers at contested tiles
 const wonderGfx = new Graphics();       // monuments (persist as ruins)
 const boatsGfx = new Graphics();        // sea craft, fishing dots, whales
 const nomadGfx = new Graphics();        // migrating bands, caravans, trains
+const wildlifeGfx = new Graphics();     // wandering animal herds on wild land
+const powerGfx = new Graphics();        // power grid (industrial+), pulses at night
 const airGfx = new Graphics();          // planes (modern+) and rockets (post)
 const festivalGfx = new Graphics();     // night festival glow
 festivalGfx.blendMode = 'add';
@@ -713,9 +715,13 @@ world.addChild(roadsGfx);
 world.addChild(atmos.scarLayer);
 // Polar ice sheets — over the ground, under the buildings (cities stand in snow).
 world.addChild(iceGfx);
+// Wild herds graze the open land, beneath the towns that will displace them.
+world.addChild(wildlifeGfx);
 // Wind shimmer brightens the ground, masked to land below.
 world.addChild(atmos.shimmerLayer);
 world.addChild(buildingLayer);
+// The power grid strings over the rooftops (industrial+).
+world.addChild(powerGfx);
 // Conflict flickers and monuments stand among the buildings.
 world.addChild(conflictGfx);
 world.addChild(wonderGfx);
@@ -798,6 +804,7 @@ atmos.layout(window.innerWidth, window.innerHeight);
 (window as any).__rt = () => ({ res: worldRT.source.resolution, w: worldRT.source.pixelWidth, h: worldRT.source.pixelHeight, bound: worldPlane.texture === worldRT, tickerFPS: Math.round(app.ticker.FPS) });
 (window as any).__perf = { sky: atmos.skyLayer, plane: worldPlane, set skipRT(v: boolean) { (window as any).__skipRT = v; } };
 (window as any).__fx = { iceGfx, smogGfx, buildingLayer, sky: atmos.skyLayer, fog: atmos.fogLayer };
+(window as any).__life = () => ({ herds: herds.length, power: powerLines.length, caravans: caravans.length, boats: boats.length });
 
 const expeditionGfx = new Graphics();
 expeditionLayer.addChild(expeditionGfx);
@@ -2111,6 +2118,57 @@ function drawRoads(dt: number) {
   }
 }
 
+// Power grid (industrial era onward): straight transmission lines fanning from
+// each civ's main city to its others, strung with pylons. By day a faint steel
+// thread; by night the wires carry running pulses of electric light — the
+// strongest visual tell that a civilization has industrialized.
+interface PowerLine { a: { x: number; y: number }; b: { x: number; y: number } }
+const powerLines: PowerLine[] = [];
+let powerPulse = 0;
+
+function rebuildPowerLines() {
+  powerLines.length = 0;
+  for (const civ of simWorld.civs.values()) {
+    if (civ.phase === 'dead' || ERA_RANK[civ.era] < 3 || civ.cities.length < 2) continue;
+    const hub = civ.cities.reduce((best, c) => (c.prominence > best.prominence ? c : best), civ.cities[0]);
+    const hubS = gridToScreen(hub.col, hub.row);
+    for (const city of civ.cities) {
+      if (city === hub) continue;
+      // Only where a land route exists, so wires don't span open ocean.
+      if (!roadBetween(hub, city)) continue;
+      powerLines.push({ a: hubS, b: gridToScreen(city.col, city.row) });
+    }
+  }
+}
+
+function drawPowerLines(dt: number, night: number) {
+  powerGfx.clear();
+  if (powerLines.length === 0) return;
+  powerPulse = (powerPulse + dt * 0.33) % 1;
+  for (const pl of powerLines) {
+    const dx = pl.b.x - pl.a.x, dy = pl.b.y - pl.a.y;
+    const len = Math.hypot(dx, dy);
+    // The wire: steel by day, faintly lit by night.
+    powerGfx.moveTo(pl.a.x, pl.a.y).lineTo(pl.b.x, pl.b.y)
+      .stroke({ color: 0x4c5662, alpha: 0.26 + 0.14 * night, width: 0.9 });
+    // Pylons every ~52px.
+    const nP = Math.max(1, Math.round(len / 52));
+    for (let i = 1; i < nP; i++) {
+      const t = i / nP, px = pl.a.x + dx * t, py = pl.a.y + dy * t;
+      powerGfx.rect(px - 0.6, py - 2.6, 1.2, 5.2).fill({ color: 0x363f49, alpha: 0.32 + 0.12 * night });
+    }
+    // Running light pulses along the wire at night — the live grid.
+    if (night > 0.12) {
+      for (let k = 0; k < 2; k++) {
+        const t = (powerPulse + k * 0.5) % 1;
+        const px = pl.a.x + dx * t, py = pl.a.y + dy * t;
+        powerGfx.circle(px, py, 1.7).fill({ color: 0x9fdcff, alpha: 0.5 * night });
+        powerGfx.circle(px, py, 0.8).fill({ color: 0xeaffff, alpha: 0.8 * night });
+      }
+    }
+  }
+}
+
 // War heat: conquest tile-flips aggregate per civ-pair; sustained contact is
 // narrated once, and quiet afterwards is narrated too.
 const warHeat = new Map<string, { a: number; b: number; count: number; lastTs: number; narratedAt: number }>();
@@ -2509,6 +2567,86 @@ function updateNomads(nowSec: number, dt: number, night: number) {
 }
 const SIM_MIGRATION_TICKS = 900; // mirror of SIM.migrationTicks for the renderer
 
+// Wild herds: small clusters of animals ambling across the open, unsettled
+// land — darker beasts in the forest verges, paler ones on the steppe. They
+// migrate tile to tile and only ever stand on wild land, so as civilizations
+// clear the ground the herds are pushed back into the shrinking wilderness.
+interface Herd { r: number; c: number; x: number; y: number; tx: number; ty: number; col: number; size: number; wob: number; life: number }
+const herds: Herd[] = [];
+const HERD_CAP = 16;
+
+// Grazing land: open ground (grass/forest/fertile) that no town stands on and
+// no farmer works — pristine wilderness or land gone back to ruin. Herds keep
+// to it, so they're squeezed out as cities spread and drift back over ruins.
+function wildAt(r: number, c: number): boolean {
+  if (r < 0 || r >= GRID_SIZE || c < 0 || c >= GRID_SIZE) return false;
+  const b = biomeMap[r][c];
+  if (b !== 'grass' && b !== 'fertile' && b !== 'forest') return false;
+  const st = simWorld.tiles[r][c].state;
+  return st === 'wild' || st === 'ruin';
+}
+
+function pickHerdStep(r: number, c: number): { r: number; c: number } | null {
+  const opts: Array<{ r: number; c: number }> = [];
+  for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+    if (!dr && !dc) continue;
+    if (wildAt(r + dr, c + dc)) opts.push({ r: r + dr, c: c + dc });
+  }
+  return opts.length ? opts[Math.floor(Math.random() * opts.length)] : null;
+}
+
+function maybeSpawnHerds() {
+  if (herds.length >= HERD_CAP) return;
+  // Scan for grazing tiles (cheap, runs on the city cadence) and seed a couple
+  // of herds among them — reliable regardless of how much wild land is left.
+  const cand: number[] = [];
+  for (let r = 0; r < GRID_SIZE; r++) for (let c = 0; c < GRID_SIZE; c++) if (wildAt(r, c)) cand.push(r * GRID_SIZE + c);
+  if (cand.length === 0) return;
+  const want = Math.min(2, HERD_CAP - herds.length);
+  for (let k = 0; k < want; k++) {
+    const key = cand[Math.floor(Math.random() * cand.length)];
+    const r = (key / GRID_SIZE) | 0, c = key % GRID_SIZE;
+    const { x, y } = gridToScreen(c, r);
+    const forest = biomeMap[r][c] === 'forest';
+    herds.push({
+      r, c, x, y, tx: x, ty: y,
+      col: forest ? 0x4f3f2c : (Math.random() < 0.5 ? 0x7a6a52 : 0x6b5a44),
+      size: 3 + Math.floor(Math.random() * 4),
+      wob: Math.random() * 100, life: 60 + Math.random() * 90,
+    });
+  }
+}
+
+function updateHerds(dt: number, nowSec: number, night: number) {
+  wildlifeGfx.clear();
+  if (herds.length === 0) return;
+  for (let i = herds.length - 1; i >= 0; i--) {
+    const h = herds[i];
+    h.life -= dt;
+    const ddx = h.tx - h.x, ddy = h.ty - h.y;
+    const d = Math.hypot(ddx, ddy);
+    if (d < 1.2) {
+      // Arrived at the target tile: retire, or amble to the next wild step.
+      if (h.life <= 0) { herds.splice(i, 1); continue; }
+      const step = pickHerdStep(h.r, h.c);
+      if (!step) { herds.splice(i, 1); continue; } // hemmed in by town or sea
+      h.r = step.r; h.c = step.c;
+      const s = gridToScreen(h.c, h.r); h.tx = s.x; h.ty = s.y;
+    } else {
+      const sp = Math.min(d, 6 * dt); // a slow amble across the land
+      h.x += (ddx / d) * sp; h.y += (ddy / d) * sp;
+    }
+    const lit = 0.62 + 0.18 * night;
+    for (let m = 0; m < h.size; m++) {
+      const ox = Math.sin(h.wob + m * 2.1) * 5.5 + Math.sin(nowSec * 0.8 + m) * 0.6;
+      const oy = Math.cos(h.wob + m * 1.6) * 2.8 + Math.cos(nowSec * 0.9 + m) * 0.4;
+      // a soft body with a darker centre — reads as an animal, not a pixel
+      wildlifeGfx.circle(h.x + ox, h.y + oy, 1.5).fill({ color: h.col, alpha: lit * 0.85 });
+      wildlifeGfx.circle(h.x + ox, h.y + oy, 0.8).fill({ color: h.col, alpha: lit });
+    }
+  }
+}
+
 // Ghost echoes: the land remembers, briefly, at night.
 const ghostText = new Text({
   text: '',
@@ -2659,6 +2797,8 @@ function resetStorySurfaces() {
   caravans.length = 0;
   planes.length = 0;
   rockets.length = 0;
+  herds.length = 0; wildlifeGfx.clear();
+  powerLines.length = 0; powerGfx.clear();
   curPollution = 0;
   pollutionNarrated = false;
   curBlight = 0;
@@ -3123,10 +3263,12 @@ app.ticker.add((ticker) => {
   const nowSec = performance.now() / 1000;
   updateSmoke(dtSec);
   drawRoads(dtSec);
+  drawPowerLines(dtSec, n);
   drawIce();
   updateConflictFlashes(dtSec);
   updateWater(dtSec, nowSec, n);
   maybeWhale(dtSec);
+  updateHerds(dtSec, nowSec, n);
   updateNomads(nowSec, dtSec, n);
   maybeSpawnRockets(dtSec);
   updateAir(dtSec, n);
@@ -3162,10 +3304,12 @@ app.ticker.add((ticker) => {
     rebuildCityLights();
     rebuildSmokeEmitters();
     rebuildRoads();
+    rebuildPowerLines();
     rebuildWonders();
     rebuildFishSpots();
     maybeSpawnBoats();
     maybeSpawnCaravans();
+    maybeSpawnHerds();
     maybeSpawnPlanes();
     queueFestivals();
     checkWarQuiet();
