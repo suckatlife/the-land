@@ -1434,6 +1434,68 @@ function drawRivers() {
   }
 }
 
+// Deterministic per-tile pseudo-random in [0,1) — stable scatter for terrain
+// decoration, so trees/grains don't shimmer between cache rebuilds.
+function tileRand(row: number, col: number, salt: number): number {
+  let h = (Math.imul(row, 73856093) ^ Math.imul(col, 19349663) ^ Math.imul(salt, 83492791)) >>> 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+
+// Terrain texture, drawn onto each land tile's own Graphics so it bakes into
+// the cached biome layer (perf-free per frame). Everything is relative to the
+// tile centre; the back-to-front tile draw order makes heights overlap right.
+function decorateTile(g: Graphics, biome: Biome, row: number, col: number) {
+  const rnd = (s: number) => tileRand(row, col, s);
+  if (biome === 'forest') {
+    const n = 4 + Math.floor(rnd(1) * 3); // 4–6 trees
+    const trees: Array<{ ox: number; oy: number; s: number; conifer: boolean }> = [];
+    for (let i = 0; i < n; i++) {
+      trees.push({
+        ox: (rnd(i * 4 + 2) - 0.5) * 22,
+        oy: (rnd(i * 4 + 3) - 0.5) * 9,
+        s: 0.78 + rnd(i * 4 + 4) * 0.5,
+        conifer: rnd(i * 4 + 5) < 0.5,
+      });
+    }
+    trees.sort((a, b) => a.oy - b.oy); // nearer trees (lower) drawn last
+    for (const t of trees) {
+      const { ox, oy, s } = t;
+      g.ellipse(ox, oy + 1.6 * s, 3.0 * s, 1.2 * s).fill({ color: 0x40583a, alpha: 0.16 }); // cast shadow
+      g.rect(ox - 0.5 * s, oy - 1.4 * s, 1.0 * s, 3.4 * s).fill({ color: 0x5a4632, alpha: 0.9 }); // trunk
+      if (t.conifer) {
+        g.poly([ox, oy - 8.5 * s, ox - 3.2 * s, oy - 0.5 * s, ox + 3.2 * s, oy - 0.5 * s]).fill({ color: 0x3c6636 });
+        g.poly([ox, oy - 11 * s, ox - 2.4 * s, oy - 4 * s, ox + 2.4 * s, oy - 4 * s]).fill({ color: 0x4a7a44 });
+      } else {
+        g.circle(ox, oy - 5 * s, 3.4 * s).fill({ color: 0x437138 });
+        g.circle(ox - 1.9 * s, oy - 3.6 * s, 2.4 * s).fill({ color: 0x3c6636 });
+        g.circle(ox + 1.9 * s, oy - 4 * s, 2.2 * s).fill({ color: 0x539050 });
+      }
+    }
+  } else if (biome === 'rock') {
+    // A shaded peak — lit on the left, shadowed on the right; taller and
+    // snow-capped the higher the underlying elevation.
+    const elev = elevationMap[row][col];
+    const peak = 8 + Math.min(1, Math.max(0, (elev - 0.55) / 0.45)) * 12;
+    const w = 11, apexX = (rnd(1) - 0.5) * 4;
+    g.poly([apexX, -peak, -w, 3, apexX, 6]).fill({ color: 0xccc6bb }); // lit face
+    g.poly([apexX, -peak, w, 3, apexX, 6]).fill({ color: 0x8b857a }); // shadow face
+    if (peak > 15) {
+      g.poly([apexX, -peak, apexX - 3.4, -peak + 5, apexX + 3.4, -peak + 5]).fill({ color: 0xeef2f6, alpha: 0.92 });
+    }
+  } else if (biome === 'sand') {
+    for (let i = 0; i < 6; i++) {
+      g.circle((rnd(i * 2 + 1) - 0.5) * 24, (rnd(i * 2 + 2) - 0.5) * 11, 0.7)
+        .fill({ color: 0xd6bd86, alpha: 0.5 }); // grains
+    }
+  } else { // grass, fertile — a few faint blades
+    for (let i = 0; i < 4; i++) {
+      const ox = (rnd(i * 2 + 1) - 0.5) * 22, oy = (rnd(i * 2 + 2) - 0.5) * 9;
+      g.rect(ox, oy, 0.7, -2.0).fill({ color: 0x86b06e, alpha: 0.45 });
+    }
+  }
+}
+
 function drawBiomes() {
   biomeLayer.removeChildren();
   oceanApron = drawOceanApron();
@@ -1449,6 +1511,7 @@ function drawBiomes() {
       const color = biome === 'water' ? waterColorAt(row, col) : BIOME_COLORS[biome];
       const g = drawTile(biomeLayer, col, row, biome);
       if (biome === 'water') redrawBiomeTile(g, color);
+      else decorateTile(g, biome, row, col);
       biomeTileVisuals[row][col] = { g, curColor: color, targetColor: color };
     }
   }
