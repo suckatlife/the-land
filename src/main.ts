@@ -1224,6 +1224,8 @@ interface TileVisual {
   curBorderColor: number;  curBorderAlpha: number;  curBorderWidth: number;
   targetBorderColor: number; targetBorderAlpha: number; targetBorderWidth: number;
   animating: boolean;
+  row: number; col: number;
+  farm: boolean; // cleared + living owner → drawn as cultivated fields
 }
 
 interface BiomeTileVisual {
@@ -1442,19 +1444,41 @@ function tileRand(row: number, col: number, salt: number): number {
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 }
 
+// How deep inside a patch of its own biome a tile sits: ~0 at the edge, →1 in
+// the interior. A distance-weighted neighbourhood count (nearer neighbours
+// count more), so patches read thick in the middle and sparse/low at the rim —
+// forests thinning to scrub, mountains tapering to foothills. One-time at gen.
+function patchCoreness(row: number, col: number, biome: Biome): number {
+  let same = 0, total = 0;
+  for (let dr = -2; dr <= 2; dr++) {
+    for (let dc = -2; dc <= 2; dc++) {
+      const w = 3 - Math.max(Math.abs(dr), Math.abs(dc)); // 3 at centre … 1 at radius 2
+      total += w;
+      const r = row + dr, c = col + dc;
+      if (r < 0 || r >= GRID_SIZE || c < 0 || c >= GRID_SIZE) continue;
+      if (biomeMap[r][c] === biome) same += w;
+    }
+  }
+  return same / total;
+}
+
 // Terrain texture, drawn onto each land tile's own Graphics so it bakes into
 // the cached biome layer (perf-free per frame). Everything is relative to the
 // tile centre; the back-to-front tile draw order makes heights overlap right.
 function decorateTile(g: Graphics, biome: Biome, row: number, col: number) {
   const rnd = (s: number) => tileRand(row, col, s);
   if (biome === 'forest') {
-    const n = 4 + Math.floor(rnd(1) * 3); // 4–6 trees
+    // Dense, tall stands in the heart of the wood; a sparse, low fringe at the
+    // edge. coreness drives both how many trees and how big they grow.
+    const core = patchCoreness(row, col, 'forest');
+    const n = 1 + Math.round(core * 5); // 1 (lone edge tree) … 6 (deep wood)
+    const sizeBias = 0.55 + core * 0.45; // saplings at the fringe, giants at the core
     const trees: Array<{ ox: number; oy: number; s: number; conifer: boolean }> = [];
     for (let i = 0; i < n; i++) {
       trees.push({
         ox: (rnd(i * 4 + 2) - 0.5) * 22,
         oy: (rnd(i * 4 + 3) - 0.5) * 9,
-        s: 0.78 + rnd(i * 4 + 4) * 0.5,
+        s: (0.78 + rnd(i * 4 + 4) * 0.5) * sizeBias,
         conifer: rnd(i * 4 + 5) < 0.5,
       });
     }
@@ -1473,25 +1497,32 @@ function decorateTile(g: Graphics, biome: Biome, row: number, col: number) {
       }
     }
   } else if (biome === 'rock') {
-    // A shaded peak — lit on the left, shadowed on the right; taller and
-    // snow-capped the higher the underlying elevation.
-    const elev = elevationMap[row][col];
-    const peak = 8 + Math.min(1, Math.max(0, (elev - 0.55) / 0.45)) * 12;
-    const w = 11, apexX = (rnd(1) - 0.5) * 4;
+    // A shaded peak — lit on the left, shadowed on the right. coreness shapes
+    // the range: low foothills at the edge rising to tall, snow-capped peaks at
+    // the heart (nudged a little more by raw elevation).
+    const core = patchCoreness(row, col, 'rock');
+    const elev = Math.min(1, Math.max(0, (elevationMap[row][col] - 0.55) / 0.45));
+    const peak = 4 + core * 14 + elev * 3;
+    const w = 6 + core * 6, apexX = (rnd(1) - 0.5) * 4;
     g.poly([apexX, -peak, -w, 3, apexX, 6]).fill({ color: 0xccc6bb }); // lit face
     g.poly([apexX, -peak, w, 3, apexX, 6]).fill({ color: 0x8b857a }); // shadow face
-    if (peak > 15) {
-      g.poly([apexX, -peak, apexX - 3.4, -peak + 5, apexX + 3.4, -peak + 5]).fill({ color: 0xeef2f6, alpha: 0.92 });
+    if (peak > 14) {
+      const snow = Math.min(6, (peak - 14) * 1.4);
+      g.poly([apexX, -peak, apexX - snow * 0.7, -peak + snow, apexX + snow * 0.7, -peak + snow]).fill({ color: 0xeef2f6, alpha: 0.92 });
     }
   } else if (biome === 'sand') {
     for (let i = 0; i < 6; i++) {
-      g.circle((rnd(i * 2 + 1) - 0.5) * 24, (rnd(i * 2 + 2) - 0.5) * 11, 0.7)
-        .fill({ color: 0xd6bd86, alpha: 0.5 }); // grains
+      const ox = (rnd(i * 2 + 1) - 0.5) * 24, oy = (rnd(i * 2 + 2) - 0.5) * 11;
+      g.circle(ox, oy, 0.7).fill({ color: i % 3 ? 0xd6bd86 : 0xc6ab74, alpha: 0.32 }); // faint grains
     }
-  } else { // grass, fertile — a few faint blades
-    for (let i = 0; i < 4; i++) {
-      const ox = (rnd(i * 2 + 1) - 0.5) * 22, oy = (rnd(i * 2 + 2) - 0.5) * 9;
-      g.rect(ox, oy, 0.7, -2.0).fill({ color: 0x86b06e, alpha: 0.45 });
+  } else { // grass, fertile — a few faint blades, lusher on fertile
+    const n = biome === 'fertile' ? 5 : 4;
+    const tip = biome === 'fertile' ? 0x7aac58 : 0x82ad68;
+    for (let i = 0; i < n; i++) {
+      const ox = (rnd(i * 2 + 1) - 0.5) * 22, oy = (rnd(i * 2 + 2) - 0.5) * 10;
+      g.moveTo(ox - 0.7, oy).lineTo(ox - 0.7, oy - 2.0).moveTo(ox, oy).lineTo(ox, oy - 2.4)
+        .moveTo(ox + 0.7, oy).lineTo(ox + 0.7, oy - 1.9)
+        .stroke({ color: tip, alpha: 0.3, width: 0.6, cap: 'round' });
     }
   }
 }
@@ -1508,10 +1539,14 @@ function drawBiomes() {
   for (let row = 0; row < GRID_SIZE; row++) {
     for (let col = 0; col < GRID_SIZE; col++) {
       const biome = biomeMap[row][col];
-      const color = biome === 'water' ? waterColorAt(row, col) : BIOME_COLORS[biome];
+      // Forest sits on the same ground as the grass around it — the wood's
+      // colour comes from the trees, not the tile — so edges blend seamlessly.
+      const color = biome === 'water' ? waterColorAt(row, col)
+        : biome === 'forest' ? BIOME_COLORS.grass
+        : BIOME_COLORS[biome];
       const g = drawTile(biomeLayer, col, row, biome);
-      if (biome === 'water') redrawBiomeTile(g, color);
-      else decorateTile(g, biome, row, col);
+      if (biome === 'water' || biome === 'forest') redrawBiomeTile(g, color);
+      if (biome !== 'water') decorateTile(g, biome, row, col);
       biomeTileVisuals[row][col] = { g, curColor: color, targetColor: color };
     }
   }
@@ -3070,6 +3105,68 @@ function refreshTintsForTransitioningCivs() {
   }
 }
 
+// Multiply a packed colour's channels by f (clamped) — quick brightness jitter.
+function scaleColor(c: number, f: number): number {
+  const r = Math.min(255, ((c >> 16) & 255) * f) | 0;
+  const g = Math.min(255, ((c >> 8) & 255) * f) | 0;
+  const b = Math.min(255, (c & 255) * f) | 0;
+  return (r << 16) | (g << 8) | b;
+}
+
+// Cultivated fields: the tile diamond split into a 3×3 iso grid of plots in
+// alternating crop tones (wheat-gold / field-green), each jittered and faintly
+// tinted toward the owner's colour — so cleared land reads as worked farmland,
+// not a flat ownership wash. Civ-style patchwork.
+const FARM_GOLD = 0xcdb96a, FARM_GREEN = 0x9ec06a;
+function paintFarm(
+  g: Graphics, row: number, col: number, civColor: number, alpha: number,
+  borderColor: number, borderAlpha: number, borderWidth: number,
+) {
+  g.clear();
+  // Fields are deliberate texture, not a faint ownership wash — paint them
+  // several times more solid than the generic tint alpha (still fades in).
+  const fa = Math.min(0.9, alpha * 3.4);
+  const sw = 16 / 3, sh = 8 / 3; // sub-plot half-extents (tile is 32×16)
+  for (let gi = -1; gi <= 1; gi++) {
+    for (let gj = -1; gj <= 1; gj++) {
+      const cx = (gi - gj) * sw, cy = (gi + gj) * sh;
+      const base = ((gi + gj) & 1) ? FARM_GOLD : FARM_GREEN;
+      const jit = 0.82 + tileRand(row, col, gi * 5 + gj + 900) * 0.34;
+      const color = lerpColor(scaleColor(base, jit), civColor, 0.18);
+      g.poly([cx, cy - sh, cx + sw, cy, cx, cy + sh, cx - sw, cy]).fill({ color, alpha: fa });
+      // a furrow line down the plot (parallel to the col axis) — crop rows
+      g.moveTo(cx - sw * 0.5, cy - sh * 0.5).lineTo(cx + sw * 0.5, cy + sh * 0.5)
+        .stroke({ color: scaleColor(base, 0.7), alpha: fa * 0.5, width: 0.6 });
+    }
+  }
+  if (borderAlpha > 0.01 && borderWidth > 0) {
+    g.poly([0, -8, 16, 0, 0, 8, -16, 0]).stroke({ color: borderColor, alpha: borderAlpha, width: borderWidth });
+  }
+}
+
+// Paint a tile overlay as farmland or a flat ownership tint, per tv.farm.
+function paintTileOverlay(
+  tv: TileVisual, color: number, alpha: number,
+  bc: number, ba: number, bw: number,
+) {
+  if (tv.farm) paintFarm(tv.g, tv.row, tv.col, color, alpha, bc, ba, bw);
+  else redrawOverlay(tv.g, color, alpha, bc, ba, bw);
+}
+
+// Farmland is a living civ's worked countryside: freshly cleared land, plus
+// developed land that's far enough from a city centre to be low-density (fields
+// and farmsteads, not town). Dense city cores and ruins keep the flat tint.
+// 'cleared' is near-instant in the sim, so without the built-countryside case
+// farmland would only flicker for half a second at the expanding frontier.
+function isFarmTile(row: number, col: number): boolean {
+  const tile = simWorld.tiles[row][col];
+  if (tile.civId == null || (tile.state !== 'cleared' && tile.state !== 'built')) return false;
+  const civ = simWorld.civs.get(tile.civId);
+  if (!civ || civ.phase === 'dead') return false;
+  if (tile.state === 'cleared') return true;
+  return computeTileDensity(row, col, civ) < DENSITY.slot2; // countryside, not city core
+}
+
 function refreshTileOverlay(row: number, col: number) {
   const tile = simWorld.tiles[row][col];
   const colorInfo: TileOverlay | null = SHOW_TILE_TINT ? tileOverlayColor(tile, simWorld) : null;
@@ -3103,13 +3200,15 @@ function refreshTileOverlay(row: number, col: number) {
       curBorderColor: colorInfo.borderColor,  curBorderAlpha: 0,  curBorderWidth: colorInfo.borderWidth,
       targetBorderColor: colorInfo.borderColor, targetBorderAlpha: colorInfo.borderAlpha, targetBorderWidth: colorInfo.borderWidth,
       animating: true,
+      row, col, farm: isFarmTile(row, col),
     };
     tileVisuals[row][col] = tv;
-    redrawOverlay(g, tv.curColor, tv.curAlpha, tv.curBorderColor, tv.curBorderAlpha, tv.curBorderWidth);
+    paintTileOverlay(tv, tv.curColor, tv.curAlpha, tv.curBorderColor, tv.curBorderAlpha, tv.curBorderWidth);
     animatingTiles.add(`${row},${col}`);
     return;
   }
 
+  tv.farm = isFarmTile(row, col);
   tv.targetColor = colorInfo.color;
   let alphaFactor = 1.0;
   if (tile.civId != null && tile.state !== 'ruin') {
@@ -3392,7 +3491,7 @@ app.ticker.add((ticker) => {
     tv.curBorderAlpha += (tv.targetBorderAlpha - tv.curBorderAlpha) * EASE;
     tv.curBorderWidth += (tv.targetBorderWidth - tv.curBorderWidth) * EASE;
 
-    redrawOverlay(tv.g, tv.curColor, tv.curAlpha, tv.curBorderColor, tv.curBorderAlpha, tv.curBorderWidth);
+    paintTileOverlay(tv, tv.curColor, tv.curAlpha, tv.curBorderColor, tv.curBorderAlpha, tv.curBorderWidth);
 
     const colorClose = colorsWithin(tv.curColor, tv.targetColor, 2);
     const alphaClose = Math.abs(tv.curAlpha - tv.targetAlpha) < 0.01;
@@ -3403,7 +3502,7 @@ app.ticker.add((ticker) => {
       tv.curBorderColor = tv.targetBorderColor;
       tv.curBorderAlpha = tv.targetBorderAlpha;
       tv.curBorderWidth = tv.targetBorderWidth;
-      redrawOverlay(tv.g, tv.targetColor, tv.curAlpha, tv.curBorderColor, tv.curBorderAlpha, tv.curBorderWidth);
+      paintTileOverlay(tv, tv.targetColor, tv.curAlpha, tv.curBorderColor, tv.curBorderAlpha, tv.curBorderWidth);
       tv.animating = false;
       done.push(key);
       if (tv.targetAlpha === 0) {
