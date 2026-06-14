@@ -457,13 +457,33 @@ export function nearestCityDist(civ: Civ, row: number, col: number): number {
   return min < Infinity ? min : 0;
 }
 
+// Smooth, deterministic multi-frequency wobble in ~[-1, 1]. Pure (no seed, no
+// state) so the sim and the renderer compute an identical ice front. Two broad
+// lobes plus finer crenulation give the edge an organic, non-repeating feel.
+function iceNoise(row: number, col: number): number {
+  const a = Math.sin(row * 0.21 + col * 0.13) + Math.sin(col * 0.17 - row * 0.07);
+  const b = Math.sin((row + col) * 0.11 + 1.7) + Math.sin((row - col) * 0.23 - 0.6);
+  return (a * 0.5 + b * 0.28) / 1.56;
+}
+
 // How deeply a tile is buried in polar ice (0 = ice-free, 1 = deep at the
-// pole). Latitude is the distance from the diagonal equator (row+col = H-1);
-// ice covers the iceExtent fraction of latitude nearest the two poles.
-export function iceDepthAt(world: SimWorld, row: number, col: number): number {
+// pole). Base latitude is the distance from the diagonal equator (row+col =
+// H-1); ice covers the iceExtent fraction of latitude nearest the two poles.
+// The front is warped by noise and biased by terrain so it grows organically —
+// cold seas and high rock freeze ahead of it, warm lowlands hold out — rather
+// than as a clean latitude line. Pass the tile's biome to enable the bias.
+export function iceDepthAt(world: SimWorld, row: number, col: number, biome?: Biome): number {
   const cover = world.iceExtent;
   if (cover <= 0.001) return 0;
-  const lat = Math.abs(row + col - (world.height - 1)) / (world.height - 1);
+  let lat = Math.abs(row + col - (world.height - 1)) / (world.height - 1);
+  // Terrain bias: sea ice tongues into cold open water, snow caps the ridges,
+  // sheltered lowlands and warm coasts thaw longest — so the edge hugs the
+  // coastline and ridgelines instead of cutting straight across them.
+  if (biome === 'water') lat += 0.07;
+  else if (biome === 'rock') lat += 0.05;
+  else if (biome === 'sand' || biome === 'fertile') lat -= 0.06;
+  // Ragged, organic front rather than a clean line (~±13 tiles of wobble).
+  lat += iceNoise(row, col) * 0.14;
   const line = 1 - cover;
   if (lat <= line) return 0;
   return Math.min(1, (lat - line) / Math.max(0.05, cover));
@@ -1548,7 +1568,7 @@ export function step(
             : 1.0;
           const deadDamp = civ.phase === 'dead' ? SIM.deathDecayMultiplier : 1.0;
           // Ice age: tiles deep in the cold are abandoned faster.
-          const iceFactor = 1 + iceDepthAt(world, row, col) * SIM.iceDecayBonus;
+          const iceFactor = 1 + iceDepthAt(world, row, col, biomes[row][col]) * SIM.iceDecayBonus;
 
           const decayP = SIM.decayBase * effectiveDecayPressure(civ) * exposureFactor
             * distanceFactor * isolationFactor * deathPeripheryAmp * deadDamp * iceFactor;

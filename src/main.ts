@@ -1,5 +1,5 @@
 import { Application, Assets, Container, Graphics, MeshPlane, RenderTexture, Sprite, Text, TextStyle, Texture } from 'pixi.js';
-import { generateBiomeMap, generateRivers, makeTerrainSampler, classify, BIOME_COLORS, SEA_LEVEL } from './biomes';
+import { generateBiomeMap, generateRivers, makeTerrainSampler, classify, BIOME_COLORS, SEA_LEVEL, type Biome } from './biomes';
 import { drawTile, drawStateOverlayPersistent, redrawOverlay, redrawBiomeTile, lerpColor, gridToScreen, rgbToHsl, hslToRgb } from './iso';
 import { createSimWorld, step, tileOverlayColor, seedInitialCivs, applyCatastrophe, iceDepthAt, SIM, CATASTROPHE, CITY, nearestCityDist, type SimWorld, type Civ, type CivCity, type SimEvent, type Era, type TileOverlay, type BiomeChange, type CatastropheType } from './sim';
 import * as audio from './audio';
@@ -669,7 +669,7 @@ const sceneryLandGfx = new Graphics();  // beyond-the-grid land (over glitter)
 // Beyond-the-grid tile positions (+ water/land), precomputed once in
 // drawScenery so the ice cap can extend over the whole visible globe, not
 // just the sim diamond. r/c keep the same latitude math as the grid.
-let sceneryTiles: { x: number; y: number; r: number; c: number; water: boolean }[] = [];
+let sceneryTiles: { x: number; y: number; r: number; c: number; water: boolean; biome: Biome }[] = [];
 const roadsGfx = new Graphics();        // paths between cities, era-styled
 const conflictGfx = new Graphics();     // war flickers at contested tiles
 const wonderGfx = new Graphics();       // monuments (persist as ruins)
@@ -867,22 +867,24 @@ function drawIce() {
   iceGfx.clear();
   if (ext <= 0.002) { iceGfx.visible = false; return; }
   iceGfx.visible = true;
-  // Sample latitude against the (possibly forced) extent.
-  const ice = (r: number, c: number) => iceDepthAt({ iceExtent: ext, height: GRID_SIZE } as any, r, c);
+  // Sample latitude against the (possibly forced) extent; terrain-aware so the
+  // front hugs coasts and ridges exactly as the sim computes it.
+  const fakeWorld = { iceExtent: ext, height: GRID_SIZE } as any;
   // The sim grid (the known world).
   for (let r = 0; r < GRID_SIZE; r++) {
     for (let c = 0; c < GRID_SIZE; c++) {
-      const d = ice(r, c);
+      const biome = biomeMap[r][c];
+      const d = iceDepthAt(fakeWorld, r, c, biome);
       if (d <= 0) continue;
       const { x, y } = gridToScreen(c, r);
-      paintIce(x, y, d, biomeMap[r][c] === 'water');
+      paintIce(x, y, d, biome === 'water');
     }
   }
   // The scenery beyond the grid, so the ice cap reaches the whole globe up to
   // the horizon (same latitude math; precomputed positions, no re-sampling).
   for (let i = 0; i < sceneryTiles.length; i++) {
     const t = sceneryTiles[i];
-    const d = ice(t.r, t.c);
+    const d = iceDepthAt(fakeWorld, t.r, t.c, t.biome);
     if (d <= 0) continue;
     paintIce(t.x, t.y, d, t.water);
   }
@@ -1394,7 +1396,7 @@ function drawScenery() {
       target.poly([x, y - 8, x + 16, y, x, y + 8, x - 16, y])
         .fill(color)
         .stroke({ color: 0x000000, alpha: 0.08, width: 1 });
-      sceneryTiles.push({ x, y, r, c, water });
+      sceneryTiles.push({ x, y, r, c, water, biome });
     }
   }
   // Static once drawn — collapse the ~20k polys to one cached quad.
