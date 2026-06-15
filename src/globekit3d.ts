@@ -19,13 +19,25 @@ const world = createSimWorld(W, H);
 seedInitialCivs(world, biomes, 1);
 for (let i = 0; i < TICKS; i++) step(world, biomes, elevation);
 
-const R = 70, SPAN = 1.5;
+// Big sphere, small cap → the same tile size sits on a gently-curved map (a
+// shallow limb), much closer to the 2D build than a tight little planet.
+const R = 150, SPAN = 0.72;
 const tileW = (SPAN / (W - 1)) * R * 1.06;
 function dirAt(r: number, c: number): THREE.Vector3 {
-  const lon = (c / (W - 1) - 0.5) * SPAN, lat = (r / (H - 1) - 0.5) * SPAN;
+  // lat flips with row so the map's north (row 0) is up, not upside down.
+  const lon = (c / (W - 1) - 0.5) * SPAN, lat = (0.5 - r / (H - 1)) * SPAN;
   return new THREE.Vector3(Math.sin(lon) * Math.cos(lat), Math.sin(lat), Math.cos(lon) * Math.cos(lat)).normalize();
 }
-function hash(r: number, c: number) { let h = (r * 73856093) ^ (c * 19349663); h = Math.imul(h ^ (h >>> 13), 1274126177); return ((h ^ (h >>> 16)) >>> 0) / 4294967296; }
+function hash(r: number, c: number) { let h = (Math.imul(r | 0, 73856093) ^ Math.imul(c | 0, 19349663)) >>> 0; h = Math.imul(h ^ (h >>> 13), 1274126177); return ((h ^ (h >>> 16)) >>> 0) / 4294967296; }
+
+// Centre the view on the land mass and bound panning to it (so you can't drift
+// out over the empty ocean / round the back of the globe).
+let _sr = 0, _sc = 0, _nl = 0;
+for (let r = 0; r < H; r++) for (let c = 0; c < W; c++) if (biomes[r][c] !== 'water') { _sr += r; _sc += c; _nl++; }
+const FOCUS_DIR = dirAt(_sr / _nl, _sc / _nl);
+const FOCUS = FOCUS_DIR.clone().multiplyScalar(R);
+let LAND_EXT = 0;
+for (let r = 0; r < H; r++) for (let c = 0; c < W; c++) if (biomes[r][c] !== 'water') { const a = Math.acos(Math.min(1, dirAt(r, c).dot(FOCUS_DIR))); if (a * R > LAND_EXT) LAND_EXT = a * R; }
 
 // --- Renderer / scene ------------------------------------------------------
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -39,21 +51,21 @@ const camera = new THREE.PerspectiveCamera(32, window.innerWidth / window.innerH
 // Fixed oblique framing of the continent cap, like the 2D view: the globe limb
 // arcs across the top, the world fills the frame edge to edge. No free orbit —
 // pan + zoom only — so all the life stays on the visible front of the planet.
-const CAP = new THREE.Vector3(0, 0, R);
-camera.position.set(0, 52, 150);
+const camOff = new THREE.Vector3(0, 58, 96); // fixed oblique offset from the focus
+camera.position.copy(FOCUS).add(camOff);
 const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.set(0, 6, R);
+controls.target.copy(FOCUS);
 controls.enableDamping = true; controls.dampingFactor = 0.12;
 controls.enableRotate = false;          // never spin the globe away
 controls.screenSpacePanning = true;
-controls.minDistance = 26;              // zoom in close
-controls.maxDistance = 92;              // zoomed out ≈ the 2D framing (whole continent fills the frame)
+controls.minDistance = 30;              // zoom in close
+controls.maxDistance = camOff.length(); // zoomed out ≈ the 2D framing
 controls.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
 controls.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_PAN };
-// Keep the pan target near the cap so you can't wander into empty space.
-const PAN_LIMIT = 46;
+// Bound panning to the inhabited land, not the open ocean / far side.
+const PAN_LIMIT = LAND_EXT * 0.62;
 function clampPan() {
-  const off = controls.target.clone().sub(CAP); off.z = 0;
+  const off = controls.target.clone().sub(FOCUS); off.z = 0;
   if (off.length() > PAN_LIMIT) { const corr = off.clone().setLength(PAN_LIMIT).sub(off); controls.target.add(corr); camera.position.add(corr); }
 }
 const sun = new THREE.DirectionalLight(0xfff4e2, 2.0); sun.position.set(-50, 80, 90); scene.add(sun);
@@ -91,7 +103,6 @@ function prep(gltf: { scene: THREE.Object3D }): { parts: Part[]; size: THREE.Vec
 }
 
 const dummy = new THREE.Object3D();
-const yA = new THREE.Vector3(0, 1, 0);
 // Place an instanced model: targetW = desired footprint in world units.
 function placeModel(prepped: { parts: Part[]; size: THREE.Vector3; baseY: number }, items: { r: number; c: number; s?: number; color?: number }[], targetW: number, label: string) {
   const baseScale = targetW / Math.max(prepped.size.x, prepped.size.z, 0.001);
@@ -99,10 +110,14 @@ function placeModel(prepped: { parts: Part[]; size: THREE.Vector3; baseY: number
   items.forEach((it, i) => {
     const n = dirAt(it.r, it.c);
     const s = baseScale * (it.s ?? 1);
-    const sy = s * (it.sy ?? 1); // vertical stretch (dramatic peaks)
-    dummy.position.copy(n).multiplyScalar(R - prepped.baseY * sy); // sit base on the surface
-    dummy.quaternion.setFromUnitVectors(yA, n);
-    dummy.rotateY(hash(it.r, it.c) * Math.PI * 2); // spin for variety
+    const sy = s * (it.sy ?? 1);
+    // Stand straight up (world vertical), not along the radial normal — so
+    // trees/houses read upright like the 2D view instead of splaying toward
+    // the limb. Base sits on the surface point.
+    dummy.position.copy(n).multiplyScalar(R);
+    dummy.position.y -= prepped.baseY * sy;
+    dummy.quaternion.identity();
+    dummy.rotateY(hash((it.r * 9) | 0, (it.c * 9) | 0) * Math.PI * 2); // spin for variety
     dummy.scale.set(s, sy, s);
     dummy.updateMatrix();
     meshes.forEach(m => m.setMatrixAt(i, dummy.matrix));
@@ -130,27 +145,48 @@ function isBiome(r: number, c: number, b: Biome) { return r >= 0 && r < H && c >
 function rockCore(r: number, c: number) { let n = 0; for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) if (isBiome(r + dr, c + dc, 'rock')) n++; return n / 9; }
 function nearLand(r: number, c: number) { for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) if (r + dr >= 0 && r + dr < H && c + dc >= 0 && c + dc < W && biomes[r + dr][c + dc] !== 'water') return true; return false; }
 
-// Collect placement lists from the sim: forests, dramatic peaks, towns
-// (clustered at cities, civ-coloured), crop fields, wild herds, coastal boats.
+// Scatter n sub-tile positions within tile (r,c) — so each tile holds several
+// small models (a stand of trees, a cluster of cottages) at the 2D build's
+// scale, instead of one oversized model per tile.
+function scatter(r: number, c: number, n: number, salt: number, spread: number) {
+  const out: { r: number; c: number }[] = [];
+  for (let i = 0; i < n; i++) {
+    const hx = hash(r * 131 + i * 7 + salt, c * 57 + i * 13 + salt);
+    const hy = hash(c * 131 + i * 9 + salt + 99, r * 57 + i * 11 + salt + 99);
+    out.push({ r: r + (hx - 0.5) * spread, c: c + (hy - 0.5) * spread });
+  }
+  return out;
+}
+
+// Collect placement lists from the sim at 2D-matched scale: small trees a few
+// per forest tile, modest tile-sized peaks, dense clusters of tiny civ-coloured
+// cottages in towns, small crops, herds, coastal boats.
 const broad: any[] = [], pine: any[] = [], peaks: any[] = [], houses: any[] = [], crops: any[] = [], herd: any[] = [], boats: any[] = [];
 for (let r = 0; r < H; r++) for (let c = 0; c < W; c++) {
   const b = biomes[r][c];
-  if (b === 'water') {
-    // a few boats on coastal water
-    if (nearLand(r, c) && hash(r, c + 31) < 0.018) boats.push({ r, c, s: 0.9 });
+  if (b === 'water') { if (nearLand(r, c) && hash(r, c + 31) < 0.02) boats.push({ r, c }); continue; }
+  if (b === 'forest') {
+    for (const p of scatter(r, c, 3 + Math.floor(hash(r, c) * 3), 1, 0.8))
+      (hash((p.r * 4) | 0, (p.c * 4) | 0) < 0.5 ? pine : broad).push({ r: p.r, c: p.c, s: 0.8 + hash((p.c * 5) | 0, (p.r * 5) | 0) * 0.5 });
     continue;
   }
-  if (b === 'forest') { (hash(r, c) < 0.5 ? pine : broad).push({ r, c, s: 0.85 + hash(r, c + 7) * 0.4 }); continue; }
-  if (b === 'rock') { const core = rockCore(r, c); peaks.push({ r, c, s: 1.1 + core * 0.6, sy: 2.0 + core * 2.4 }); continue; }
+  if (b === 'rock') {
+    const core = rockCore(r, c);
+    for (const p of scatter(r, c, core > 0.45 ? 2 : 1, 2, 0.5)) peaks.push({ r: p.r, c: p.c, s: 0.8 + core * 0.5, sy: 1.0 + core * 0.7 });
+    continue;
+  }
   const tile = world.tiles[r][c];
   if ((tile.state === 'built' || tile.state === 'cleared') && tile.civId != null) {
     const civ = world.civs.get(tile.civId);
     if (!civ || civ.phase === 'dead') continue;
     const prox = cityProx(r, c, civ);
-    if (prox > 0.5) houses.push({ r, c, s: 0.75 + prox * 0.5, color: civ.color });
-    else if ((b === 'grass' || b === 'fertile') && farmPatch(r, c)) crops.push({ r, c });
-  } else if ((tile.state === 'wild' || tile.state === 'ruin') && (b === 'grass' || b === 'fertile') && hash(r, c + 13) < 0.03) {
-    herd.push({ r, c, s: 0.85 }); // animals roaming the open and reclaimed wild
+    if (prox > 0.4) {
+      for (const p of scatter(r, c, 1 + Math.round(prox * 5), 3, 0.82)) houses.push({ r: p.r, c: p.c, s: 0.8 + hash((p.r * 6) | 0, (p.c * 6) | 0) * 0.4, color: civ.color });
+    } else if ((b === 'grass' || b === 'fertile') && farmPatch(r, c)) {
+      for (const p of scatter(r, c, 2 + Math.floor(hash(r, c) * 2), 4, 0.7)) crops.push({ r: p.r, c: p.c });
+    }
+  } else if ((tile.state === 'wild' || tile.state === 'ruin') && (b === 'grass' || b === 'fertile') && hash(r, c + 13) < 0.04) {
+    for (const p of scatter(r, c, 2 + Math.floor(hash(r, c) * 3), 5, 0.65)) herd.push({ r: p.r, c: p.c, s: 0.8 + hash((p.r * 8) | 0, (p.c * 8) | 0) * 0.3 });
   }
 }
 
@@ -165,15 +201,15 @@ Promise.all([
   loader.loadAsync(ANI('animal-deer')),
   loader.loadAsync(WAT('boat-sail-a')),
 ]).then(([treeB, treeP, rock, house, corn, cow, deer, boat]) => {
-  placeModel(prep(treeB), broad, tileW * 1.4, 'broadleaf');
-  placeModel(prep(treeP), pine, tileW * 1.3, 'pine');
-  placeModel(prep(rock), peaks, tileW * 1.5, 'peak');
-  placeModel(prep(house), houses, tileW * 1.1, 'house');
-  placeModel(prep(corn), crops, tileW * 1.05, 'crops');
+  placeModel(prep(treeB), broad, tileW * 0.42, 'broadleaf');
+  placeModel(prep(treeP), pine, tileW * 0.40, 'pine');
+  placeModel(prep(rock), peaks, tileW * 0.78, 'peak');
+  placeModel(prep(house), houses, tileW * 0.34, 'house');
+  placeModel(prep(corn), crops, tileW * 0.42, 'crops');
   const cowHerd = herd.filter((_, i) => i % 2 === 0), deerHerd = herd.filter((_, i) => i % 2 === 1);
-  placeModel(prep(cow), cowHerd, tileW * 0.9, 'cows');
-  placeModel(prep(deer), deerHerd, tileW * 0.9, 'deer');
-  placeModel(prep(boat), boats, tileW * 1.1, 'boats');
+  placeModel(prep(cow), cowHerd, tileW * 0.42, 'cows');
+  placeModel(prep(deer), deerHerd, tileW * 0.42, 'deer');
+  placeModel(prep(boat), boats, tileW * 0.95, 'boats');
   let alive = 0; for (const c of world.civs.values()) if (c.phase !== 'dead') alive++;
   document.querySelector('#hud')!.firstChild!.textContent = 'Kenney 3D kit · ';
   stat.innerHTML = `seed <b>${SEED}</b> · tick ${world.tick} · <b>${alive}</b> civs · ${broad.length + pine.length} trees · ${peaks.length} peaks · ${houses.length} houses · ${crops.length} fields · ${herd.length} herds · ${boats.length} boats`;
