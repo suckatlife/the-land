@@ -103,21 +103,22 @@ function prep(gltf: { scene: THREE.Object3D }): { parts: Part[]; size: THREE.Vec
 }
 
 const dummy = new THREE.Object3D();
+const yA = new THREE.Vector3(0, 1, 0);
 // Place an instanced model: targetW = desired footprint in world units.
-function placeModel(prepped: { parts: Part[]; size: THREE.Vector3; baseY: number }, items: { r: number; c: number; s?: number; color?: number }[], targetW: number, label: string) {
+function placeModel(prepped: { parts: Part[]; size: THREE.Vector3; baseY: number }, items: { r: number; c: number; s?: number; color?: number; aligned?: boolean }[], targetW: number, label: string) {
   const baseScale = targetW / Math.max(prepped.size.x, prepped.size.z, 0.001);
   const meshes = prepped.parts.map(p => new THREE.InstancedMesh(p.geometry, p.material, Math.max(1, items.length)));
   items.forEach((it, i) => {
     const n = dirAt(it.r, it.c);
     const s = baseScale * (it.s ?? 1);
     const sy = s * (it.sy ?? 1);
-    // Stand straight up (world vertical), not along the radial normal — so
-    // trees/houses read upright like the 2D view instead of splaying toward
-    // the limb. Base sits on the surface point.
-    dummy.position.copy(n).multiplyScalar(R);
-    dummy.position.y -= prepped.baseY * sy;
-    dummy.quaternion.identity();
-    dummy.rotateY(hash((it.r * 9) | 0, (it.c * 9) | 0) * Math.PI * 2); // spin for variety
+    // Stand perpendicular to the surface — pointing out from the planet's
+    // centre — so everything follows the gentle curve of the globe.
+    dummy.position.copy(n).multiplyScalar(R - prepped.baseY * sy);
+    dummy.quaternion.setFromUnitVectors(yA, n);
+    // Nature gets a random spin for variety; buildings/crops stay aligned so
+    // towns and fields read as orderly rows, not a jumble.
+    if (!it.aligned) dummy.rotateY(hash((it.r * 9) | 0, (it.c * 9) | 0) * Math.PI * 2);
     dummy.scale.set(s, sy, s);
     dummy.updateMatrix();
     meshes.forEach(m => m.setMatrixAt(i, dummy.matrix));
@@ -157,6 +158,17 @@ function scatter(r: number, c: number, n: number, salt: number, spread: number) 
   }
   return out;
 }
+// Orderly sub-grid within a tile — for buildings/crops that should line up in
+// neat rows rather than scatter randomly.
+function grid(r: number, c: number, n: number, spread: number) {
+  const g = Math.ceil(Math.sqrt(n));
+  const out: { r: number; c: number }[] = [];
+  for (let i = 0; i < n; i++) {
+    const gx = i % g, gy = (i / g) | 0;
+    out.push({ r: r + ((gx + 0.5) / g - 0.5) * spread, c: c + ((gy + 0.5) / g - 0.5) * spread });
+  }
+  return out;
+}
 
 // Collect placement lists from the sim at 2D-matched scale: small trees a few
 // per forest tile, modest tile-sized peaks, dense clusters of tiny civ-coloured
@@ -181,9 +193,10 @@ for (let r = 0; r < H; r++) for (let c = 0; c < W; c++) {
     if (!civ || civ.phase === 'dead') continue;
     const prox = cityProx(r, c, civ);
     if (prox > 0.4) {
-      for (const p of scatter(r, c, 1 + Math.round(prox * 5), 3, 0.82)) houses.push({ r: p.r, c: p.c, s: 0.8 + hash((p.r * 6) | 0, (p.c * 6) | 0) * 0.4, color: civ.color });
+      // Neat rows of cottages, aligned — an orderly town, not a jumble.
+      for (const p of grid(r, c, 1 + Math.round(prox * 5), 0.82)) houses.push({ r: p.r, c: p.c, s: 0.95, color: civ.color, aligned: true });
     } else if ((b === 'grass' || b === 'fertile') && farmPatch(r, c)) {
-      for (const p of scatter(r, c, 2 + Math.floor(hash(r, c) * 2), 4, 0.7)) crops.push({ r: p.r, c: p.c });
+      for (const p of grid(r, c, 4, 0.74)) crops.push({ r: p.r, c: p.c, aligned: true });
     }
   } else if ((tile.state === 'wild' || tile.state === 'ruin') && (b === 'grass' || b === 'fertile') && hash(r, c + 13) < 0.04) {
     for (const p of scatter(r, c, 2 + Math.floor(hash(r, c) * 3), 5, 0.65)) herd.push({ r: p.r, c: p.c, s: 0.8 + hash((p.r * 8) | 0, (p.c * 8) | 0) * 0.3 });
