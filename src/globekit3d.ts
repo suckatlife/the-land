@@ -35,10 +35,27 @@ renderer.setClearColor(0xcfe0ec);
 document.body.appendChild(renderer.domElement);
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0xcfe0ec);
-const camera = new THREE.PerspectiveCamera(38, window.innerWidth / window.innerHeight, 0.1, 1000);
-camera.position.set(-18, 30, 172);
+const camera = new THREE.PerspectiveCamera(32, window.innerWidth / window.innerHeight, 0.1, 1000);
+// Fixed oblique framing of the continent cap, like the 2D view: the globe limb
+// arcs across the top, the world fills the frame edge to edge. No free orbit —
+// pan + zoom only — so all the life stays on the visible front of the planet.
+const CAP = new THREE.Vector3(0, 0, R);
+camera.position.set(0, 52, 150);
 const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.set(0, 0, R); controls.enableDamping = true; controls.autoRotate = true; controls.autoRotateSpeed = 0.3;
+controls.target.set(0, 6, R);
+controls.enableDamping = true; controls.dampingFactor = 0.12;
+controls.enableRotate = false;          // never spin the globe away
+controls.screenSpacePanning = true;
+controls.minDistance = 26;              // zoom in close
+controls.maxDistance = 92;              // zoomed out ≈ the 2D framing (whole continent fills the frame)
+controls.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
+controls.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_PAN };
+// Keep the pan target near the cap so you can't wander into empty space.
+const PAN_LIMIT = 46;
+function clampPan() {
+  const off = controls.target.clone().sub(CAP); off.z = 0;
+  if (off.length() > PAN_LIMIT) { const corr = off.clone().setLength(PAN_LIMIT).sub(off); controls.target.add(corr); camera.position.add(corr); }
+}
 const sun = new THREE.DirectionalLight(0xfff4e2, 2.0); sun.position.set(-50, 80, 90); scene.add(sun);
 scene.add(new THREE.HemisphereLight(0xeef3fb, 0x6a7280, 0.95));
 scene.add(new THREE.Mesh(new THREE.SphereGeometry(R - 0.25, 96, 96), new THREE.MeshStandardMaterial({ color: 0x6ea6cf, roughness: 0.95, metalness: 0 })));
@@ -57,6 +74,8 @@ const ground = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), new THREE.
 const loader = new GLTFLoader();
 const NAT = (n: string) => encodeURI(`/models/nature/Models/GLTF format/${n}.glb`);
 const BLD = (n: string) => encodeURI(`/models/buildings/Models/GLB format/${n}.glb`);
+const ANI = (n: string) => encodeURI(`/models/animals/Models/GLB format/${n}.glb`);
+const WAT = (n: string) => encodeURI(`/models/watercraft/Models/GLB format/${n}.glb`);
 
 interface Part { geometry: THREE.BufferGeometry; material: THREE.Material }
 // Bake each mesh's local transform into its geometry so the parts can be
@@ -80,11 +99,11 @@ function placeModel(prepped: { parts: Part[]; size: THREE.Vector3; baseY: number
   items.forEach((it, i) => {
     const n = dirAt(it.r, it.c);
     const s = baseScale * (it.s ?? 1);
-    dummy.position.copy(n).multiplyScalar(R - prepped.baseY * s); // sit base on the surface
+    const sy = s * (it.sy ?? 1); // vertical stretch (dramatic peaks)
+    dummy.position.copy(n).multiplyScalar(R - prepped.baseY * sy); // sit base on the surface
     dummy.quaternion.setFromUnitVectors(yA, n);
-    // spin each instance a bit for variety
-    dummy.rotateY(hash(it.r, it.c) * Math.PI * 2);
-    dummy.scale.setScalar(s);
+    dummy.rotateY(hash(it.r, it.c) * Math.PI * 2); // spin for variety
+    dummy.scale.set(s, sy, s);
     dummy.updateMatrix();
     meshes.forEach(m => m.setMatrixAt(i, dummy.matrix));
   });
@@ -107,20 +126,31 @@ function farmPatch(r: number, c: number): boolean {
   return (Math.sin(r * 0.45 + 1.7) + Math.sin(c * 0.5 - 0.6) + Math.sin((r + c) * 0.28) + Math.sin((r - c) * 0.33)) > 0.4;
 }
 
-// Collect placement lists from the sim: forests, peaks, towns (clustered at
-// cities), and crop fields (patchy arable countryside) — so it reads as
-// settlements amid farmland, not wall-to-wall housing.
-const broad: any[] = [], pine: any[] = [], peaks: any[] = [], houses: any[] = [], crops: any[] = [];
-for (const t of land) {
-  if (t.biome === 'forest') (hash(t.r, t.c) < 0.5 ? pine : broad).push({ r: t.r, c: t.c, s: 0.85 + hash(t.r, t.c + 7) * 0.4 });
-  if (t.biome === 'rock') { const en = Math.min(1, Math.max(0, (elevation[t.r][t.c] - 0.55) / 0.45)); peaks.push({ r: t.r, c: t.c, s: 0.85 + en * 0.7 }); continue; }
-  const tile = world.tiles[t.r][t.c];
+function isBiome(r: number, c: number, b: Biome) { return r >= 0 && r < H && c >= 0 && c < W && biomes[r][c] === b; }
+function rockCore(r: number, c: number) { let n = 0; for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) if (isBiome(r + dr, c + dc, 'rock')) n++; return n / 9; }
+function nearLand(r: number, c: number) { for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) if (r + dr >= 0 && r + dr < H && c + dc >= 0 && c + dc < W && biomes[r + dr][c + dc] !== 'water') return true; return false; }
+
+// Collect placement lists from the sim: forests, dramatic peaks, towns
+// (clustered at cities, civ-coloured), crop fields, wild herds, coastal boats.
+const broad: any[] = [], pine: any[] = [], peaks: any[] = [], houses: any[] = [], crops: any[] = [], herd: any[] = [], boats: any[] = [];
+for (let r = 0; r < H; r++) for (let c = 0; c < W; c++) {
+  const b = biomes[r][c];
+  if (b === 'water') {
+    // a few boats on coastal water
+    if (nearLand(r, c) && hash(r, c + 31) < 0.018) boats.push({ r, c, s: 0.9 });
+    continue;
+  }
+  if (b === 'forest') { (hash(r, c) < 0.5 ? pine : broad).push({ r, c, s: 0.85 + hash(r, c + 7) * 0.4 }); continue; }
+  if (b === 'rock') { const core = rockCore(r, c); peaks.push({ r, c, s: 1.1 + core * 0.6, sy: 2.0 + core * 2.4 }); continue; }
+  const tile = world.tiles[r][c];
   if ((tile.state === 'built' || tile.state === 'cleared') && tile.civId != null) {
     const civ = world.civs.get(tile.civId);
     if (!civ || civ.phase === 'dead') continue;
-    const prox = cityProx(t.r, t.c, civ);
-    if (prox > 0.5) houses.push({ r: t.r, c: t.c, s: 0.75 + prox * 0.5 });
-    else if ((t.biome === 'grass' || t.biome === 'fertile') && farmPatch(t.r, t.c)) crops.push({ r: t.r, c: t.c });
+    const prox = cityProx(r, c, civ);
+    if (prox > 0.5) houses.push({ r, c, s: 0.75 + prox * 0.5, color: civ.color });
+    else if ((b === 'grass' || b === 'fertile') && farmPatch(r, c)) crops.push({ r, c });
+  } else if ((tile.state === 'wild' || tile.state === 'ruin') && (b === 'grass' || b === 'fertile') && hash(r, c + 13) < 0.03) {
+    herd.push({ r, c, s: 0.85 }); // animals roaming the open and reclaimed wild
   }
 }
 
@@ -131,17 +161,24 @@ Promise.all([
   loader.loadAsync(NAT('rock_tallB')),
   loader.loadAsync(BLD('building-sample-house-a')),
   loader.loadAsync(NAT('crops_cornStageC')),
-]).then(([treeB, treeP, rock, house, corn]) => {
+  loader.loadAsync(ANI('animal-cow')),
+  loader.loadAsync(ANI('animal-deer')),
+  loader.loadAsync(WAT('boat-sail-a')),
+]).then(([treeB, treeP, rock, house, corn, cow, deer, boat]) => {
   placeModel(prep(treeB), broad, tileW * 1.4, 'broadleaf');
   placeModel(prep(treeP), pine, tileW * 1.3, 'pine');
   placeModel(prep(rock), peaks, tileW * 1.5, 'peak');
   placeModel(prep(house), houses, tileW * 1.1, 'house');
   placeModel(prep(corn), crops, tileW * 1.05, 'crops');
+  const cowHerd = herd.filter((_, i) => i % 2 === 0), deerHerd = herd.filter((_, i) => i % 2 === 1);
+  placeModel(prep(cow), cowHerd, tileW * 0.9, 'cows');
+  placeModel(prep(deer), deerHerd, tileW * 0.9, 'deer');
+  placeModel(prep(boat), boats, tileW * 1.1, 'boats');
   let alive = 0; for (const c of world.civs.values()) if (c.phase !== 'dead') alive++;
   document.querySelector('#hud')!.firstChild!.textContent = 'Kenney 3D kit · ';
-  stat.innerHTML = `seed <b>${SEED}</b> · tick ${world.tick} · <b>${alive}</b> civs · ${broad.length + pine.length} trees · ${peaks.length} peaks · ${houses.length} houses · ${crops.length} fields`;
+  stat.innerHTML = `seed <b>${SEED}</b> · tick ${world.tick} · <b>${alive}</b> civs · ${broad.length + pine.length} trees · ${peaks.length} peaks · ${houses.length} houses · ${crops.length} fields · ${herd.length} herds · ${boats.length} boats`;
 }).catch(e => { stat.textContent = 'LOAD ERROR: ' + e.message; console.error(e); });
 
 addEventListener('resize', () => { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); });
-renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); });
+renderer.setAnimationLoop(() => { controls.update(); clampPan(); renderer.render(scene, camera); });
 (window as any).__three = { scene, camera, renderer, world, controls };
