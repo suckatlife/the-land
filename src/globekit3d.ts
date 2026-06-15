@@ -51,14 +51,17 @@ const camera = new THREE.PerspectiveCamera(32, window.innerWidth / window.innerH
 // Fixed oblique framing of the continent cap, like the 2D view: the globe limb
 // arcs across the top, the world fills the frame edge to edge. No free orbit —
 // pan + zoom only — so all the life stays on the visible front of the planet.
-const camOff = new THREE.Vector3(0, 58, 96); // fixed oblique offset from the focus
+// Look up at the cap from in front and below, so the globe's horizon arcs
+// across the TOP of the frame (land receding up to it) — the 2D orientation —
+// instead of curving away at the bottom (which read as upside down).
+const camOff = new THREE.Vector3(0, -50, 86);
 camera.position.copy(FOCUS).add(camOff);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.copy(FOCUS);
 controls.enableDamping = true; controls.dampingFactor = 0.12;
 controls.enableRotate = false;          // never spin the globe away
 controls.screenSpacePanning = true;
-controls.minDistance = 30;              // zoom in close
+controls.minDistance = 34;              // zoom in close
 controls.maxDistance = camOff.length(); // zoomed out ≈ the 2D framing
 controls.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
 controls.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_PAN };
