@@ -112,7 +112,7 @@ function prep(gltf: { scene: THREE.Object3D }): { parts: Part[]; size: THREE.Vec
 const dummy = new THREE.Object3D();
 const yA = new THREE.Vector3(0, 1, 0);
 // Place an instanced model: targetW = desired footprint in world units.
-function placeModel(prepped: { parts: Part[]; size: THREE.Vector3; baseY: number }, items: { r: number; c: number; s?: number; color?: number; aligned?: boolean }[], targetW: number, label: string) {
+function placeModel(prepped: { parts: Part[]; size: THREE.Vector3; baseY: number }, items: { r: number; c: number; s?: number; sy?: number; color?: number; aligned?: boolean }[], targetW: number, label: string) {
   const baseScale = targetW / Math.max(prepped.size.x, prepped.size.z, 0.001);
   const meshes = prepped.parts.map(p => new THREE.InstancedMesh(p.geometry, p.material, Math.max(1, items.length)));
   items.forEach((it, i) => {
