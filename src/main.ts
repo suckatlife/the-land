@@ -634,10 +634,14 @@ function updateEventLog() {
 // main canvas at device resolution (×dpr — 4× the pixels on a hi-DPI screen)
 // and the per-frame render-texture. mainRes caps the canvas resolution (the
 // biggest lever), rt the texture, slots/extraFloors the building object count.
+// Resolution is the real framerate lever (measured): canvas res (mainRes) drives
+// the mesh/sky/limb passes, RT res (rt) drives the world-content render. The
+// curvature mesh hides RT softness and the painterly art tolerates a soft canvas,
+// so these can run lower than they look like they should. high→low ≈ 2× fps.
 const QUALITY = {
-  high:   { mainRes: 1.6,  rt: 0.85, slots: 4, extraFloors: 5, label: 'high' },
-  medium: { mainRes: 1.25, rt: 0.7,  slots: 3, extraFloors: 1, label: 'med'  },
-  low:    { mainRes: 1,    rt: 0.55, slots: 2, extraFloors: 0, label: 'low'  },
+  high:   { mainRes: 1.4,  rt: 0.72, slots: 4, extraFloors: 5, label: 'high' },
+  medium: { mainRes: 1.15, rt: 0.58, slots: 3, extraFloors: 1, label: 'med'  },
+  low:    { mainRes: 1,    rt: 0.46, slots: 2, extraFloors: 0, label: 'low'  },
 } as const;
 type QualityLevel = keyof typeof QUALITY;
 let qualityLevel: QualityLevel =
