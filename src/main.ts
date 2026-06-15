@@ -665,6 +665,9 @@ await app.init({
   antialias: true,
 });
 document.body.appendChild(app.canvas);
+// Upscale the canvas to the screen crisply (nearest), not blurred, so a
+// sub-native render resolution stays sharp rather than soft.
+app.canvas.style.imageRendering = 'pixelated';
 
 // Atmosphere: sky behind the world, scars inside it, a day/night glaze above.
 const atmos = createAtmosphere();
@@ -776,6 +779,10 @@ let worldRT = RenderTexture.create({
                     // resampling and the painterly look hide its absence
   resolution: _rtOverride ?? QUALITY[qualityLevel].rt,
 });
+// Sample the (lower-res) world texture with nearest-neighbour, not linear, so
+// the curvature mesh keeps it CRISP instead of softening it into a blur. Lets
+// us run at lower resolution for framerate without the image going mushy.
+worldRT.source.scaleMode = 'nearest';
 world.scale.set(captureScale);
 world.x = -WORLD_CAPTURE.x0 * captureScale;
 world.y = -WORLD_CAPTURE.y0 * captureScale;
