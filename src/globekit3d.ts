@@ -52,9 +52,9 @@ const camera = new THREE.PerspectiveCamera(32, window.innerWidth / window.innerH
 // arcs across the top, the world fills the frame edge to edge. No free orbit —
 // pan + zoom only — so all the life stays on the visible front of the planet.
 // Look up at the cap from in front and below, so the globe's horizon arcs
-// across the TOP of the frame (land receding up to it) — the 2D orientation —
-// instead of curving away at the bottom (which read as upside down).
-const camOff = new THREE.Vector3(0, -50, 86);
+// across the TOP of the frame (land receding up to it) — the 2D orientation.
+// Pulled back a little so the apex of the curve and some sky sit in frame.
+const camOff = new THREE.Vector3(0, -44, 108);
 camera.position.copy(FOCUS).add(camOff);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.copy(FOCUS);
@@ -71,8 +71,10 @@ function clampPan() {
   const off = controls.target.clone().sub(FOCUS); off.z = 0;
   if (off.length() > PAN_LIMIT) { const corr = off.clone().setLength(PAN_LIMIT).sub(off); controls.target.add(corr); camera.position.add(corr); }
 }
-const sun = new THREE.DirectionalLight(0xfff4e2, 2.0); sun.position.set(-50, 80, 90); scene.add(sun);
-scene.add(new THREE.HemisphereLight(0xeef3fb, 0x6a7280, 0.95));
+// Flatter, brighter lighting — closer to the 2D illustration than a shadowy 3D
+// scene, while keeping enough directional shaping to read the forms.
+const sun = new THREE.DirectionalLight(0xfff4e2, 1.35); sun.position.set(-50, 85, 70); scene.add(sun);
+scene.add(new THREE.HemisphereLight(0xf3f6fb, 0x95a0aa, 1.25));
 scene.add(new THREE.Mesh(new THREE.SphereGeometry(R - 0.25, 96, 96), new THREE.MeshStandardMaterial({ color: 0x6ea6cf, roughness: 0.95, metalness: 0 })));
 
 // --- Ground tiles (flat colour quads) --------------------------------------
@@ -161,14 +163,17 @@ function scatter(r: number, c: number, n: number, salt: number, spread: number) 
   }
   return out;
 }
-// Orderly sub-grid within a tile — for buildings/crops that should line up in
-// neat rows rather than scatter randomly.
-function grid(r: number, c: number, n: number, spread: number) {
+// A packed sub-grid within a tile — for buildings/crops. Fills the tile on a
+// lattice, with a little jitter so a dense town reads as packed-but-organic
+// rather than a perfect mechanical grid.
+function grid(r: number, c: number, n: number, spread: number, jit = 0) {
   const g = Math.ceil(Math.sqrt(n));
   const out: { r: number; c: number }[] = [];
   for (let i = 0; i < n; i++) {
     const gx = i % g, gy = (i / g) | 0;
-    out.push({ r: r + ((gx + 0.5) / g - 0.5) * spread, c: c + ((gy + 0.5) / g - 0.5) * spread });
+    const jr = jit ? (hash(r * 17 + i * 3, c * 13 + i * 5 + 2) - 0.5) * jit : 0;
+    const jc = jit ? (hash(c * 17 + i * 7 + 4, r * 13 + i * 9 + 6) - 0.5) * jit : 0;
+    out.push({ r: r + ((gx + 0.5) / g - 0.5) * spread + jr, c: c + ((gy + 0.5) / g - 0.5) * spread + jc });
   }
   return out;
 }
@@ -196,10 +201,12 @@ for (let r = 0; r < H; r++) for (let c = 0; c < W; c++) {
     if (!civ || civ.phase === 'dead') continue;
     const prox = cityProx(r, c, civ);
     if (prox > 0.4) {
-      // Neat rows of cottages, aligned — an orderly town, not a jumble.
-      for (const p of grid(r, c, 1 + Math.round(prox * 5), 0.82)) houses.push({ r: p.r, c: p.c, s: 0.95, color: civ.color, aligned: true });
+      // Dense towns: the tile FILLS with little houses at the core, thinning to
+      // a few at the edges — packed (with slight jitter), not a sparse lattice.
+      const n = 2 + Math.round(prox * prox * 11); // ~3 at the fringe → ~13 at the core
+      for (const p of grid(r, c, n, 0.98, 0.07)) houses.push({ r: p.r, c: p.c, s: 0.9 + hash((p.r * 6) | 0, (p.c * 6) | 0) * 0.25, color: civ.color, aligned: true });
     } else if ((b === 'grass' || b === 'fertile') && farmPatch(r, c)) {
-      for (const p of grid(r, c, 4, 0.74)) crops.push({ r: p.r, c: p.c, aligned: true });
+      for (const p of grid(r, c, 4, 0.8, 0.04)) crops.push({ r: p.r, c: p.c, aligned: true });
     }
   } else if ((tile.state === 'wild' || tile.state === 'ruin') && (b === 'grass' || b === 'fertile') && hash(r, c + 13) < 0.04) {
     for (const p of scatter(r, c, 2 + Math.floor(hash(r, c) * 3), 5, 0.65)) herd.push({ r: p.r, c: p.c, s: 0.8 + hash((p.r * 8) | 0, (p.c * 8) | 0) * 0.3 });
@@ -220,7 +227,7 @@ Promise.all([
   placeModel(prep(treeB), broad, tileW * 0.42, 'broadleaf');
   placeModel(prep(treeP), pine, tileW * 0.40, 'pine');
   placeModel(prep(rock), peaks, tileW * 0.78, 'peak');
-  placeModel(prep(house), houses, tileW * 0.34, 'house');
+  placeModel(prep(house), houses, tileW * 0.27, 'house');
   placeModel(prep(corn), crops, tileW * 0.42, 'crops');
   const cowHerd = herd.filter((_, i) => i % 2 === 0), deerHerd = herd.filter((_, i) => i % 2 === 1);
   placeModel(prep(cow), cowHerd, tileW * 0.42, 'cows');
