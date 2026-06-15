@@ -23,3 +23,6 @@ dist-ssr
 *.sln
 *.sw?
 *:Zone.Identifier
+
+# Spike: large CC0 asset-kit binaries (local only — not committed)
+/models/
