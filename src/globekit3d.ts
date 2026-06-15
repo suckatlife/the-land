@@ -29,6 +29,7 @@ function dirAt(r: number, c: number): THREE.Vector3 {
   return new THREE.Vector3(Math.sin(lon) * Math.cos(lat), Math.sin(lat), Math.cos(lon) * Math.cos(lat)).normalize();
 }
 function hash(r: number, c: number) { let h = (Math.imul(r | 0, 73856093) ^ Math.imul(c | 0, 19349663)) >>> 0; h = Math.imul(h ^ (h >>> 13), 1274126177); return ((h ^ (h >>> 16)) >>> 0) / 4294967296; }
+const lighten = (hex: number, t: number) => new THREE.Color(hex).lerp(new THREE.Color(1, 1, 1), t).getHex();
 
 // Centre the view on the land mass and bound panning to it (so you can't drift
 // out over the empty ocean / round the back of the globe).
@@ -47,6 +48,7 @@ renderer.setClearColor(0xcfe0ec);
 document.body.appendChild(renderer.domElement);
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0xcfe0ec);
+scene.fog = new THREE.Fog(0xcfe0ec, 250, 430); // gentle distance haze toward the limb
 const camera = new THREE.PerspectiveCamera(32, window.innerWidth / window.innerHeight, 0.1, 1000);
 // Fixed oblique framing of the continent cap, like the 2D view: the globe limb
 // arcs across the top, the world fills the frame edge to edge. No free orbit —
@@ -204,7 +206,8 @@ for (let r = 0; r < H; r++) for (let c = 0; c < W; c++) {
       // Dense towns: the tile FILLS with little houses at the core, thinning to
       // a few at the edges — packed (with slight jitter), not a sparse lattice.
       const n = 2 + Math.round(prox * prox * 11); // ~3 at the fringe → ~13 at the core
-      for (const p of grid(r, c, n, 0.98, 0.07)) houses.push({ r: p.r, c: p.c, s: 0.9 + hash((p.r * 6) | 0, (p.c * 6) | 0) * 0.25, color: civ.color, aligned: true });
+      const hcol = lighten(civ.color, 0.45); // brighter, pastel civ colour so towns pop like the 2D
+      for (const p of grid(r, c, n, 0.98, 0.07)) houses.push({ r: p.r, c: p.c, s: 0.9 + hash((p.r * 6) | 0, (p.c * 6) | 0) * 0.25, color: hcol, aligned: true });
     } else if ((b === 'grass' || b === 'fertile') && farmPatch(r, c)) {
       for (const p of grid(r, c, 4, 0.8, 0.04)) crops.push({ r: p.r, c: p.c, aligned: true });
     }
@@ -226,8 +229,15 @@ Promise.all([
 ]).then(([treeB, treeP, rock, house, corn, cow, deer, boat]) => {
   placeModel(prep(treeB), broad, tileW * 0.42, 'broadleaf');
   placeModel(prep(treeP), pine, tileW * 0.40, 'pine');
-  placeModel(prep(rock), peaks, tileW * 0.78, 'peak');
-  placeModel(prep(house), houses, tileW * 0.27, 'house');
+  // Light cool-grey peaks like the 2D — desaturate the rock's brown and brighten.
+  const rockP = prep(rock);
+  rockP.parts.forEach(p => { const m = (p.material as THREE.MeshStandardMaterial).clone(); m.color.set(0xcfd3d8); m.map = null; m.roughness = 1; m.metalness = 0; p.material = m; });
+  placeModel(rockP, peaks, tileW * 0.82, 'peak');
+  // Flat, bright civ-coloured cottages (drop the dark texture) so towns read
+  // as the 2D's pastel settlement blocks.
+  const houseP = prep(house);
+  houseP.parts.forEach(p => { const m = (p.material as THREE.MeshStandardMaterial).clone(); m.map = null; m.roughness = 1; m.metalness = 0; p.material = m; });
+  placeModel(houseP, houses, tileW * 0.27, 'house');
   placeModel(prep(corn), crops, tileW * 0.42, 'crops');
   const cowHerd = herd.filter((_, i) => i % 2 === 0), deerHerd = herd.filter((_, i) => i % 2 === 1);
   placeModel(prep(cow), cowHerd, tileW * 0.42, 'cows');
