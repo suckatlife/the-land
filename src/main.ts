@@ -2974,66 +2974,6 @@ function drawCityMarkers() {
   }
 }
 
-function updateLabels() {
-  // Reads from the shared civStats cache (kept in sync incrementally via noteTileChange)
-  // so we don't pay for a full 96×96 grid scan every frame.
-  const tileCounts = civStats.tileCounts;
-  const centSumX = civStats.centSumX;
-  const centSumY = civStats.centSumY;
-
-  for (const civ of simWorld.civs.values()) {
-    if (civ.phase === 'dead') {
-      const lbl = civLabels.get(civ.id);
-      if (lbl) lbl.targetOpacity = 0;
-      continue;
-    }
-
-    const count = tileCounts.get(civ.id) || 0;
-    const t = Math.min(1, Math.max(0, (count - LABEL.tileCountMin) / (LABEL.tileCountMax - LABEL.tileCountMin)));
-    // A declining civ's name dims — the light going out is visible jeopardy.
-    const phaseDim = civ.phase === 'declining' ? 0.55 : 1.0;
-    const targetOpacity = (LABEL.minOpacity + t * (LABEL.maxOpacity - LABEL.minOpacity)) * phaseDim;
-    const fontSize = Math.round(LABEL.minFontSize + t * (LABEL.maxFontSize - LABEL.minFontSize));
-    const labelText = civ.name;
-
-    let lbl = civLabels.get(civ.id);
-    if (!lbl) {
-      const style = new TextStyle({
-        fontFamily: LABEL.fontFamily,
-        fontSize,
-        fill: civ.color,
-        stroke: { color: LABEL.strokeColor, width: LABEL.strokeWidth, join: 'round' },
-        dropShadow: { alpha: LABEL.shadowAlpha, blur: LABEL.shadowBlur, color: 0x000000, distance: LABEL.shadowDist },
-      });
-      const n0 = tileCounts.get(civ.id) || 0;
-      const textObj = new Text({ text: labelText, style });
-      textObj.anchor.set(0.5, 0.5);
-      textObj.x = n0 > 0 ? centSumX.get(civ.id)! / n0 : gridToScreen(civ.originCol, civ.originRow).x;
-      textObj.y = n0 > 0 ? centSumY.get(civ.id)! / n0 : gridToScreen(civ.originCol, civ.originRow).y;
-      labelLayer.addChild(textObj);
-      lbl = { text: textObj, civId: civ.id, curOpacity: 0, targetOpacity };
-      civLabels.set(civ.id, lbl);
-    } else {
-      lbl.targetOpacity = targetOpacity;
-      if (lbl.text.text !== labelText) lbl.text.text = labelText;
-      if (lbl.text.style.fontSize !== fontSize) lbl.text.style.fontSize = fontSize;
-    }
-
-  }
-
-  const toRemove: number[] = [];
-  for (const [civId, lbl] of civLabels) {
-    lbl.curOpacity += (lbl.targetOpacity - lbl.curOpacity) * 0.08;
-    lbl.text.alpha = lbl.curOpacity;
-    if (lbl.targetOpacity === 0 && lbl.curOpacity < 0.02) {
-      labelLayer.removeChild(lbl.text);
-      lbl.text.destroy();
-      toRemove.push(civId);
-    }
-  }
-  for (const id of toRemove) civLabels.delete(id);
-}
-
 // Ease each living civ's saturation multiplier toward its era target.
 // Civs in transition (cur != target) are added to civsTransitioningSat for
 // per-frame tint refresh. Also detects era changes and triggers an immediate
@@ -3483,9 +3423,15 @@ app.ticker.add((ticker) => {
     checkWarQuiet();
     maybeNameConstellations();
   }
-  // Animate tile color/alpha toward targets.
+  // Animate tile color/alpha toward targets. Capped per frame: a "skip 5k" or
+  // catastrophe can flood thousands of tiles into animation at once, and
+  // redrawing them all every frame tanks the framerate for seconds. Above the
+  // budget the overflow simply waits its turn (FIFO), so big bursts settle in
+  // gentle waves instead of one stall. Steady-state churn (~200) never hits it.
   const EASE = 0.15; // higher = faster transitions
+  const ANIM_BUDGET = 600;
   const done: string[] = [];
+  let animWork = 0;
   for (const key of animatingTiles) {
     const [r, c] = key.split(',').map(Number);
     const tv = tileVisuals[r][c];
@@ -3517,6 +3463,7 @@ app.ticker.add((ticker) => {
         tileVisuals[r][c] = null;
       }
     }
+    if (++animWork >= ANIM_BUDGET) break; // overflow waits for a later frame
   }
   for (const key of done) animatingTiles.delete(key);
 
@@ -3648,7 +3595,6 @@ app.ticker.add((ticker) => {
   for (const key of bldDone) animatingBuildingTiles.delete(key);
 
   drawExpeditions();
-  updateLabels();
   updateHud();
   // DOM rebuild for the civ bars is expensive — throttle it.
   if (frameCount % BARS_REFRESH_FRAMES === 0) updateBars();
