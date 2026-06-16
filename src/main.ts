@@ -3058,7 +3058,7 @@ function maybeChronicle() {
 function resetStorySurfaces() {
   roadPathCache.clear();
   roadLines.clear();
-  lastFarmRebuild = -1e9; farmGfx.cacheAsTexture?.(false); farmGfx.clear();
+  lastFarmRebuild = -1e9; farmGfx.cacheAsTexture?.(false); farmGfx.clear(); farmSince.clear();
   waterRouteCache.clear();
   warHeat.clear();
   conflictFlashes.length = 0;
@@ -3236,13 +3236,25 @@ function isFarmTile(row: number, col: number): boolean {
 // slow throttle — so thousands of field tiles cost nothing per frame (the old
 // per-tile overlay version dragged a big world from 11 to 5 fps).
 let lastFarmRebuild = -1e9;
+// Tick each tile was first put under the plough, so new fields fade in over a
+// few rebuilds instead of popping to full strength at once.
+const farmSince = new Map<number, number>();
+const FARM_FADE_TICKS = 270; // ~9s of dev-time from faint to full
 function rebuildFarmland() {
   farmGfx.cacheAsTexture?.(false);
   farmGfx.clear();
   const sw = 16 / 3, sh = 8 / 3;
+  const seen = new Set<number>();
   for (let row = 0; row < GRID_SIZE; row++) {
     for (let col = 0; col < GRID_SIZE; col++) {
       if (!isFarmTile(row, col)) continue;
+      const key = row * GRID_SIZE + col;
+      seen.add(key);
+      if (!farmSince.has(key)) farmSince.set(key, simWorld.tick);
+      // Ramp from faint to full as the field matures (clamped so a brand-new
+      // field is a pale wash, not invisible).
+      const age = simWorld.tick - farmSince.get(key)!;
+      const fade = Math.min(1, Math.max(0.15, age / FARM_FADE_TICKS));
       const civ = simWorld.civs.get(simWorld.tiles[row][col].civId!);
       const civColor = civ ? civ.color : 0xffffff;
       const { x, y } = gridToScreen(col, row);
@@ -3252,11 +3264,13 @@ function rebuildFarmland() {
           const base = ((gi + gj) & 1) ? FARM_GOLD : FARM_GREEN;
           const jit = 0.82 + tileRand(row, col, gi * 5 + gj + 900) * 0.34;
           const color = lerpColor(scaleColor(base, jit), civColor, 0.16);
-          farmGfx.poly([cx, cy - sh, cx + sw, cy, cx, cy + sh, cx - sw, cy]).fill({ color, alpha: 0.82 });
+          farmGfx.poly([cx, cy - sh, cx + sw, cy, cx, cy + sh, cx - sw, cy]).fill({ color, alpha: 0.82 * fade });
         }
       }
     }
   }
+  // Forget tiles no longer farmed, so land re-cultivated later fades in afresh.
+  if (farmSince.size > seen.size) for (const k of farmSince.keys()) if (!seen.has(k)) farmSince.delete(k);
   farmGfx.cacheAsTexture?.(true);
 }
 
@@ -3572,7 +3586,7 @@ app.ticker.add((ticker) => {
     rebuildSmokeEmitters();
     rebuildRoads();
     rebuildPowerLines();
-    if (simWorld.tick - lastFarmRebuild >= 150) { lastFarmRebuild = simWorld.tick; rebuildFarmland(); }
+    if (simWorld.tick - lastFarmRebuild >= 45) { lastFarmRebuild = simWorld.tick; rebuildFarmland(); }
     rebuildWonders();
     rebuildFishSpots();
     maybeSpawnBoats();
