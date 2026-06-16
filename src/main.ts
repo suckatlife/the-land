@@ -779,10 +779,13 @@ let worldRT = RenderTexture.create({
                     // resampling and the painterly look hide its absence
   resolution: _rtOverride ?? QUALITY[qualityLevel].rt,
 });
-// Sample the (lower-res) world texture with nearest-neighbour, not linear, so
-// the curvature mesh keeps it CRISP instead of softening it into a blur. Lets
-// us run at lower resolution for framerate without the image going mushy.
-worldRT.source.scaleMode = 'nearest';
+// Split the world-texture filtering: NEAREST when magnified (the low-res centre
+// the player looks at) so it stays crisp instead of mushy, but LINEAR when
+// minified (the texture squeezed toward the limb) so the globe's edge keeps its
+// soft, distorted "curving away" horizon rather than hard blocky tiles.
+worldRT.source.style.magFilter = 'nearest';
+worldRT.source.style.minFilter = 'linear';
+worldRT.source.style.update();
 world.scale.set(captureScale);
 world.x = -WORLD_CAPTURE.x0 * captureScale;
 world.y = -WORLD_CAPTURE.y0 * captureScale;
@@ -844,6 +847,10 @@ function centerWorld() {
   });
 }
 centerWorld();
+// The first curvature pass runs mid-init, before the mesh geometry has settled,
+// so the baked perspective doesn't take full effect. Force one clean re-apply
+// on the next frame.
+requestAnimationFrame(() => atmos.setPerspective(atmos.perspective()));
 
 // --- Atmosphere: the world's tell ---
 // catastrophePressure is surfaced as a slow ambient darkening: a multiply
