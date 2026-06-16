@@ -256,6 +256,20 @@ export const SIM = {
 
   nameMemoryRadius: 8,
 
+  // Living land — the wild biomes breathe over deep time. Forests creep into
+  // moist grass and pull back when it dries; arid ground spreads from the desert
+  // margins and greens over when wet; the shallows flip between sea and shore as
+  // the sea level slowly oscillates. Only UNCLAIMED tiles change, so civ
+  // territory stays put — the land is the protagonist, civs are weather.
+  land: {
+    attemptsPerTick:   6,      // random wild tiles evaluated per tick
+    vegFlipChance:     0.18,   // base odds a qualifying veg edge-tile flips
+    coastFlipChance:   0.25,   // base odds a qualifying shallow tile flips
+    wetnessCycleTicks: 13000,  // afforestation ↔ drought oscillation period
+    seaCycleTicks:     24000,  // sea-level rise ↔ fall period
+    seaAmp:            0.02,    // elevation units the effective sea level swings
+  },
+
   // Ocean routes / colonization.
   expeditionLaunchChance: 0.012,
 expeditionMinVitality: 0.5,      // slightly lower bar
@@ -1836,7 +1850,82 @@ export function step(
     }
   }
 
+  stepLandDynamics(world, biomes, elevation, changed, biomeChanges);
+
   return { changes: changed, events, biomeChanges };
+}
+
+// The wild land breathes: forests and arid ground spread and pull back at their
+// edges, and the shallows flip with the slow tide of the sea. Bounded to a few
+// random tiles per tick so the change is gradual and watchable, and only ever
+// touching unclaimed (wild/ruin) land so civ territory is never disturbed.
+function stepLandDynamics(
+  world: SimWorld,
+  biomes: Biome[][],
+  elevation: number[][],
+  changed: Array<{ row: number; col: number }>,
+  biomeChanges: BiomeChange[],
+) {
+  const L = SIM.land;
+  const wet = 0.5 + 0.5 * Math.sin((world.tick / L.wetnessCycleTicks) * Math.PI * 2); // 0 dry … 1 wet, starts neutral
+  const seaDelta = Math.sin((world.tick / L.seaCycleTicks) * Math.PI * 2) * L.seaAmp;
+  const effSea = SEA_LEVEL + seaDelta, effShore = SHORE_LEVEL + seaDelta;
+  const H = world.height, W = world.width;
+  for (let a = 0; a < L.attemptsPerTick; a++) {
+    const r = (Math.random() * H) | 0, c = (Math.random() * W) | 0;
+    const tile = world.tiles[r][c];
+    if (tile.state !== 'wild' && tile.state !== 'ruin') continue; // only unclaimed land breathes
+    const b = biomes[r][c];
+
+    // --- Coastline: the shallows flip as the sea breathes in and out ---
+    if (b === 'water') {
+      if (elevation[r][c] >= effSea && Math.random() < L.coastFlipChance) {
+        biomes[r][c] = elevation[r][c] >= effShore ? 'grass' : 'sand';
+        biomeChanges.push({ row: r, col: c });
+      }
+      continue;
+    }
+    if (b === 'sand' && elevation[r][c] < effSea && Math.random() < L.coastFlipChance) {
+      biomes[r][c] = 'water';
+      tile.state = 'wild'; tile.civId = null; tile.ruinEra = null; tile.lastChangedTick = world.tick;
+      changed.push({ row: r, col: c });
+      biomeChanges.push({ row: r, col: c });
+      continue;
+    }
+
+    // --- Vegetation: woods and deserts spread and retreat (inland only, above
+    // the beach band) ---
+    if (elevation[r][c] < SHORE_LEVEL) continue;
+    let fN = 0, sN = 0, gN = 0;
+    for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+      if (!dr && !dc) continue;
+      const nr = r + dr, nc = c + dc;
+      if (nr < 0 || nr >= H || nc < 0 || nc >= W) continue;
+      const nb = biomes[nr][nc];
+      if (nb === 'forest') fN++;
+      else if (nb === 'sand') sN++;
+      else if (nb === 'grass' || nb === 'fertile') gN++;
+    }
+    // A ruin under fresh greenery is reclaimed by the wild.
+    const reclaim = () => {
+      if (tile.state === 'ruin') { tile.state = 'wild'; tile.ruinEra = null; tile.lastChangedTick = world.tick; changed.push({ row: r, col: c }); }
+    };
+    if (b === 'grass' || b === 'fertile') {
+      if (fN > 0 && Math.random() < L.vegFlipChance * wet * Math.min(1, fN / 3)) {
+        biomes[r][c] = 'forest'; biomeChanges.push({ row: r, col: c }); reclaim(); // woods creep in when wet
+      } else if (sN > 0 && Math.random() < L.vegFlipChance * (1 - wet) * Math.min(1, sN / 3)) {
+        biomes[r][c] = 'sand'; biomeChanges.push({ row: r, col: c }); // arid ground spreads when dry
+      }
+    } else if (b === 'forest') {
+      if (fN < 5 && Math.random() < L.vegFlipChance * (1 - wet) * 0.6) {
+        biomes[r][c] = 'grass'; biomeChanges.push({ row: r, col: c }); // woods thin back at dry edges
+      }
+    } else if (b === 'sand') {
+      if (gN + fN > 0 && Math.random() < L.vegFlipChance * wet * 0.8) {
+        biomes[r][c] = 'grass'; biomeChanges.push({ row: r, col: c }); reclaim(); // desert greens when wet
+      }
+    }
+  }
 }
 
 export function tileOverlayColor(

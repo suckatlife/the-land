@@ -921,27 +921,8 @@ function updatePollution() {
   pollutionGfx.alpha = curPollution * POLLUTION.hazeMaxAlpha;
   pollutionGfx.visible = pollutionGfx.alpha > 0.004;
 
-  // Smog pooling over the cities — denser where settlement is dense, browner
-  // in industrial ages. The visible source of the pollution.
-  smogGfx.clear();
-  if (curPollution > 0.02) {
-    smogGfx.visible = true;
-    for (const civ of simWorld.civs.values()) {
-      if (civ.phase === 'dead') continue;
-      const dirty = 0.5 + 0.5 * Math.max(0, Math.min(1, (ERA_RANK[civ.era] - 2) / 3));
-      for (const city of civ.cities) {
-        const { x, y } = gridToScreen(city.col, city.row);
-        const w = Math.min(1, curPollution * dirty * (0.5 + 0.6 * city.prominence) * 1.6);
-        if (w < 0.03) continue;
-        const r = POLLUTION.smogRadius * (0.6 + 0.9 * w);
-        smogGfx.circle(x, y - 4, r).fill({ color: POLLUTION.smogColor, alpha: POLLUTION.smogAlpha * 0.45 * w });
-        smogGfx.circle(x, y - 8, r * 0.62).fill({ color: POLLUTION.smogColor, alpha: POLLUTION.smogAlpha * 0.7 * w });
-        smogGfx.circle(x, y - 12, r * 0.34).fill({ color: POLLUTION.smogColor, alpha: POLLUTION.smogAlpha * 0.95 * w });
-      }
-    }
-  } else {
-    smogGfx.visible = false;
-  }
+  // (The per-city smog blobs were removed — they read as hard brown circles.
+  // The faint global haze above carries the late-cycle pollution instead.)
 
   if (!pollutionNarrated && curPollution > POLLUTION.narrateAt) {
     pollutionNarrated = true;
@@ -1543,12 +1524,35 @@ function drawBiomes() {
   biomeLayer.cacheAsTexture?.(true);
 }
 
+// The wild biomes change at runtime now (the land breathes, plus floods/quakes),
+// so a changed tile is fully re-drawn — base colour AND scenery (trees appear or
+// vanish, sand grains, the peak). The biome layer is cached, so changes are
+// invisible until the cache is re-baked; that bake (and the water mask) is
+// throttled below since the land change is slow.
+let biomeCacheDirty = false;
+let waterMaskDirty = false;
+let lastBiomeBake = -1e9;
+const BIOME_BAKE_INTERVAL = 18; // ticks between re-baking the cache for slow land change
 function refreshBiomeTile(row: number, col: number) {
   const btv = biomeTileVisuals[row][col];
   if (!btv) return;
   const biome = biomeMap[row][col];
-  btv.targetColor = biome === 'water' ? waterColorAt(row, col) : BIOME_COLORS[biome];
-  animatingBiomeTiles.add(`${row},${col}`);
+  const base = biome === 'water' ? waterColorAt(row, col)
+    : (biome === 'forest' || biome === 'rock') ? BIOME_COLORS.grass
+    : BIOME_COLORS[biome];
+  redrawBiomeTile(btv.g, base);
+  if (biome !== 'water') decorateTile(btv.g, biome, row, col);
+  btv.curColor = base; btv.targetColor = base;
+  biomeCacheDirty = true;
+  waterMaskDirty = true;
+}
+// Apply any pending biome re-bake / water-mask rebuild, throttled.
+function flushBiomeChanges(tick: number) {
+  if (!biomeCacheDirty && !waterMaskDirty) return;
+  if (tick - lastBiomeBake < BIOME_BAKE_INTERVAL) return;
+  if (waterMaskDirty) { rebuildWaterMask(); waterMaskDirty = false; }
+  if (biomeCacheDirty) { (biomeLayer as any).updateCacheTexture?.(); biomeCacheDirty = false; }
+  lastBiomeBake = tick;
 }
 
 function clearSimLayer() {
@@ -3537,9 +3541,9 @@ app.ticker.add((ticker) => {
     const { changes, events, biomeChanges } = step(simWorld, biomeMap, elevationMap);
     frameEvents.push(...events);
     for (const { row, col } of changes) { noteTileChange(row, col); refreshTileOverlay(row, col); refreshBuildingSprite(row, col); noteFarmTile(row, col); }
+    // Biome changes (the breathing land, plus floods/quakes) re-draw the tile;
+    // the cache re-bake + water mask follow on a throttle (flushBiomeChanges).
     for (const { row, col } of biomeChanges) { refreshBiomeTile(row, col); }
-    // Terrain mutated (flood/quake): the water mask must follow.
-    if (biomeChanges.length > 0) rebuildWaterMask();
     // When a civ transitions to 'dead', its still-built tiles change 
     // color (toward gray). The per-tile `changes` list won't include 
     // them because their *state* didn't change. So once a tick we 
@@ -3634,6 +3638,7 @@ app.ticker.add((ticker) => {
   }
   updateSmoke(dtSec);
   updateFarmGrowth(simWorld.tick);
+  flushBiomeChanges(simWorld.tick);
   drawRoads(dtSec);
   drawPowerLines(dtSec, n);
   updateConflictFlashes(dtSec);
@@ -4042,7 +4047,7 @@ document.getElementById('catastrophe')!.addEventListener('click', () => {
   applyCatastrophe(simWorld, biomeMap, elevationMap, changes, biomeChanges, events);
   for (const { row, col } of changes) { noteTileChange(row, col); refreshTileOverlay(row, col); refreshBuildingSprite(row, col); noteFarmTile(row, col); }
   for (const { row, col } of biomeChanges) { refreshBiomeTile(row, col); }
-  if (biomeChanges.length > 0) rebuildWaterMask();
+  if (biomeChanges.length > 0) { rebuildWaterMask(); (biomeLayer as any).updateCacheTexture?.(); biomeCacheDirty = false; waterMaskDirty = false; }
   pushLogEvents(events);
   for (const ev of events) {
     if (ev.kind === 'catastrophe') {
