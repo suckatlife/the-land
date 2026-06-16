@@ -681,7 +681,8 @@ cityLightsGfx.alpha = 0;
 
 const biomeLayer = new Container();
 const simLayer = new Container();
-const farmGfx = new Graphics();   // cultivated fields (cached, rebuilt on a throttle)
+const farmGfx = new Graphics();      // mature fields, cached to one texture (cheap)
+const farmGrowGfx = new Graphics();  // fields currently growing in, animated per-frame
 const buildingLayer = new Container();
 buildingLayer.sortableChildren = true;
 const expeditionLayer = new Container();
@@ -698,6 +699,7 @@ world.addChild(riverGfx);
 world.addChild(simLayer);
 // Cultivated fields over the ownership tint, under everything built on them.
 world.addChild(farmGfx);
+world.addChild(farmGrowGfx);
 // Roads over the tints (still under scars and buildings).
 world.addChild(roadsGfx);
 // Scars sit above civ tints (catastrophes hit settled land) but below buildings.
@@ -3058,7 +3060,7 @@ function maybeChronicle() {
 function resetStorySurfaces() {
   roadPathCache.clear();
   roadLines.clear();
-  lastFarmRebuild = -1e9; farmGfx.cacheAsTexture?.(false); farmGfx.clear(); farmSince.clear();
+  clearFarmland();
   waterRouteCache.clear();
   warHeat.clear();
   conflictFlashes.length = 0;
@@ -3232,46 +3234,122 @@ function isFarmTile(row: number, col: number): boolean {
   return farmPatch(row, col);
 }
 
-// Farmland lives in its own layer, cached to one texture and only rebuilt on a
-// slow throttle — so thousands of field tiles cost nothing per frame (the old
-// per-tile overlay version dragged a big world from 11 to 5 fps).
-let lastFarmRebuild = -1e9;
-// Tick each tile was first put under the plough, so new fields fade in over a
-// few rebuilds instead of popping to full strength at once.
-const farmSince = new Map<number, number>();
-const FARM_FADE_TICKS = 270; // ~9s of dev-time from faint to full
-function rebuildFarmland() {
-  farmGfx.cacheAsTexture?.(false);
-  farmGfx.clear();
+// Farmland grows in tile by tile, the way cities sprout building by building:
+// each field eases from nothing to full as the sim works the ground, staggered
+// naturally by how the land is claimed. Mature fields bake into one cached
+// texture (farmGfx) so thousands cost nothing per frame; the handful still
+// growing animate in a small uncached layer (farmGrowGfx) — like the building
+// fade, the per-frame work is bounded by how many are mid-growth.
+const matureFarm = new Set<number>();          // keys fully grown, in the cached layer
+const growingFarm = new Map<number, number>(); // key → current alpha (0..1), animating
+let farmCacheDirty = false;
+let farmGrowDrawn = false;
+let lastFarmBake = -1e9;
+const FARM_GROW_SPEED = 0.05;     // per-frame ease toward full (~1s grow-in, like buildings)
+const FARM_BAKE_INTERVAL = 30;    // ticks between folding finished fields into the cache
+
+// Draw one field tile (its 3×3 sub-diamond quilt) into a target at the given
+// opacity multiplier.
+function drawFarmTile(g: Graphics, row: number, col: number, alphaMult: number) {
   const sw = 16 / 3, sh = 8 / 3;
-  const seen = new Set<number>();
-  for (let row = 0; row < GRID_SIZE; row++) {
-    for (let col = 0; col < GRID_SIZE; col++) {
-      if (!isFarmTile(row, col)) continue;
-      const key = row * GRID_SIZE + col;
-      seen.add(key);
-      if (!farmSince.has(key)) farmSince.set(key, simWorld.tick);
-      // Ramp from faint to full as the field matures (clamped so a brand-new
-      // field is a pale wash, not invisible).
-      const age = simWorld.tick - farmSince.get(key)!;
-      const fade = Math.min(1, Math.max(0.15, age / FARM_FADE_TICKS));
-      const civ = simWorld.civs.get(simWorld.tiles[row][col].civId!);
-      const civColor = civ ? civ.color : 0xffffff;
-      const { x, y } = gridToScreen(col, row);
-      for (let gi = -1; gi <= 1; gi++) {
-        for (let gj = -1; gj <= 1; gj++) {
-          const cx = x + (gi - gj) * sw, cy = y + (gi + gj) * sh;
-          const base = ((gi + gj) & 1) ? FARM_GOLD : FARM_GREEN;
-          const jit = 0.82 + tileRand(row, col, gi * 5 + gj + 900) * 0.34;
-          const color = lerpColor(scaleColor(base, jit), civColor, 0.16);
-          farmGfx.poly([cx, cy - sh, cx + sw, cy, cx, cy + sh, cx - sw, cy]).fill({ color, alpha: 0.82 * fade });
-        }
-      }
+  const civId = simWorld.tiles[row][col].civId;
+  const civ = civId != null ? simWorld.civs.get(civId) : undefined;
+  const civColor = civ ? civ.color : 0xffffff;
+  const { x, y } = gridToScreen(col, row);
+  for (let gi = -1; gi <= 1; gi++) {
+    for (let gj = -1; gj <= 1; gj++) {
+      const cx = x + (gi - gj) * sw, cy = y + (gi + gj) * sh;
+      const base = ((gi + gj) & 1) ? FARM_GOLD : FARM_GREEN;
+      const jit = 0.82 + tileRand(row, col, gi * 5 + gj + 900) * 0.34;
+      const color = lerpColor(scaleColor(base, jit), civColor, 0.16);
+      g.poly([cx, cy - sh, cx + sw, cy, cx, cy + sh, cx - sw, cy]).fill({ color, alpha: 0.82 * alphaMult });
     }
   }
-  // Forget tiles no longer farmed, so land re-cultivated later fades in afresh.
-  if (farmSince.size > seen.size) for (const k of farmSince.keys()) if (!seen.has(k)) farmSince.delete(k);
+}
+
+// Re-bake the cached layer from the set of mature fields.
+function bakeFarmCache() {
+  farmGfx.cacheAsTexture?.(false);
+  farmGfx.clear();
+  for (const key of matureFarm) drawFarmTile(farmGfx, (key / GRID_SIZE) | 0, key % GRID_SIZE, 1);
   farmGfx.cacheAsTexture?.(true);
+  farmCacheDirty = false;
+}
+
+// A tile's farm status may have changed: enrol new fields (born at alpha 0,
+// so they grow in) and drop fields that are no longer worked.
+function noteFarmTile(row: number, col: number) {
+  const key = row * GRID_SIZE + col;
+  const should = isFarmTile(row, col);
+  const tracked = growingFarm.has(key) || matureFarm.has(key);
+  if (should && !tracked) growingFarm.set(key, 0);
+  else if (!should && tracked) {
+    growingFarm.delete(key);
+    if (matureFarm.delete(key)) farmCacheDirty = true;
+  }
+}
+
+// Full sweep — catches farm changes that don't come through the per-tile change
+// list (density crossing the city-core line, civ death). Runs on a throttle.
+function reconcileFarmland() {
+  for (let row = 0; row < GRID_SIZE; row++)
+    for (let col = 0; col < GRID_SIZE; col++) noteFarmTile(row, col);
+}
+
+// Per-frame: ease the growing fields; on a throttle, fold the finished ones into
+// the cached layer and apply any field removals.
+function updateFarmGrowth(tick: number) {
+  if (growingFarm.size > 0) {
+    farmGrowGfx.clear();
+    for (const [key, a] of growingFarm) {
+      const na = a < 1 ? Math.min(1, a + (1 - a) * FARM_GROW_SPEED) : 1;
+      if (na !== a) growingFarm.set(key, na);
+      drawFarmTile(farmGrowGfx, (key / GRID_SIZE) | 0, key % GRID_SIZE, na);
+    }
+    farmGrowDrawn = true;
+  } else if (farmGrowDrawn) {
+    farmGrowGfx.clear();
+    farmGrowDrawn = false;
+  }
+  if (tick - lastFarmBake < FARM_BAKE_INTERVAL) return;
+  // Promote finished fields into the cached layer.
+  let promoted = false;
+  for (const [key, a] of growingFarm) if (a >= 0.99) { matureFarm.add(key); growingFarm.delete(key); promoted = true; }
+  if (!promoted && !farmCacheDirty) return;
+  lastFarmBake = tick;
+  bakeFarmCache();
+  // Redraw the grow layer without the fields just folded in.
+  if (growingFarm.size > 0) {
+    farmGrowGfx.clear();
+    for (const [key, a] of growingFarm) drawFarmTile(farmGrowGfx, (key / GRID_SIZE) | 0, key % GRID_SIZE, a);
+  } else if (farmGrowDrawn) {
+    farmGrowGfx.clear();
+    farmGrowDrawn = false;
+  }
+}
+let lastFarmReconcile = -1e9;
+
+// Wipe all farmland (fresh world).
+function clearFarmland() {
+  growingFarm.clear();
+  matureFarm.clear();
+  farmGrowGfx.clear();
+  farmGrowDrawn = false;
+  lastFarmBake = -1e9;
+  bakeFarmCache();
+}
+
+// Snap to the current farmland state with no grow-in animation — for big jumps
+// (skip) where staggered growth doesn't make sense.
+function snapFarmland() {
+  growingFarm.clear();
+  matureFarm.clear();
+  for (let row = 0; row < GRID_SIZE; row++)
+    for (let col = 0; col < GRID_SIZE; col++)
+      if (isFarmTile(row, col)) matureFarm.add(row * GRID_SIZE + col);
+  farmGrowGfx.clear();
+  farmGrowDrawn = false;
+  bakeFarmCache();
 }
 
 function refreshTileOverlay(row: number, col: number) {
@@ -3446,7 +3524,7 @@ app.ticker.add((ticker) => {
     accumulator -= tickInterval;
     const { changes, events, biomeChanges } = step(simWorld, biomeMap, elevationMap);
     frameEvents.push(...events);
-    for (const { row, col } of changes) { noteTileChange(row, col); refreshTileOverlay(row, col); refreshBuildingSprite(row, col); }
+    for (const { row, col } of changes) { noteTileChange(row, col); refreshTileOverlay(row, col); refreshBuildingSprite(row, col); noteFarmTile(row, col); }
     for (const { row, col } of biomeChanges) { refreshBiomeTile(row, col); }
     // Terrain mutated (flood/quake): the water mask must follow.
     if (biomeChanges.length > 0) rebuildWaterMask();
@@ -3543,6 +3621,7 @@ app.ticker.add((ticker) => {
     blackoutGfx.visible = false;
   }
   updateSmoke(dtSec);
+  updateFarmGrowth(simWorld.tick);
   drawRoads(dtSec);
   drawPowerLines(dtSec, n);
   updateConflictFlashes(dtSec);
@@ -3586,7 +3665,7 @@ app.ticker.add((ticker) => {
     rebuildSmokeEmitters();
     rebuildRoads();
     rebuildPowerLines();
-    if (simWorld.tick - lastFarmRebuild >= 45) { lastFarmRebuild = simWorld.tick; rebuildFarmland(); }
+    if (simWorld.tick - lastFarmReconcile >= 45) { lastFarmReconcile = simWorld.tick; reconcileFarmland(); }
     rebuildWonders();
     rebuildFishSpots();
     maybeSpawnBoats();
@@ -3946,7 +4025,7 @@ document.getElementById('catastrophe')!.addEventListener('click', () => {
   const biomeChanges: BiomeChange[] = [];
   const events: SimEvent[] = [];
   applyCatastrophe(simWorld, biomeMap, elevationMap, changes, biomeChanges, events);
-  for (const { row, col } of changes) { noteTileChange(row, col); refreshTileOverlay(row, col); refreshBuildingSprite(row, col); }
+  for (const { row, col } of changes) { noteTileChange(row, col); refreshTileOverlay(row, col); refreshBuildingSprite(row, col); noteFarmTile(row, col); }
   for (const { row, col } of biomeChanges) { refreshBiomeTile(row, col); }
   if (biomeChanges.length > 0) rebuildWaterMask();
   pushLogEvents(events);
@@ -3981,6 +4060,7 @@ document.getElementById('skip')!.addEventListener('click', () => {
     }
   }
   rebuildBuildingSprites();
+  snapFarmland();
   drawCityMarkers();
   eventLog.length = 0;
   accumulator = 0;
