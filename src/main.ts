@@ -3626,21 +3626,31 @@ hud.style.cssText = `
   display: flex; gap: 10px; align-items: center; user-select: none;
 `;
 hud.innerHTML = `
-  <span>seed: <strong id="seed-label"></strong></span>
-  <button id="reroll" style="cursor:pointer">reroll</button>
-  <button id="reset-sim" style="cursor:pointer">reset sim</button>
-  <button id="pause" style="cursor:pointer">pause</button>
-  <button id="catastrophe" style="cursor:pointer;color:#a03020">catastrophe</button>
-  <button id="skip" style="cursor:pointer;color:#607080">skip 5k</button>
-  <button id="sound" style="cursor:pointer;color:#888" title="ambient sound">sound: off</button>
-  <button id="quality" style="cursor:pointer;color:#607080" title="graphics quality — lower for more FPS">gfx: high</button>
-  <span>tick: <strong id="tick-label">0</strong></span>
-  <span>civs: <strong id="civ-label">0</strong></span>
-  <span>eras: <strong id="era-label">—</strong></span>
-  <span>exp: <strong id="exp-label">0</strong></span>
-  <span>fps: <strong id="fps-label">—</strong></span>
+  <button id="hud-toggle" style="cursor:pointer;font-weight:bold;width:18px" title="collapse / expand">–</button>
+  <span id="hud-body" style="display:flex;gap:10px;align-items:center">
+    <span>seed: <strong id="seed-label"></strong></span>
+    <button id="reroll" style="cursor:pointer">reroll</button>
+    <button id="reset-sim" style="cursor:pointer">reset sim</button>
+    <button id="pause" style="cursor:pointer">pause</button>
+    <button id="catastrophe" style="cursor:pointer;color:#a03020">catastrophe</button>
+    <button id="skip" style="cursor:pointer;color:#607080">skip 5k</button>
+    <button id="sound" style="cursor:pointer;color:#888" title="ambient sound">sound: off</button>
+    <button id="quality" style="cursor:pointer;color:#607080" title="graphics quality — lower for more FPS">gfx: high</button>
+    <span>tick: <strong id="tick-label">0</strong></span>
+    <span>civs: <strong id="civ-label">0</strong></span>
+    <span>eras: <strong id="era-label">—</strong></span>
+    <span>exp: <strong id="exp-label">0</strong></span>
+    <span>fps: <strong id="fps-label">—</strong></span>
+  </span>
 `;
 document.body.appendChild(hud);
+const hudToggle = document.getElementById('hud-toggle')!;
+const hudBody = document.getElementById('hud-body')!;
+hudToggle.addEventListener('click', () => {
+  const collapsed = hudBody.style.display === 'none';
+  hudBody.style.display = collapsed ? 'flex' : 'none';
+  hudToggle.textContent = collapsed ? '–' : '+';
+});
 
 // --- Civ bar graph panel (right edge) ---
 const barPanel = document.createElement('div');
