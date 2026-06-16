@@ -1219,6 +1219,7 @@ interface TileBuildingState {
   curRuinMult: number[];       // per-slot opacity multiplier (1.0 active; only drops in the final reclaim phase)
   ruinAge:     number[];       // per-slot decay progress 0→1: grey → collapse → land reclaims
   ruinColor0:  number[];       // the slot's colour at the moment it ruined (desaturates from here)
+  ruinStartAt: number;         // wall-clock sec to begin decaying (staggers mass die-offs); 0 = at once
 }
 let buildingTileStates: (TileBuildingState | null)[][] = Array.from({ length: GRID_SIZE }, () =>
   Array(GRID_SIZE).fill(null)
@@ -1667,6 +1668,11 @@ const RUIN_TINT = 0x5a544c;       // fallback stone tone (rubble base)
 // independent) — the whole arc takes RUIN_DECAY_SECONDS.
 const RUIN_DECAY_SECONDS = 30;
 const RUIN_PHASE = { greyBy: 0.22, collapseFrom: 0.15, collapseTo: 0.62, reclaimFrom: 0.62 };
+// When a whole civ falls at once, scatter the moment each building begins to
+// crumble across this window, so a dead city collapses tile by tile (a ripple)
+// instead of every roof caving in on the same frame.
+const RUIN_STAGGER_SECONDS = 8;
+const ruinStaggerFor = (row: number, col: number) => tileRand(row, col, 4242) * RUIN_STAGGER_SECONDS;
 
 // Luminance greyscale of a colour, nudged to warm stone (not a dead grey).
 function greyOf(color: number): number {
@@ -1696,16 +1702,21 @@ function refreshBuildingSprite(row: number, col: number) {
 
   if (civ!.phase === 'dead') {
     if (!state) return;
+    let newlyRuined = false;
     for (let s = 0; s < 4; s++) {
       if (!state.floor1[s]) continue;
-      // Begin the decay progression (grey → collapse → reclaim), capturing the
-      // colour to drain from. The animation loop drives it from here.
+      // Mark for decay (grey → collapse → reclaim), capturing the colour to drain
+      // from. A ruined building at ruinAge 0 still renders intact, so it stands
+      // until its staggered start; the animation loop drives it from there.
       if (!state.ruined[s]) {
         state.ruined[s] = true;
         state.ruinAge[s] = 0;
         state.ruinColor0[s] = state.floor1[s]!.tint as number;
+        newlyRuined = true;
       }
     }
+    // Stagger the onset so the dead city crumbles tile by tile, not all at once.
+    if (newlyRuined) state.ruinStartAt = performance.now() / 1000 + ruinStaggerFor(row, col);
     animatingBuildingTiles.add(`${row},${col}`);
     return;
   }
@@ -1732,6 +1743,7 @@ function refreshBuildingSprite(row: number, col: number) {
       curRuinMult: [1,1,1,1],
       ruinAge: [0,0,0,0],
       ruinColor0: [0,0,0,0],
+      ruinStartAt: 0,
     };
     buildingTileStates[row][col] = state;
   }
@@ -3763,8 +3775,11 @@ app.ticker.add((ticker) => {
 
       if (bts.ruined[s]) {
         // A ruin's life: drain to grey stone, collapse the upper floors into a
-        // low rubble stub, then let the land reclaim it.
-        bts.ruinAge[s] = Math.min(1, bts.ruinAge[s] + (ticker.deltaMS / 1000) / RUIN_DECAY_SECONDS);
+        // low rubble stub, then let the land reclaim it. Hold at age 0 (intact)
+        // until this tile's staggered start, so a fallen city crumbles in a ripple.
+        if (nowSec >= bts.ruinStartAt) {
+          bts.ruinAge[s] = Math.min(1, bts.ruinAge[s] + (ticker.deltaMS / 1000) / RUIN_DECAY_SECONDS);
+        }
         const age = bts.ruinAge[s];
         if (age < 1) settled = false;
         const desat = Math.max(0, Math.min(1, age / RUIN_PHASE.greyBy));
