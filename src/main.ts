@@ -848,9 +848,12 @@ function centerWorld() {
 }
 centerWorld();
 // The first curvature pass runs mid-init, before the mesh geometry has settled,
-// so the baked perspective doesn't take full effect. Force one clean re-apply
-// on the next frame.
-requestAnimationFrame(() => atmos.setPerspective(atmos.perspective()));
+// so the baked perspective doesn't take full effect. Re-apply a few times over
+// the first second (timing varies by browser) so the bend reliably sticks.
+const reapplyCurve = () => atmos.setPerspective(atmos.perspective());
+requestAnimationFrame(reapplyCurve);
+setTimeout(reapplyCurve, 300);
+setTimeout(reapplyCurve, 1200);
 
 // --- Atmosphere: the world's tell ---
 // catastrophePressure is surfaced as a slow ambient darkening: a multiply
