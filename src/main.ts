@@ -1,18 +1,9 @@
 import { Application, Assets, Container, Graphics, MeshPlane, RenderTexture, Sprite, Text, TextStyle, Texture } from 'pixi.js';
 import { generateBiomeMap, generateRivers, makeTerrainSampler, classify, BIOME_COLORS, SEA_LEVEL, type Biome } from './biomes';
 import { drawTile, drawStateOverlayPersistent, redrawOverlay, redrawBiomeTile, lerpColor, gridToScreen, rgbToHsl, hslToRgb } from './iso';
-import { createSimWorld, step, tileOverlayColor, seedInitialCivs, applyCatastrophe, iceDepthAt, SIM, CATASTROPHE, CITY, nearestCityDist, type SimWorld, type Civ, type CivCity, type SimEvent, type Era, type TileOverlay, type BiomeChange, type CatastropheType } from './sim';
+import { createSimWorld, step, tileOverlayColor, seedInitialCivs, applyCatastrophe, SIM, CATASTROPHE, CITY, nearestCityDist, type SimWorld, type Civ, type CivCity, type SimEvent, type Era, type TileOverlay, type BiomeChange, type CatastropheType } from './sim';
 import * as audio from './audio';
 import { createAtmosphere, ATMOS } from './atmosphere';
-
-const ERA_TINT: Record<string, string> = {
-  neolithic: '#8a7a5a',   // earthy brown
-  classical: '#b0915a',   // bronze
-  medieval: '#7a8a6a',    // mossy
-  industrial: '#5a5a5a',  // soot gray
-  modern: '#6a8aa0',      // steel blue
-  post: '#9a7aa0',        // synthetic violet
-};
 
 const GRID_SIZE = 96;
 const ticksPerSecond = 30;
@@ -30,8 +21,8 @@ const CATACLYSM_NARRATIONS = [
 ];
 const SHOW_BUILDING_SPRITES = true;
 // Civ ownership: tile-fill tint (the diamond color overlay) vs. just the border outline.
-// Off → rely on civ-colored borders alone to read territory.
-const SHOW_TILE_TINT = true;
+// Off → rely on buildings + farmland alone to read territory (experiment).
+const SHOW_TILE_TINT = false;
 const TILE_TINT_OPACITY = 0.5;  // multiplier on overlay alpha (1.0 = original strength)
 
 // No-plinth building body paths (99×85px). All have an open hollow top for a roof.
@@ -362,18 +353,6 @@ function narrateEvent(ev: SimEvent, world: SimWorld): string {
       };
       return pick(lines[bucket]);
     }
-    case 'ice_advance':
-      return pick([
-        'The cold deepens. Ice creeps down from the poles and the northern holds empty.',
-        'Winter without end takes the high latitudes. The people move toward the warm middle of the world.',
-        'The glaciers come. Where there were fields, there is white.',
-      ]);
-    case 'ice_retreat':
-      return pick([
-        'The long winter breaks. The ice draws back and green follows it north.',
-        'The thaw comes at last. The cold lands are open again, and the bold go to settle them.',
-        'The glaciers retreat. The world remembers how to be warm.',
-      ]);
     case 'wonder_built': {
       const civ = world.civs.get(ev.civId);
       if (!civ) return '';
@@ -572,7 +551,6 @@ const EVENT_PRIORITY: Partial<Record<SimEvent['kind'], NarrationPriority>> = {
   rift_opened: 'high', island_born: 'high', land_bridge: 'high', spared: 'high', rally: 'high',
   civ_declining: 'normal', last_flight: 'normal', refuge_founded: 'normal',
   breakaway: 'normal', civ_born: 'normal', migration: 'normal', island_rising: 'normal',
-  ice_advance: 'high', ice_retreat: 'high',
   capital_moved: 'low', city_fell: 'low', colony_founded: 'low', conquest: 'low',
 };
 
@@ -628,8 +606,8 @@ function updateEventLog() {
       : e.variant === 'relief' ? '#3a4a34'
       : '#3a3020';
     const style = e.variant === 'omen' ? 'font-style:italic;' : '';
-    return `<div style="background:${bg};padding:4px 10px;border-radius:2px;${style}
-      font-family:Georgia,'Times New Roman',serif;font-size:12px;line-height:1.5;color:${fg};
+    return `<div style="background:${bg};padding:3px 8px;border-radius:2px;${style}
+      font-family:Georgia,'Times New Roman',serif;font-size:10px;line-height:1.5;color:${fg};
       opacity:${opacity.toFixed(2)};">${e.text}</div>`;
   }).join('');
 }
@@ -684,10 +662,6 @@ const atmos = createAtmosphere();
 const riverGfx = new Graphics();
 const sceneryWaterGfx = new Graphics(); // beyond-the-grid sea (under glitter)
 const sceneryLandGfx = new Graphics();  // beyond-the-grid land (over glitter)
-// Beyond-the-grid tile positions (+ water/land), precomputed once in
-// drawScenery so the ice cap can extend over the whole visible globe, not
-// just the sim diamond. r/c keep the same latitude math as the grid.
-let sceneryTiles: { x: number; y: number; r: number; c: number; water: boolean; biome: Biome }[] = [];
 const roadsGfx = new Graphics();        // paths between cities, era-styled
 const conflictGfx = new Graphics();     // war flickers at contested tiles
 const wonderGfx = new Graphics();       // monuments (persist as ruins)
@@ -700,7 +674,6 @@ const birdFlockGfx = new Graphics();    // small Vs of birds flitting forest to 
 const festivalGfx = new Graphics();     // night festival glow
 festivalGfx.blendMode = 'add';
 const smokeLayer = new Container();
-const iceGfx = new Graphics();         // polar ice sheets (advances/retreats)
 const smogGfx = new Graphics();        // end-of-cycle pollution pooling over cities
 const cityLightsGfx = new Graphics();
 cityLightsGfx.blendMode = 'add';
@@ -729,8 +702,6 @@ world.addChild(farmGfx);
 world.addChild(roadsGfx);
 // Scars sit above civ tints (catastrophes hit settled land) but below buildings.
 world.addChild(atmos.scarLayer);
-// Polar ice sheets — over the ground, under the buildings (cities stand in snow).
-world.addChild(iceGfx);
 // Wild herds graze the open land, beneath the towns that will displace them.
 world.addChild(wildlifeGfx);
 // Wind shimmer brightens the ground, masked to land below.
@@ -828,7 +799,7 @@ atmos.layout(window.innerWidth, window.innerHeight);
 (window as any).__anim = () => ({ tiles: animatingTiles.size, buildings: animatingBuildingTiles.size, biome: animatingBiomeTiles.size });
 (window as any).__rt = () => ({ res: worldRT.source.resolution, w: worldRT.source.pixelWidth, h: worldRT.source.pixelHeight, bound: worldPlane.texture === worldRT, tickerFPS: Math.round(app.ticker.FPS) });
 (window as any).__perf = { sky: atmos.skyLayer, plane: worldPlane, set skipRT(v: boolean) { (window as any).__skipRT = v; } };
-(window as any).__fx = { iceGfx, smogGfx, farmGfx, buildingLayer, sky: atmos.skyLayer, fog: atmos.fogLayer };
+(window as any).__fx = { smogGfx, farmGfx, buildingLayer, sky: atmos.skyLayer, fog: atmos.fogLayer };
 (window as any).__life = () => ({ herds: herds.length, power: powerLines.length, caravans: caravans.length, boats: boats.length });
 
 const expeditionGfx = new Graphics();
@@ -897,60 +868,6 @@ const POLLUTION = {
   eraFloor:   0.3,      // pollution multiplier even in clean (pre-industrial) ages
   narrateAt:  0.3,      // pollution level that earns one narrated line per cycle
 };
-// Polar ice overlay — white over the frozen latitudes, eased onto each tile by
-// how deep it sits in the ice. Redrawn only when the ice has moved (it
-// advances slowly), so per-frame cost is one cheap comparison.
-let lastDrawnIce = -1;
-function drawIce() {
-  const force = (window as any).__forceIce;
-  const ext = force != null ? force : simWorld.iceExtent;
-  if (force == null && Math.abs(ext - lastDrawnIce) < 0.004) return;
-  lastDrawnIce = ext;
-  // ~19k filled+stroked polys at glacial peak. They only change when the ice
-  // actually moves (throttled above), so cache the result to a texture and let
-  // the in-between frames render it as a single quad — the app is fill-bound.
-  iceGfx.cacheAsTexture?.(false);
-  iceGfx.clear();
-  if (ext <= 0.002) { iceGfx.visible = false; return; }
-  iceGfx.visible = true;
-  // Sample latitude against the (possibly forced) extent; terrain-aware so the
-  // front hugs coasts and ridges exactly as the sim computes it.
-  const fakeWorld = { iceExtent: ext, height: GRID_SIZE } as any;
-  // The sim grid (the known world).
-  for (let r = 0; r < GRID_SIZE; r++) {
-    for (let c = 0; c < GRID_SIZE; c++) {
-      const biome = biomeMap[r][c];
-      const d = iceDepthAt(fakeWorld, r, c, biome);
-      if (d <= 0) continue;
-      const { x, y } = gridToScreen(c, r);
-      paintIce(x, y, d, biome === 'water');
-    }
-  }
-  // The scenery beyond the grid, so the ice cap reaches the whole globe up to
-  // the horizon (same latitude math; precomputed positions, no re-sampling).
-  for (let i = 0; i < sceneryTiles.length; i++) {
-    const t = sceneryTiles[i];
-    const d = iceDepthAt(fakeWorld, t.r, t.c, t.biome);
-    if (d <= 0) continue;
-    paintIce(t.x, t.y, d, t.water);
-  }
-  iceGfx.cacheAsTexture?.(true);
-}
-
-// One iced tile. Snow on land, paler blue on sea; the leading edge carries a
-// faint cool rim so the ice reads even against the bright daytime ocean, going
-// to near-solid white toward the poles.
-function paintIce(x: number, y: number, d: number, water: boolean) {
-  // Near-white fill so it brightens whatever it covers, plus a steel-blue seam
-  // on every tile. The seams give the sheet a cracked-pack-ice texture that
-  // reads even over the pale ocean (where a flat white fill would vanish).
-  const color = water ? 0xe6f0f6 : 0xf4f9ff; // sea ice slightly cooler than snow
-  const a = Math.min(0.96, 0.5 + d * 0.46);
-  iceGfx.poly([x, y - 8, x + 16, y, x, y + 8, x - 16, y])
-    .fill({ color, alpha: a })
-    .stroke({ color: 0x8aa6bc, alpha: 0.55 * a, width: 1 }); // frost seams
-}
-
 let pollutionNarrated = false;
 let curPollution = 0;
 // The dying-world blight: in the final stretch before the cataclysm the colour
@@ -1424,7 +1341,6 @@ const SCENERY = {
 function drawScenery() {
   sceneryWaterGfx.clear();
   sceneryLandGfx.clear();
-  sceneryTiles = [];
   const sampler = makeTerrainSampler(currentSeed);
   const { x0, y0, w, h } = WORLD_CAPTURE;
   for (let r = -60; r <= 155; r++) {
@@ -1444,7 +1360,6 @@ function drawScenery() {
       target.poly([x, y - 8, x + 16, y, x, y + 8, x - 16, y])
         .fill(color)
         .stroke({ color: 0x000000, alpha: 0.08, width: 1 });
-      sceneryTiles.push({ x, y, r, c, water, biome });
     }
   }
   // Static once drawn — collapse the ~20k polys to one cached quad.
@@ -3143,7 +3058,6 @@ function maybeChronicle() {
 function resetStorySurfaces() {
   roadPathCache.clear();
   roadLines.clear();
-  lastDrawnIce = -1; iceGfx.cacheAsTexture?.(false); iceGfx.clear(); iceGfx.visible = false;
   lastFarmRebuild = -1e9; farmGfx.cacheAsTexture?.(false); farmGfx.clear();
   waterRouteCache.clear();
   warHeat.clear();
@@ -3617,7 +3531,6 @@ app.ticker.add((ticker) => {
   updateSmoke(dtSec);
   drawRoads(dtSec);
   drawPowerLines(dtSec, n);
-  drawIce();
   updateConflictFlashes(dtSec);
   updateWater(dtSec, nowSec, n);
   maybeWhale(dtSec);
@@ -3866,7 +3779,7 @@ hud.style.cssText = `
   display: flex; gap: 10px; align-items: center; user-select: none;
 `;
 hud.innerHTML = `
-  <button id="hud-toggle" style="cursor:pointer;font-weight:bold;width:18px" title="collapse / expand">–</button>
+  <button id="hud-toggle" style="cursor:pointer;font-weight:bold;width:20px;height:20px;padding:0;display:inline-flex;align-items:center;justify-content:center;line-height:1" title="collapse / expand">–</button>
   <span id="hud-body" style="display:flex;gap:10px;align-items:center">
     <span>seed: <strong id="seed-label"></strong></span>
     <button id="reroll" style="cursor:pointer">reroll</button>
@@ -3901,7 +3814,7 @@ barPanel.style.cssText = `
   display: flex; flex-direction: column; gap: 4px;
   user-select: none; pointer-events: none;
 `;
-barPanel.innerHTML = `<div style="font-weight:bold;margin-bottom:4px;">living civilizations</div><div id="bars"></div>`;
+barPanel.innerHTML = `<div id="bars"></div>`;
 document.body.appendChild(barPanel);
 
 // Visibility toggles for the civ panel and the event log.
@@ -3939,7 +3852,6 @@ function updateBars() {
   }
   living.sort((a, b) => b.count - a.count);
   const shown = living.slice(0, 5);
-  const more = living.length - shown.length;
   const maxCount = Math.max(40, ...living.map((l) => l.count));
   const now = Date.now();
 
@@ -3947,27 +3859,17 @@ function updateBars() {
     .map(({ civ, count }) => {
       const pct = Math.round((count / maxCount) * 100);
       const color = hexToCss(civ.color);
-      const phaseGlyph =
-        civ.phase === 'rising' ? '▲' :
-        civ.phase === 'stable' ? '■' :
-        civ.phase === 'declining' ? '▼' : '·';
-      const capital = civ.cities[0]?.name ?? '—';
       const mentioned = (civMentionTs.get(civ.id) ?? 0) > now - 6000;
       const rowBg = mentioned ? 'background:rgba(255,236,190,0.95);' : '';
       return `
         <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;padding:1px 3px;border-radius:2px;${rowBg}">
-          <span style="width:150px;font-size:10px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;">
-  <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${ERA_TINT[civ.era]};margin-right:3px;"></span><span style="color:${color};font-weight:600">${civ.name}</span> <span style="color:#999;">· ${capital}</span> <span style="color:#666;">${phaseGlyph}</span>
-</span>
+          <span style="width:130px;font-family:Georgia,'Times New Roman',serif;font-size:10px;color:${color};font-weight:600;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;">${civ.name}</span>
           <div style="flex:1;height:10px;background:rgba(0,0,0,0.06);border-radius:2px;overflow:hidden;">
             <div style="width:${pct}%;height:100%;background:${color};transition:width 0.2s;"></div>
           </div>
-          <span style="width:28px;text-align:right;color:#555;font-size:10px;">${count}</span>
         </div>`;
     })
-    .join('') + (more > 0
-      ? `<div style="color:#999;font-size:10px;padding:2px 4px;">… and ${more} smaller</div>`
-      : '');
+    .join('');
 }
 
 const seedLabel = document.getElementById('seed-label')!;

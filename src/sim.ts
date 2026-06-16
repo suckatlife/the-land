@@ -32,8 +32,6 @@ export type SimEvent =
   | { kind: 'rift_opened'; row: number; col: number }
   | { kind: 'wonder_built'; civId: number; row: number; col: number }
   | { kind: 'migration'; row: number; col: number }
-  | { kind: 'ice_advance' }
-  | { kind: 'ice_retreat' }
   | { kind: 'spared'; civId: number; catastropheType: CatastropheType }
   | { kind: 'rally'; civId: number }
   | { kind: 'last_flight'; civId: number };
@@ -54,11 +52,11 @@ export interface EraTreatment {
 
 export const ERA_TREATMENT: Record<Era, EraTreatment> = {
   neolithic:  { satMult: 0.55, brightMult: 0.88, borderAlpha: 0.00, borderWidth: 0.0, borderColor: 0x1a1008, postTint: null,     ruinColor: 0x7a6a58 },
-  classical:  { satMult: 0.78, brightMult: 0.94, borderAlpha: 0.20, borderWidth: 0.5, borderColor: 0x1a1008, postTint: null,     ruinColor: 0x8a7860 },
-  medieval:   { satMult: 0.90, brightMult: 0.97, borderAlpha: 0.35, borderWidth: 0.7, borderColor: 0x1a1008, postTint: null,     ruinColor: 0x7a7060 },
-  industrial: { satMult: 1.05, brightMult: 0.93, borderAlpha: 0.48, borderWidth: 1.0, borderColor: 0x1a1008, postTint: null,     ruinColor: 0x6a6050 },
-  modern:     { satMult: 1.20, brightMult: 1.06, borderAlpha: 0.60, borderWidth: 1.2, borderColor: 0x1a1008, postTint: null,     ruinColor: 0x787e88 },
-  post:       { satMult: 0.85, brightMult: 1.12, borderAlpha: 0.65, borderWidth: 1.0, borderColor: 0x2d1155, postTint: 0x8833cc, ruinColor: 0x7068a0 },
+  classical:  { satMult: 0.78, brightMult: 0.94, borderAlpha: 0.00, borderWidth: 0.0, borderColor: 0x1a1008, postTint: null,     ruinColor: 0x8a7860 },
+  medieval:   { satMult: 0.90, brightMult: 0.97, borderAlpha: 0.00, borderWidth: 0.0, borderColor: 0x1a1008, postTint: null,     ruinColor: 0x7a7060 },
+  industrial: { satMult: 1.05, brightMult: 0.93, borderAlpha: 0.00, borderWidth: 0.0, borderColor: 0x1a1008, postTint: null,     ruinColor: 0x6a6050 },
+  modern:     { satMult: 1.20, brightMult: 1.06, borderAlpha: 0.00, borderWidth: 0.0, borderColor: 0x1a1008, postTint: null,     ruinColor: 0x787e88 },
+  post:       { satMult: 0.85, brightMult: 1.12, borderAlpha: 0.00, borderWidth: 0.0, borderColor: 0x2d1155, postTint: 0x8833cc, ruinColor: 0x7068a0 },
 };
 
 // --- Color utilities (private) ---
@@ -256,16 +254,6 @@ export const SIM = {
   eraProgressBase:        0.000005,
   eraProgressSettleWeight: 0.00008,
 
-  // Ice ages — a slow climate cycle. iceExtent (0..1) advances and retreats;
-  // ice covers tiles whose latitude (distance from the diagonal equator)
-  // exceeds 1 - iceExtent*iceMaxExtent. Tiles deep in the ice decay faster, so
-  // civilizations retreat from the cold and return on the thaw. The renderer
-  // reads world.iceExtent to paint the white over the poles.
-  iceCycleTicks:   17000,  // one advance+retreat (~9.4 min) — ~roughly per world
-  iceMaxExtent:    0.86,   // how far toward the equator ice reaches at glacial max
-  iceShape:        2.1,    // >1 = long warm periods, shorter sharper glacials
-  iceDecayBonus:   1.8,    // extra decay multiplier for tiles deep in the ice
-
   nameMemoryRadius: 8,
 
   // Ocean routes / colonization.
@@ -396,8 +384,6 @@ export interface SimWorld {
   // minimum era a new civ is born into. Climbs over a world's life, resets on
   // reroll/cataclysm (a fresh SimWorld starts at 0).
   eraProgress: number;
-  // Climate: how far the polar ice has advanced toward the equator (0..1).
-  iceExtent: number;
   // Settlements on their way to existing — visible nomad bands.
   pendingSettlements: Array<{ row: number; col: number; ticksLeft: number }>;
   // Progressive terrain change (rifts tearing, islands rising, bridges
@@ -433,7 +419,6 @@ export function createSimWorld(width: number, height: number): SimWorld {
     pressureNoise: 1.0,
     brewing: null,
     eraProgress: 0,
-    iceExtent: 0,
     pendingSettlements: [],
     terraform: null,
   };
@@ -455,38 +440,6 @@ export function nearestCityDist(civ: Civ, row: number, col: number): number {
     if (d < min) min = d;
   }
   return min < Infinity ? min : 0;
-}
-
-// Smooth, deterministic multi-frequency wobble in ~[-1, 1]. Pure (no seed, no
-// state) so the sim and the renderer compute an identical ice front. Two broad
-// lobes plus finer crenulation give the edge an organic, non-repeating feel.
-function iceNoise(row: number, col: number): number {
-  const a = Math.sin(row * 0.21 + col * 0.13) + Math.sin(col * 0.17 - row * 0.07);
-  const b = Math.sin((row + col) * 0.11 + 1.7) + Math.sin((row - col) * 0.23 - 0.6);
-  return (a * 0.5 + b * 0.28) / 1.56;
-}
-
-// How deeply a tile is buried in polar ice (0 = ice-free, 1 = deep at the
-// pole). Base latitude is the distance from the diagonal equator (row+col =
-// H-1); ice covers the iceExtent fraction of latitude nearest the two poles.
-// The front is warped by noise and biased by terrain so it grows organically —
-// cold seas and high rock freeze ahead of it, warm lowlands hold out — rather
-// than as a clean latitude line. Pass the tile's biome to enable the bias.
-export function iceDepthAt(world: SimWorld, row: number, col: number, biome?: Biome): number {
-  const cover = world.iceExtent;
-  if (cover <= 0.001) return 0;
-  let lat = Math.abs(row + col - (world.height - 1)) / (world.height - 1);
-  // Terrain bias: sea ice tongues into cold open water, snow caps the ridges,
-  // sheltered lowlands and warm coasts thaw longest — so the edge hugs the
-  // coastline and ridgelines instead of cutting straight across them.
-  if (biome === 'water') lat += 0.07;
-  else if (biome === 'rock') lat += 0.05;
-  else if (biome === 'sand' || biome === 'fertile') lat -= 0.06;
-  // Ragged, organic front rather than a clean line (~±13 tiles of wobble).
-  lat += iceNoise(row, col) * 0.14;
-  const line = 1 - cover;
-  if (lat <= line) return 0;
-  return Math.min(1, (lat - line) / Math.max(0.05, cover));
 }
 
 function pickCivSpawnTile(
@@ -1567,11 +1520,9 @@ export function step(
             ? 1.0 + (SIM.deathPeripheryAmp - 1.0) * Math.min(1, civ.phaseAge / SIM.deathPeripheryRampTicks)
             : 1.0;
           const deadDamp = civ.phase === 'dead' ? SIM.deathDecayMultiplier : 1.0;
-          // Ice age: tiles deep in the cold are abandoned faster.
-          const iceFactor = 1 + iceDepthAt(world, row, col, biomes[row][col]) * SIM.iceDecayBonus;
 
           const decayP = SIM.decayBase * effectiveDecayPressure(civ) * exposureFactor
-            * distanceFactor * isolationFactor * deathPeripheryAmp * deadDamp * iceFactor;
+            * distanceFactor * isolationFactor * deathPeripheryAmp * deadDamp;
 
           if (Math.random() < decayP) {
             const list = decayCandidates.get(civ.id) || [];
@@ -1714,17 +1665,6 @@ export function step(
   if (world.eraProgress < ERAS_ORDERED.length - 1) {
     const eraRateScale = SIM.eraReferenceCycle / SIM.worldCycleTicks;
     world.eraProgress += (SIM.eraProgressBase + settledFraction * SIM.eraProgressSettleWeight) * eraRateScale;
-  }
-
-  // Climate: the polar ice advances and retreats on a slow cycle (sharper
-  // glacial peaks, long warm interglacials via iceShape).
-  {
-    const prevIce = world.iceExtent;
-    const icePhase = ((world.tick % SIM.iceCycleTicks) / SIM.iceCycleTicks) * Math.PI * 2;
-    const iceRaw = (1 - Math.cos(icePhase)) / 2;
-    world.iceExtent = Math.pow(iceRaw, SIM.iceShape) * SIM.iceMaxExtent;
-    if (prevIce < 0.15 && world.iceExtent >= 0.15) events.push({ kind: 'ice_advance' });
-    else if (prevIce > 0.08 && world.iceExtent <= 0.08) events.push({ kind: 'ice_retreat' });
   }
 
   const avgEraRankNorm = eraRankCount > 0 ? eraRankSum / eraRankCount / (ERAS_ORDERED.length - 1) : 0;
