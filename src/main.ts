@@ -691,6 +691,7 @@ const nomadGfx = new Graphics();        // migrating bands, caravans, trains
 const wildlifeGfx = new Graphics();     // wandering animal herds on wild land
 const powerGfx = new Graphics();        // power grid (industrial+), pulses at night
 const airGfx = new Graphics();          // planes (modern+) and rockets (post)
+const birdFlockGfx = new Graphics();    // small Vs of birds flitting forest to forest
 const festivalGfx = new Graphics();     // night festival glow
 festivalGfx.blendMode = 'add';
 const smokeLayer = new Container();
@@ -754,6 +755,8 @@ world.addChild(festivalGfx);
 world.addChild(atmos.stormLayer);
 // Bird flocks cross at dawn and dusk.
 world.addChild(atmos.birdLayer);
+// Smaller flocks skim the canopy, forest to forest, above the surface life.
+world.addChild(birdFlockGfx);
 // Planes and rockets fly in the air, above everything on the ground.
 world.addChild(airGfx);
 world.addChild(cityMarkersContainer);
@@ -1933,14 +1936,43 @@ function drawExpeditions() {
       g.circle(x, y, 2.5).fill({ color: civ.color, alpha });
     }
 
-    // Drawn like the trade boats, a size up — a hull, a sail, a wake — not
-    // the old diamond marker.
+    // A lean exploration longship — raked bow, bare mast with a streaming
+    // pennant, and a churning V-wake. Reads as a fast scout, distinct from the
+    // fat single-sailed trade boats.
     const { x, y } = gridToScreen(exp.col, exp.row);
-    g.ellipse(x, y + 0.5, 3.2, 1.7).fill({ color: 0x3c352c, alpha: 0.9 });
-    g.circle(x, y, 1.2).fill({ color: civ.color, alpha: 0.95 });
-    g.poly([x - 0.5, y - 1, x - 0.5, y - 6, x + 3, y - 1.8]).fill({ color: 0xf2ecdc, alpha: 0.85 });
-    g.circle(x - exp.dirCol * 5, y - exp.dirRow * 2.5, 1.3).fill({ color: 0xffffff, alpha: 0.25 });
+    const ahead = gridToScreen(exp.col + exp.dirCol, exp.row + exp.dirRow);
+    let hx = ahead.x - x, hy = ahead.y - y;
+    const hl = Math.hypot(hx, hy) || 1; hx /= hl; hy /= hl;
+    drawExpeditionShip(g, x, y, hx, hy, civ.color);
   }
+}
+
+// A long, narrow longship pointed along (hx,hy): a deep raked bow, a bare mast
+// rising screen-up with a civ-coloured pennant streaming astern, and a spreading
+// foam wake — the look of a fast voyage of discovery.
+function drawExpeditionShip(g: Graphics, x: number, y: number, hx: number, hy: number, color: number) {
+  const px = -hy, py = hx; // beam
+  const L = 7, W = 1.9;
+  // Spreading V-wake astern (drawn first, under the hull).
+  const sx = x - hx * L, sy = y - hy * L;
+  g.poly([sx, sy, sx - hx * 6 + px * 4, sy - hy * 6 + py * 4, sx - hx * 4, sy - hy * 4])
+    .fill({ color: 0xffffff, alpha: 0.16 });
+  g.poly([sx, sy, sx - hx * 6 - px * 4, sy - hy * 6 - py * 4, sx - hx * 4, sy - hy * 4])
+    .fill({ color: 0xffffff, alpha: 0.16 });
+  // Hull: a long double-ender with a raked bow.
+  g.poly([
+    x + hx * L * 1.35, y + hy * L * 1.35,   // long bow
+    x + px * W, y + py * W,
+    x - hx * L, y - hy * L,                 // stern
+    x - px * W, y - py * W,
+  ]).fill({ color: 0x3c352c, alpha: 0.95 });
+  // Mast rising screen-up, with a civ-coloured pennant streaming astern.
+  const mh = 7;
+  g.poly([x, y - mh, x - hx * 6, y - mh + 1.6, x - hx * 6, y - mh - 1.6])
+    .fill({ color: lerpColor(color, 0xffffff, 0.15), alpha: 0.92 });
+  g.poly([x - 0.5, y - 1, x + 0.5, y - 1, x + 0.5, y - mh, x - 0.5, y - mh])
+    .fill({ color: 0x2a241d, alpha: 0.9 });
+  g.circle(x, y - 0.5, 1.1).fill({ color, alpha: 0.95 });
 }
 
 // Incremental civ index — kept in sync as tile ownership changes via noteTileChange.
@@ -2534,6 +2566,39 @@ function drawFish(g: Graphics, x: number, y: number, ang: number, S: number, nig
   ]).fill({ color: col, alpha: a * 0.85 });
 }
 
+// A small jet seen from above, pointed along (hx,hy): a slim fuselage, swept
+// delta wings, and a tailplane. Replaces the dot so aircraft read as planes.
+function drawPlane(g: Graphics, x: number, y: number, hx: number, hy: number, night: number) {
+  const px = -hy, py = hx;
+  const col = 0xeef2f8, a = 0.95;
+  // Swept main wings (drawn under the fuselage).
+  const span = 6.5, sweep = 2.6;
+  g.poly([
+    x + hx * 0.5, y + hy * 0.5,                              // wing root, forward
+    x - hx * sweep + px * span, y - hy * sweep + py * span,  // left tip, back+out
+    x - hx * (sweep + 1.8), y - hy * (sweep + 1.8),          // trailing root
+    x - hx * sweep - px * span, y - hy * sweep - py * span,  // right tip
+  ]).fill({ color: col, alpha: a * 0.92 });
+  // Tailplane.
+  const tspan = 2.6, tback = 4.4;
+  g.poly([
+    x - hx * (tback - 0.8), y - hy * (tback - 0.8),
+    x - hx * tback + px * tspan, y - hy * tback + py * tspan,
+    x - hx * (tback + 1.0), y - hy * (tback + 1.0),
+    x - hx * tback - px * tspan, y - hy * tback - py * tspan,
+  ]).fill({ color: col, alpha: a * 0.92 });
+  // Fuselage.
+  const L = 6.5, W = 1.0;
+  g.poly([
+    x + hx * L, y + hy * L,             // nose
+    x + px * W, y + py * W,
+    x - hx * L * 0.85, y - hy * L * 0.85, // tail
+    x - px * W, y - py * W,
+  ]).fill({ color: col, alpha: a });
+  // A red nav light winks at the nose after dark.
+  if (night > 0.3) g.circle(x + hx * L * 0.7, y + hy * L * 0.7, 0.9).fill({ color: 0xff5a4a, alpha: 0.55 * Math.min(1, night) });
+}
+
 function maybeSpawnBoats() {
   if (boats.length >= TRAVELERS.boatCap) return;
   for (const civ of simWorld.civs.values()) {
@@ -2709,7 +2774,9 @@ function updateAir(dt: number, night: number) {
     for (let t = 0; t < pl.trail.length; t++) {
       airGfx.circle(pl.trail[t].x, pl.trail[t].y, 0.8).fill({ color: 0xffffff, alpha: (t / pl.trail.length) * 0.22 });
     }
-    travelerDot(airGfx, pl.x, pl.y, 1.5, pl.color, night, 0.95);
+    let hx = pl.vx, hy = pl.vy;
+    const hl = Math.hypot(hx, hy) || 1; hx /= hl; hy /= hl;
+    drawPlane(airGfx, pl.x, pl.y, hx, hy, night);
   }
   for (let i = rockets.length - 1; i >= 0; i--) {
     const rk = rockets[i];
@@ -2761,9 +2828,20 @@ function updateNomads(nowSec: number, dt: number, night: number) {
       const x = cv.pts[bk].x + (cv.pts[bk + 1].x - cv.pts[bk].x) * bu;
       const y = cv.pts[bk].y + (cv.pts[bk + 1].y - cv.pts[bk].y) * bu;
       if (cv.train) {
-        // Head car gets a warm headlamp; cars are a connected metal string.
-        nomadGfx.circle(x, y, (m === 0 ? 1.3 : 1.05) * S).fill({ color: m === 0 ? 0x2c2c30 : cv.color, alpha: 0.9 });
-        if (m === 0) travelerDot(nomadGfx, x, y, 0.7 * S, 0xfff0b0, Math.max(night, 0.5), 0.95);
+        // A coupled string of boxcars: a dark locomotive at the head with a
+        // warm headlamp, followed by civ-coloured cars riding the rails.
+        let hx = cv.pts[bk + 1].x - cv.pts[bk].x, hy = cv.pts[bk + 1].y - cv.pts[bk].y;
+        const hl = Math.hypot(hx, hy) || 1; hx /= hl; hy /= hl;
+        const px = -hy, py = hx;
+        const carL = (m === 0 ? 1.7 : 1.4) * S, carW = 0.85 * S;
+        nomadGfx.poly([
+          x + hx * carL + px * carW, y + hy * carL + py * carW,
+          x + hx * carL - px * carW, y + hy * carL - py * carW,
+          x - hx * carL - px * carW, y - hy * carL - py * carW,
+          x - hx * carL + px * carW, y - hy * carL + py * carW,
+        ]).fill({ color: m === 0 ? 0x2c2c30 : cv.color, alpha: 0.92 });
+        // Headlamp casts forward off the locomotive.
+        if (m === 0) travelerDot(nomadGfx, x + hx * carL, y + hy * carL, 0.7 * S, 0xfff0b0, Math.max(night, 0.5), 0.95);
       } else {
         travelerDot(nomadGfx, x, y, (m === 0 ? 1.2 : 1.0) * S, cv.color, night, m === 0 ? 0.85 : 0.6);
       }
@@ -2771,6 +2849,70 @@ function updateNomads(nowSec: number, dt: number, night: number) {
   }
 }
 const SIM_MIGRATION_TICKS = 900; // mirror of SIM.migrationTicks for the renderer
+
+// Bird flocks: small Vs that lift from one wood and skim the canopy to another,
+// arcing over the land. Daylight only — they roost at dusk.
+interface BirdFlock { sx: number; sy: number; tx: number; ty: number; t: number; dur: number; n: number; ph: number }
+const birdFlocks: BirdFlock[] = [];
+const BIRDFLOCK_CAP = 4;
+let forestTiles: Array<{ r: number; c: number }> | null = null;
+
+function maybeSpawnBirdFlock(dt: number, night: number) {
+  if (night > 0.5 || birdFlocks.length >= BIRDFLOCK_CAP) return;
+  if (Math.random() > dt / 5) return; // ~ one attempt every 5s
+  if (!forestTiles) {
+    forestTiles = [];
+    for (let r = 0; r < GRID_SIZE; r++) for (let c = 0; c < GRID_SIZE; c++)
+      if (biomeMap[r][c] === 'forest') forestTiles.push({ r, c });
+  }
+  if (forestTiles.length < 2) return;
+  const a = forestTiles[Math.floor(Math.random() * forestTiles.length)];
+  let b: { r: number; c: number } | null = null;
+  for (let tries = 0; tries < 12; tries++) {
+    const cand = forestTiles[Math.floor(Math.random() * forestTiles.length)];
+    const d = Math.hypot(cand.r - a.r, cand.c - a.c);
+    if (d >= 5 && d <= 18) { b = cand; break; }
+  }
+  if (!b) return;
+  const start = gridToScreen(a.c, a.r);
+  const end = gridToScreen(b.c, b.r);
+  const dist = Math.hypot(end.x - start.x, end.y - start.y);
+  birdFlocks.push({ sx: start.x, sy: start.y, tx: end.x, ty: end.y, t: 0, dur: dist / 130 + 0.6, n: 4 + Math.floor(Math.random() * 4), ph: (a.r * 13 + a.c * 7) % 100 });
+}
+
+function drawBird(g: Graphics, x: number, y: number, hx: number, hy: number, flap: number, a: number) {
+  const px = -hy, py = hx;
+  const wl = 2.2, sweep = 0.6 + 1.3 * (1 - flap); // wings rise on the downbeat
+  const lx = x - hx * sweep + px * wl, ly = y - hy * sweep + py * wl;
+  const rx = x - hx * sweep - px * wl, ry = y - hy * sweep - py * wl;
+  g.moveTo(lx, ly).lineTo(x + hx * 0.8, y + hy * 0.8).lineTo(rx, ry).stroke({ color: 0x3a352e, width: 1, alpha: a });
+}
+
+function updateBirdFlocks(dt: number, nowSec: number, night: number) {
+  maybeSpawnBirdFlock(dt, night);
+  if (!birdFlocks.length) { birdFlockGfx.clear(); return; }
+  birdFlockGfx.clear();
+  const a = 0.6 * (1 - 0.5 * night);
+  for (let i = birdFlocks.length - 1; i >= 0; i--) {
+    const f = birdFlocks[i];
+    f.t += dt;
+    const u = f.t / f.dur;
+    if (u >= 1) { birdFlocks.splice(i, 1); continue; }
+    const x = f.sx + (f.tx - f.sx) * u;
+    const y = f.sy + (f.ty - f.sy) * u - Math.sin(u * Math.PI) * 18; // arc up over the canopy
+    let hx = f.tx - f.sx, hy = f.ty - f.sy;
+    const hl = Math.hypot(hx, hy) || 1; hx /= hl; hy /= hl;
+    const px = -hy, py = hx;
+    for (let k = 0; k < f.n; k++) {
+      const rank = Math.ceil(k / 2);
+      const side = k === 0 ? 0 : (k % 2 === 0 ? 1 : -1);
+      const bx = x - hx * rank * 4 + px * side * rank * 3;
+      const by = y - hy * rank * 4 + py * side * rank * 3;
+      const flap = Math.sin(nowSec * 9 + f.ph + k * 0.7) * 0.5 + 0.5;
+      drawBird(birdFlockGfx, bx, by, hx, hy, flap, a);
+    }
+  }
+}
 
 // Wild herds: small clusters of animals ambling across the open, unsettled
 // land — darker beasts in the forest verges, paler ones on the steppe. They
@@ -3479,6 +3621,7 @@ app.ticker.add((ticker) => {
   updateNomads(nowSec, dtSec, n);
   maybeSpawnRockets(dtSec);
   updateAir(dtSec, n);
+  updateBirdFlocks(dtSec, nowSec, n);
   maybeGhost(dtSec, n);
   updateFestival(n);
   maybeChronicle();
