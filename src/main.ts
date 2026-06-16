@@ -3879,7 +3879,6 @@ hud.innerHTML = `
     <button id="toggle-bars" style="cursor:pointer;color:#607080" title="show / hide the living-civilizations panel">civ panel: on</button>
     <button id="toggle-log" style="cursor:pointer;color:#607080" title="show / hide the event log">log: on</button>
     <span>tick: <strong id="tick-label">0</strong></span>
-    <span>exp: <strong id="exp-label">0</strong></span>
     <span>fps: <strong id="fps-label">—</strong></span>
   </span>
 `;
@@ -3973,12 +3972,10 @@ function updateBars() {
 
 const seedLabel = document.getElementById('seed-label')!;
 const tickLabel = document.getElementById('tick-label')!;
-const expLabel = document.getElementById('exp-label')!;
 
 function updateHud() {
   seedLabel.textContent = currentSeed;
   tickLabel.textContent = String(simWorld.tick);
-  expLabel.textContent = String(simWorld.expeditions.length);
 }
 updateHud();
 
