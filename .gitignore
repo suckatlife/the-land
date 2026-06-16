@@ -26,3 +26,4 @@ dist-ssr
 
 # Spike: large CC0 asset-kit binaries (local only — not committed)
 /models/
+.vercel

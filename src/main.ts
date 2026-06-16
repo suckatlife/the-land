@@ -2494,6 +2494,46 @@ function travelerDot(g: Graphics, x: number, y: number, r: number, color: number
   }
 }
 
+// A little sailboat: a dark hull pointed along its heading, with a civ-coloured
+// sail standing up from the deck (readable from any direction) and a lantern at
+// night. Replaces the old dot so craft read as boats moving on the sea.
+function drawBoat(g: Graphics, x: number, y: number, fx: number, fy: number, color: number, S: number, night: number) {
+  const rx = -fy, ry = fx; // beam (perpendicular to heading)
+  const L = 5.4 * S, W = 2.4 * S;
+  g.poly([
+    x + fx * L * 0.6, y + fy * L * 0.6,     // bow
+    x + rx * W * 0.5, y + ry * W * 0.5,     // starboard beam
+    x - fx * L * 0.45, y - fy * L * 0.45,   // stern
+    x - rx * W * 0.5, y - ry * W * 0.5,     // port beam
+  ]).fill({ color: 0x4a3a2a, alpha: 0.95 });
+  // Sail — a civ-coloured triangle rising from the deck (always screen-up).
+  const sh = 5.4 * S, sw = 2.3 * S;
+  g.poly([x, y - sh, x - sw, y - S, x + sw, y - S]).fill({ color: lerpColor(color, 0xffffff, 0.2), alpha: 0.96 });
+  if (night > 0.2) {
+    const ng = Math.min(1, night) * TRAVELERS.nightGlow;
+    g.circle(x, y - sh * 0.45, 3.4 * S).fill({ color: 0xffca8a, alpha: 0.10 * ng });
+    g.circle(x, y - sh * 0.45, 1.2 * S).fill({ color: 0xffe6a8, alpha: 0.55 * ng });
+  }
+}
+
+// A small silver fish (body + tail fin) swimming along `ang`. For fishing
+// grounds, so the sea has fish, not brown dots that look like land animals.
+function drawFish(g: Graphics, x: number, y: number, ang: number, S: number, night: number) {
+  const dx = Math.cos(ang), dy = Math.sin(ang), px = -dy, py = dx;
+  const L = 2.8 * S, W = 1.2 * S, col = 0x6f8da0, a = 0.82 * (1 - 0.35 * night);
+  g.poly([
+    x + dx * L * 0.5, y + dy * L * 0.5,                 // nose
+    x + px * W * 0.5, y + py * W * 0.5,
+    x - dx * L * 0.35, y - dy * L * 0.35,               // tail base
+    x - px * W * 0.5, y - py * W * 0.5,
+  ]).fill({ color: col, alpha: a });
+  g.poly([
+    x - dx * L * 0.35, y - dy * L * 0.35,
+    x - dx * L * 0.65 + px * W * 0.7, y - dy * L * 0.65 + py * W * 0.7,
+    x - dx * L * 0.65 - px * W * 0.7, y - dy * L * 0.65 - py * W * 0.7,
+  ]).fill({ color: col, alpha: a * 0.85 });
+}
+
 function maybeSpawnBoats() {
   if (boats.length >= TRAVELERS.boatCap) return;
   for (const civ of simWorld.civs.values()) {
@@ -2546,15 +2586,23 @@ function updateWater(dt: number, nowSec: number, night: number) {
     const k = Math.floor(b.idx), u = b.idx - k;
     const x = b.pts[k].x + (b.pts[k + 1].x - b.pts[k].x) * u;
     const y = b.pts[k].y + (b.pts[k + 1].y - b.pts[k].y) * u;
-    if (k > 1) boatsGfx.circle(b.pts[k - 1].x, b.pts[k - 1].y, 1.2 * S).fill({ color: 0xffffff, alpha: 0.18 });
-    boatsGfx.circle(x, y, 1.8 * S).fill({ color: 0x3c352c, alpha: 0.85 });
-    travelerDot(boatsGfx, x, y, 0.9 * S, b.color, night);
+    let fx = b.pts[k + 1].x - b.pts[k].x, fy = b.pts[k + 1].y - b.pts[k].y;
+    const fl = Math.hypot(fx, fy) || 1; fx /= fl; fy /= fl;
+    // a little foam wake trailing astern
+    if (k > 1) boatsGfx.circle(x - fx * 4 * S, y - fy * 4 * S, 1.0 * S).fill({ color: 0xffffff, alpha: 0.16 });
+    drawBoat(boatsGfx, x, y, fx, fy, b.color, S, night);
   }
+  // Fishing grounds: a little school of silver fish circling, with a ripple —
+  // so they read as fish in the sea, not a brown blob mistaken for an animal.
   for (let i = 0; i < fishSpots.length; i++) {
     const s = fishSpots[i];
-    const fx = s.x + Math.sin(nowSec * 0.7 + i * 2.1) * 2, fy = s.y + Math.sin(nowSec * 1.9 + i) * 0.8;
-    if (night > 0.2) travelerDot(boatsGfx, fx, fy, 1.0 * S, 0x6a5b48, night, 0.6);
-    else boatsGfx.circle(fx, fy, 1.1 * S).fill({ color: 0x4a4338, alpha: 0.55 });
+    const rp = Math.sin(nowSec * 0.8 + i) * 0.5 + 0.5;
+    boatsGfx.circle(s.x, s.y, (2 + rp * 3) * S).stroke({ color: 0xcfe6f2, alpha: 0.12 * (1 - rp), width: 1 });
+    const n = 2 + (i % 2);
+    for (let f = 0; f < n; f++) {
+      const a = nowSec * (0.5 + f * 0.15) + f * 2.1 + i;
+      drawFish(boatsGfx, s.x + Math.cos(a) * 2.6 * S, s.y + Math.sin(a) * 1.3 * S, a + Math.PI / 2, S, night);
+    }
   }
   if (whale) {
     whale.t += dt;
@@ -2682,7 +2730,7 @@ function updateAir(dt: number, night: number) {
 // Nomad bands (pending settlements walking in) + caravans, drawn together.
 function updateNomads(nowSec: number, dt: number, night: number) {
   nomadGfx.clear();
-  const S = TRAVELERS.scale;
+  const S = TRAVELERS.scale * 1.5; // roving bands of people 50% larger
   for (const p of simWorld.pendingSettlements) {
     const f = 1 - p.ticksLeft / SIM_MIGRATION_TICKS;
     const { x: tx, y: ty } = gridToScreen(p.col, p.row);
@@ -2692,8 +2740,8 @@ function updateNomads(nowSec: number, dt: number, night: number) {
     const cx = tx + Math.cos(ang) * dist;
     const cy = ty + Math.sin(ang) * dist * 0.5;
     for (let i = 0; i < 5; i++) {
-      const ox = Math.sin(phase + i * 2.3) * 4 + Math.sin(nowSec * 1.1 + i) * 1.2;
-      const oy = Math.cos(phase + i * 1.7) * 2.4 + Math.sin(nowSec * 1.4 + i * 0.7) * 0.8;
+      const ox = Math.sin(phase + i * 2.3) * 6 + Math.sin(nowSec * 1.1 + i) * 1.8;
+      const oy = Math.cos(phase + i * 1.7) * 3.6 + Math.sin(nowSec * 1.4 + i * 0.7) * 1.2;
       travelerDot(nomadGfx, cx + ox, cy + oy, 1.2 * S, 0x6a5a48, night, 0.6);
     }
   }
@@ -2795,11 +2843,11 @@ function updateHerds(dt: number, nowSec: number, night: number) {
     }
     const lit = 0.62 + 0.18 * night;
     for (let m = 0; m < h.size; m++) {
-      const ox = Math.sin(h.wob + m * 2.1) * 5.5 + Math.sin(nowSec * 0.8 + m) * 0.6;
-      const oy = Math.cos(h.wob + m * 1.6) * 2.8 + Math.cos(nowSec * 0.9 + m) * 0.4;
-      // a soft body with a darker centre — reads as an animal, not a pixel
-      wildlifeGfx.circle(h.x + ox, h.y + oy, 1.5).fill({ color: h.col, alpha: lit * 0.85 });
-      wildlifeGfx.circle(h.x + ox, h.y + oy, 0.8).fill({ color: h.col, alpha: lit });
+      const ox = Math.sin(h.wob + m * 2.1) * 8.2 + Math.sin(nowSec * 0.8 + m) * 0.9;
+      const oy = Math.cos(h.wob + m * 1.6) * 4.2 + Math.cos(nowSec * 0.9 + m) * 0.6;
+      // a soft body with a darker centre — reads as an animal, not a pixel (50% larger)
+      wildlifeGfx.circle(h.x + ox, h.y + oy, 2.25).fill({ color: h.col, alpha: lit * 0.85 });
+      wildlifeGfx.circle(h.x + ox, h.y + oy, 1.2).fill({ color: h.col, alpha: lit });
     }
   }
 }
