@@ -531,6 +531,10 @@ logPanel.style.cssText = `
 `;
 document.body.appendChild(logPanel);
 
+// Visibility toggles, wired to HUD buttons further down.
+let showBars = true;
+let showLog = true;
+
 // One throttled, priority-aware queue for ALL narration. Earlier this was a
 // quiet-gate on sim events only, while ~7 story systems pushed straight to the
 // log and could shove a catastrophe announcement off the 5-line panel. Now
@@ -605,6 +609,7 @@ function pushLogEvents(evs: SimEvent[]) {
 }
 
 function updateEventLog() {
+  if (!showLog) return;
   const now = Date.now();
   for (let i = eventLog.length - 1; i >= 0; i--) {
     if (now - eventLog[i].ts > LOG_LIFETIME_MS) eventLog.splice(i, 1);
@@ -3871,9 +3876,9 @@ hud.innerHTML = `
     <button id="skip" style="cursor:pointer;color:#607080">skip 5k</button>
     <button id="sound" style="cursor:pointer;color:#888" title="ambient sound">sound: off</button>
     <button id="quality" style="cursor:pointer;color:#607080" title="graphics quality — lower for more FPS">gfx: high</button>
+    <button id="toggle-bars" style="cursor:pointer;color:#607080" title="show / hide the living-civilizations panel">civ panel: on</button>
+    <button id="toggle-log" style="cursor:pointer;color:#607080" title="show / hide the event log">log: on</button>
     <span>tick: <strong id="tick-label">0</strong></span>
-    <span>civs: <strong id="civ-label">0</strong></span>
-    <span>eras: <strong id="era-label">—</strong></span>
     <span>exp: <strong id="exp-label">0</strong></span>
     <span>fps: <strong id="fps-label">—</strong></span>
   </span>
@@ -3900,6 +3905,20 @@ barPanel.style.cssText = `
 barPanel.innerHTML = `<div style="font-weight:bold;margin-bottom:4px;">living civilizations</div><div id="bars"></div>`;
 document.body.appendChild(barPanel);
 
+// Visibility toggles for the civ panel and the event log.
+const toggleBars = document.getElementById('toggle-bars')!;
+toggleBars.addEventListener('click', () => {
+  showBars = !showBars;
+  barPanel.style.display = showBars ? 'flex' : 'none';
+  toggleBars.textContent = showBars ? 'civ panel: on' : 'civ panel: off';
+});
+const toggleLog = document.getElementById('toggle-log')!;
+toggleLog.addEventListener('click', () => {
+  showLog = !showLog;
+  logPanel.style.display = showLog ? 'flex' : 'none';
+  toggleLog.textContent = showLog ? 'log: on' : 'log: off';
+});
+
 const barsContainer = document.getElementById('bars')!;
 
 function hexToCss(color: number): string {
@@ -3907,6 +3926,7 @@ function hexToCss(color: number): string {
 }
 
 function updateBars() {
+  if (!showBars) return;
   // Reuses the shared civStats cache instead of doing its own grid scan.
   // Connected to the rest of the story surface: names render in civ color
   // (matching map labels and log mentions), each civ shows its capital
@@ -3953,27 +3973,12 @@ function updateBars() {
 
 const seedLabel = document.getElementById('seed-label')!;
 const tickLabel = document.getElementById('tick-label')!;
-const civLabel = document.getElementById('civ-label')!;
+const expLabel = document.getElementById('exp-label')!;
 
 function updateHud() {
   seedLabel.textContent = currentSeed;
   tickLabel.textContent = String(simWorld.tick);
-  let alive = 0;
-  let total = 0;
-  const eraCounts: Record<string, number> = {};
-  for (const civ of simWorld.civs.values()) {
-    total++;
-    if (civ.phase !== 'dead') {
-      alive++;
-      eraCounts[civ.era] = (eraCounts[civ.era] || 0) + 1;
-    }
-  }
-  civLabel.textContent = `${alive} alive / ${total} total`;
-  document.getElementById('exp-label')!.textContent = String(simWorld.expeditions.length);
-  const eraSummary = Object.entries(eraCounts)
-    .map(([e, n]) => `${e.slice(0, 3)}:${n}`)
-    .join(' ');
-  document.getElementById('era-label')!.textContent = eraSummary || '—';
+  expLabel.textContent = String(simWorld.expeditions.length);
 }
 updateHud();
 
