@@ -1474,6 +1474,21 @@ function patchCoreness(row: number, col: number, biome: Biome): number {
   return same / total;
 }
 
+// One little tree (conifer or broadleaf) at a tile-local offset. Shared by
+// forests and by forested mountain foothills.
+function drawTree(g: Graphics, ox: number, oy: number, s: number, conifer: boolean) {
+  g.ellipse(ox, oy + 1.6 * s, 3.0 * s, 1.2 * s).fill({ color: 0x40583a, alpha: 0.16 }); // cast shadow
+  g.rect(ox - 0.5 * s, oy - 1.4 * s, 1.0 * s, 3.4 * s).fill({ color: 0x5a4632, alpha: 0.9 }); // trunk
+  if (conifer) {
+    g.poly([ox, oy - 8.5 * s, ox - 3.2 * s, oy - 0.5 * s, ox + 3.2 * s, oy - 0.5 * s]).fill({ color: 0x3c6636 });
+    g.poly([ox, oy - 11 * s, ox - 2.4 * s, oy - 4 * s, ox + 2.4 * s, oy - 4 * s]).fill({ color: 0x4a7a44 });
+  } else {
+    g.circle(ox, oy - 5 * s, 3.4 * s).fill({ color: 0x437138 });
+    g.circle(ox - 1.9 * s, oy - 3.6 * s, 2.4 * s).fill({ color: 0x3c6636 });
+    g.circle(ox + 1.9 * s, oy - 4 * s, 2.2 * s).fill({ color: 0x539050 });
+  }
+}
+
 // Terrain texture, drawn onto each land tile's own Graphics so it bakes into
 // the cached biome layer (perf-free per frame). Everything is relative to the
 // tile centre; the back-to-front tile draw order makes heights overlap right.
@@ -1495,31 +1510,34 @@ function decorateTile(g: Graphics, biome: Biome, row: number, col: number) {
       });
     }
     trees.sort((a, b) => a.oy - b.oy); // nearer trees (lower) drawn last
-    for (const t of trees) {
-      const { ox, oy, s } = t;
-      g.ellipse(ox, oy + 1.6 * s, 3.0 * s, 1.2 * s).fill({ color: 0x40583a, alpha: 0.16 }); // cast shadow
-      g.rect(ox - 0.5 * s, oy - 1.4 * s, 1.0 * s, 3.4 * s).fill({ color: 0x5a4632, alpha: 0.9 }); // trunk
-      if (t.conifer) {
-        g.poly([ox, oy - 8.5 * s, ox - 3.2 * s, oy - 0.5 * s, ox + 3.2 * s, oy - 0.5 * s]).fill({ color: 0x3c6636 });
-        g.poly([ox, oy - 11 * s, ox - 2.4 * s, oy - 4 * s, ox + 2.4 * s, oy - 4 * s]).fill({ color: 0x4a7a44 });
-      } else {
-        g.circle(ox, oy - 5 * s, 3.4 * s).fill({ color: 0x437138 });
-        g.circle(ox - 1.9 * s, oy - 3.6 * s, 2.4 * s).fill({ color: 0x3c6636 });
-        g.circle(ox + 1.9 * s, oy - 4 * s, 2.2 * s).fill({ color: 0x539050 });
-      }
-    }
+    for (const t of trees) drawTree(g, t.ox, t.oy, t.s, t.conifer);
   } else if (biome === 'rock') {
-    // A shaded peak — lit on the left, shadowed on the right. coreness shapes
-    // the range: low foothills at the edge rising to tall, snow-capped peaks at
-    // the heart (nudged a little more by raw elevation).
+    // Mountains sit on the same ground as the land around them (the tile keeps
+    // its grass colour); the peak itself is the rock. coreness shapes the range:
+    // a tiny stony bump at the fringe — wreathed in foothill trees — rising to a
+    // tall, snow-capped massif at the heart that spills across neighbouring tiles.
     const core = patchCoreness(row, col, 'rock');
     const elev = Math.min(1, Math.max(0, (elevationMap[row][col] - 0.55) / 0.45));
-    const peak = 4 + core * 14 + elev * 3;
-    const w = 6 + core * 6, apexX = (rnd(1) - 0.5) * 4;
-    g.poly([apexX, -peak, -w, 3, apexX, 6]).fill({ color: 0xccc6bb }); // lit face
-    g.poly([apexX, -peak, w, 3, apexX, 6]).fill({ color: 0x8b857a }); // shadow face
-    if (peak > 14) {
-      const snow = Math.min(6, (peak - 14) * 1.4);
+    // Forested foothills: a few trees at the sparse edge (behind the peak),
+    // fading to bare rock toward the core — the combination tiles.
+    const treeN = Math.round((1 - core) * (1 - core) * 4); // ~4 at the fringe → 0 at the core
+    const foot: Array<{ ox: number; oy: number; s: number; conifer: boolean }> = [];
+    for (let i = 0; i < treeN; i++) foot.push({
+      ox: (rnd(i * 4 + 20) - 0.5) * 24,
+      oy: (rnd(i * 4 + 21) - 0.5) * 9 - 1,
+      s: 0.6 + rnd(i * 4 + 22) * 0.3,
+      conifer: rnd(i * 4 + 23) < 0.6,
+    });
+    foot.sort((a, b) => a.oy - b.oy);
+    for (const t of foot) drawTree(g, t.ox, t.oy, t.s, t.conifer);
+    // The peak — small at the edge (core²), a wide tall mass at the core.
+    const cc = core * core;
+    const peak = 2 + cc * 26 + elev * 3;       // ~2 at the fringe → ~28 at the heart
+    const w = 4 + cc * 18, apexX = (rnd(1) - 0.5) * 4; // ~4 → ~22 wide (spills into neighbours)
+    g.poly([apexX, -peak, -w, 4, apexX, 7]).fill({ color: 0xccc6bb }); // lit face
+    g.poly([apexX, -peak, w, 4, apexX, 7]).fill({ color: 0x8b857a }); // shadow face
+    if (peak > 16) {
+      const snow = Math.min(8, (peak - 16) * 1.4);
       g.poly([apexX, -peak, apexX - snow * 0.7, -peak + snow, apexX + snow * 0.7, -peak + snow]).fill({ color: 0xeef2f6, alpha: 0.92 });
     }
   } else if (biome === 'sand') {
@@ -1551,13 +1569,14 @@ function drawBiomes() {
   for (let row = 0; row < GRID_SIZE; row++) {
     for (let col = 0; col < GRID_SIZE; col++) {
       const biome = biomeMap[row][col];
-      // Forest sits on the same ground as the grass around it — the wood's
-      // colour comes from the trees, not the tile — so edges blend seamlessly.
+      // Forests AND mountains sit on the same ground as the land around them —
+      // the trees / the peak provide the colour, not the tile — so their edges
+      // blend seamlessly into the grass instead of ending on a hard border.
       const color = biome === 'water' ? waterColorAt(row, col)
-        : biome === 'forest' ? BIOME_COLORS.grass
+        : (biome === 'forest' || biome === 'rock') ? BIOME_COLORS.grass
         : BIOME_COLORS[biome];
       const g = drawTile(biomeLayer, col, row, biome);
-      if (biome === 'water' || biome === 'forest') redrawBiomeTile(g, color);
+      if (biome === 'water' || biome === 'forest' || biome === 'rock') redrawBiomeTile(g, color);
       if (biome !== 'water') decorateTile(g, biome, row, col);
       biomeTileVisuals[row][col] = { g, curColor: color, targetColor: color };
     }
