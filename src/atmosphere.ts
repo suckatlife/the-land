@@ -66,7 +66,7 @@ export const ATMOS = {
     // up to the horizon instead of sitting inside it. 0 = the flat diamond,
     // 1 = wings fully on the arc (too much; far columns stretch visibly).
     curvature: 0.62,
-    perspective: 0.85,      // stronger foreshortening — tiles squeeze skinnier toward the top, reading as a real globe
+    perspective: 0.65,      // foreshortening — tiles squeeze skinnier toward the top, reading as a globe (not a fishbowl)
     pinchMaxFrac:     0.16,  // at perspective=1: horizontal narrowing of the far edge
     vertCompressFrac: 2.4,   // at perspective=1: how hard rows thin toward the horizon (t^(1+this))
     // The limb: a true circular horizon, screen-space, that clips the world.
