@@ -1438,12 +1438,28 @@ function drawRivers() {
   riverGfx.clear();
   const rivers = generateRivers(elevationMap, biomeMap, currentSeed);
   for (const path of rivers) {
-    for (let i = 1; i < path.length; i++) {
-      const a = gridToScreen(path[i - 1].col, path[i - 1].row);
-      const b = gridToScreen(path[i].col, path[i].row);
-      const t = i / path.length;
+    const pts = path.map(p => gridToScreen(p.col, p.row));
+    if (pts.length < 2) continue;
+    // Wiggle each point sideways (perpendicular to the local flow) with a
+    // couple of overlaid waves, so dead-straight grid channels meander like
+    // real rivers instead of ruler-straight lines. Amplitude grows downstream.
+    const m = pts.map((p, i) => {
+      const prev = pts[Math.max(0, i - 1)], next = pts[Math.min(pts.length - 1, i + 1)];
+      let dx = next.x - prev.x, dy = next.y - prev.y;
+      const len = Math.hypot(dx, dy) || 1; dx /= len; dy /= len;
+      const t = i / pts.length;
+      const amp = 2.2 + 4.2 * t;
+      const off = (Math.sin(i * 0.5) * 0.62 + Math.sin(i * 0.21 + 1.3) * 0.42) * amp;
+      return { x: p.x - dy * off, y: p.y + dx * off };
+    });
+    for (let i = 1; i < m.length; i++) {
+      const t = i / m.length;
+      // Fade the last few segments into the sea so the mouth dissolves into the
+      // ocean rather than ending on an off-colour stub.
+      const mouth = Math.min(1, (m.length - i) / 3.5);
+      const a = m[i - 1], b = m[i];
       riverGfx.moveTo(a.x, a.y).lineTo(b.x, b.y)
-        .stroke({ color: 0x6fa8c8, alpha: 0.6 + 0.3 * t, width: 1.0 + 2.4 * t, cap: 'round', join: 'round' });
+        .stroke({ color: 0x6fa8c8, alpha: (0.55 + 0.3 * t) * mouth, width: 1.0 + 2.4 * t, cap: 'round', join: 'round' });
     }
   }
 }

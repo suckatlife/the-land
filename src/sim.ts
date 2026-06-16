@@ -1586,9 +1586,11 @@ export function step(
           const neighbors = [[row - 1, col], [row + 1, col], [row, col - 1], [row, col + 1]];
           for (const [r, c] of neighbors) {
             if (r < 0 || r >= world.height || c < 0 || c >= world.width) continue;
-            // Sea and mountain are unsettleable — civilizations flow around
-            // them, so coasts and high rock read as natural borders.
-            if (biomes[r][c] === 'water' || biomes[r][c] === 'rock') continue;
+            // The sea stops expansion. Mountains can be CLAIMED (so they take
+            // the country's colour like the land around them) but never have a
+            // city founded on them or buildings drawn on them — handled at
+            // founding/landing and in the renderer.
+            if (biomes[r][c] === 'water') continue;
             const neighborSnap = snapshot[r][c];
             const neighborTile = world.tiles[r][c];
 
