@@ -1055,6 +1055,12 @@ const omenStarGfx = new Graphics();
 const impactFlash = new Graphics();
 impactFlash.alpha = 0;
 impactFlash.visible = false;
+// World-turnover blackout: the screen falls to black at the cataclysm, holds a
+// beat, then the new world rises out of the dark.
+const blackoutGfx = new Graphics();
+blackoutGfx.alpha = 0;
+blackoutGfx.visible = false;
+blackoutGfx.eventMode = 'none';
 // Pollution: a brown smog that thickens as the world ages toward the
 // cataclysm (worse in industrial+ eras), then clears when the world is
 // remade. Fullscreen multiply — hidden until the late cycle, so no cost
@@ -1071,6 +1077,7 @@ app.stage.addChild(dreadTint);
 app.stage.addChild(dreadVignette);
 app.stage.addChild(omenStarGfx);
 app.stage.addChild(impactFlash);
+app.stage.addChild(blackoutGfx); // top-most: nothing renders over the turnover black
 
 function layoutAtmosphere() {
   dreadTint.clear();
@@ -1079,6 +1086,8 @@ function layoutAtmosphere() {
   dreadVignette.height = window.innerHeight;
   impactFlash.clear();
   impactFlash.rect(0, 0, window.innerWidth, window.innerHeight).fill(0xffffff);
+  blackoutGfx.clear();
+  blackoutGfx.rect(0, 0, window.innerWidth, window.innerHeight).fill(0x000000);
   pollutionGfx.clear();
   pollutionGfx.rect(0, 0, window.innerWidth, window.innerHeight).fill(0xffffff);
 }
@@ -1259,13 +1268,6 @@ interface BiomeTileVisual {
   targetColor: number;
 }
 
-interface CivLabel {
-  text: Text;
-  civId: number;
-  curOpacity: number;
-  targetOpacity: number;
-}
-const civLabels = new Map<number, CivLabel>();
 let tileVisuals: (TileVisual | null)[][] = Array.from({ length: GRID_SIZE }, () =>
   Array(GRID_SIZE).fill(null)
 );
@@ -2877,7 +2879,7 @@ function maybeSpawnBirdFlock(dt: number, night: number) {
   const start = gridToScreen(a.c, a.r);
   const end = gridToScreen(b.c, b.r);
   const dist = Math.hypot(end.x - start.x, end.y - start.y);
-  birdFlocks.push({ sx: start.x, sy: start.y, tx: end.x, ty: end.y, t: 0, dur: dist / 130 + 0.6, n: 4 + Math.floor(Math.random() * 4), ph: (a.r * 13 + a.c * 7) % 100 });
+  birdFlocks.push({ sx: start.x, sy: start.y, tx: end.x, ty: end.y, t: 0, dur: dist / 65 + 1.0, n: 4 + Math.floor(Math.random() * 4), ph: (a.r * 13 + a.c * 7) % 100 });
 }
 
 function drawBird(g: Graphics, x: number, y: number, hx: number, hy: number, flap: number, a: number) {
@@ -2908,7 +2910,7 @@ function updateBirdFlocks(dt: number, nowSec: number, night: number) {
       const side = k === 0 ? 0 : (k % 2 === 0 ? 1 : -1);
       const bx = x - hx * rank * 4 + px * side * rank * 3;
       const by = y - hy * rank * 4 + py * side * rank * 3;
-      const flap = Math.sin(nowSec * 9 + f.ph + k * 0.7) * 0.5 + 0.5;
+      const flap = Math.sin(nowSec * 6 + f.ph + k * 0.7) * 0.5 + 0.5;
       drawBird(birdFlockGfx, bx, by, hx, hy, flap, a);
     }
   }
@@ -3195,23 +3197,6 @@ function drawCityMarkers() {
         marker.fill({ color: civ.color, alpha: 0.85 });
       }
       cityMarkersContainer.addChild(marker);
-      if (city.prominence >= CITY.nameLabelThreshold) {
-        const fontSize = 7 + Math.round(city.prominence * 4);
-        const cityLabel = new Text({
-          text: city.name,
-          style: new TextStyle({
-            fontFamily: LABEL.fontFamily,
-            fontSize,
-            fill: civ.color,
-            stroke: { color: 0x000000, width: 1.5, join: 'round' },
-            dropShadow: { alpha: 0.5, blur: 2, color: 0x000000, distance: 1 },
-          }),
-        });
-        cityLabel.anchor.set(0.5, 0);
-        cityLabel.x = x;
-        cityLabel.y = y + markerRadius + 3;
-        cityMarkersContainer.addChild(cityLabel);
-      }
     }
   }
 }
@@ -3427,8 +3412,6 @@ function resetWorld(newSeed: string) {
   eventLog.length = 0;
   atmos.clearScars();
   resetStorySurfaces();
-  for (const lbl of civLabels.values()) { labelLayer.removeChild(lbl.text); lbl.text.destroy(); }
-  civLabels.clear();
   clearSimLayer();
   clearBuildingLayer();
   drawBiomes();
@@ -3457,8 +3440,6 @@ function resetSimOnly() {
   eventLog.length = 0;
   atmos.clearScars();
   resetStorySurfaces();
-  for (const lbl of civLabels.values()) { labelLayer.removeChild(lbl.text); lbl.text.destroy(); }
-  civLabels.clear();
   clearSimLayer();
   clearBuildingLayer();
   for (let row = 0; row < GRID_SIZE; row++) {
@@ -3493,6 +3474,11 @@ resetStorySurfaces();
 let accumulator = 0;
 let frameCount = 0;
 let breathT = 0;
+// World-turnover blackout state.
+let blackout = 0;        // current overlay opacity
+let blackoutHold = 0;    // seconds left to hold full black before fading up
+const BLACKOUT_HOLD = 0.7;  // beat of pure black at the turnover
+const BLACKOUT_FADE = 1.8;  // seconds for the new world to rise out of black
 const BARS_REFRESH_FRAMES = 10;  // DOM rebuild for civ bar panel; ~6 Hz at 60fps
 
 // Rare celestial events get a narrated line — wonder, not warning.
@@ -3557,6 +3543,9 @@ app.ticker.add((ticker) => {
       resetWorld(randomSeed());
       frameEvents.length = 0;  // drop events from the now-defunct world
       pushNarration(pick(CATACLYSM_NARRATIONS), { priority: 'high', variant: 'catastrophe' });
+      // Snap to black the instant the new world is built — hides the pop, then
+      // holds a beat before the fresh map rises out of the dark.
+      blackout = 1; blackoutHold = BLACKOUT_HOLD;
     }
   }
   pushLogEvents(frameEvents);
@@ -3610,6 +3599,16 @@ app.ticker.add((ticker) => {
   riverGfx.tint = lerpColor(0xffffff, L.color, 0.35);
   const dtSec = ticker.deltaMS / 1000;
   const nowSec = performance.now() / 1000;
+  // World-turnover blackout: hold full black for a beat, then ease it away so
+  // the new world rises out of the dark.
+  if (blackout > 0) {
+    if (blackoutHold > 0) blackoutHold -= dtSec;
+    else blackout = Math.max(0, blackout - dtSec / BLACKOUT_FADE);
+    blackoutGfx.alpha = blackout;
+    blackoutGfx.visible = true;
+  } else if (blackoutGfx.visible) {
+    blackoutGfx.visible = false;
+  }
   updateSmoke(dtSec);
   drawRoads(dtSec);
   drawPowerLines(dtSec, n);
@@ -3920,7 +3919,7 @@ function updateBars() {
     living.push({ civ, count: counts.get(civ.id) || 0 });
   }
   living.sort((a, b) => b.count - a.count);
-  const shown = living.slice(0, 8);
+  const shown = living.slice(0, 5);
   const more = living.length - shown.length;
   const maxCount = Math.max(40, ...living.map((l) => l.count));
   const now = Date.now();
@@ -4065,8 +4064,6 @@ document.getElementById('skip')!.addEventListener('click', () => {
   }
   rebuildBuildingSprites();
   drawCityMarkers();
-  for (const lbl of civLabels.values()) { labelLayer.removeChild(lbl.text); lbl.text.destroy(); }
-  civLabels.clear();
   eventLog.length = 0;
   accumulator = 0;
   running = wasRunning;
