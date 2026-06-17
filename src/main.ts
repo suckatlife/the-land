@@ -1566,7 +1566,13 @@ function drawBiomes() {
 let biomeCacheDirty = false;
 let waterMaskDirty = false;
 let lastBiomeBake = -1e9;
-const BIOME_BAKE_INTERVAL = 18; // ticks between re-baking the cache for slow land change
+let lastWaterMask = -1e9;
+// Re-baking the cached biome texture can flash uninitialised garbage for one
+// frame on some GPUs (Mesa/SteamOS). The crossfade overlay already carries each
+// changed tile at full opacity, so we let the cached base lag far behind and
+// re-bake only rarely — the overlay holds the correct look until it catches up.
+const BIOME_BAKE_INTERVAL = 900;  // ~30s between cache re-bakes
+const WATER_MASK_INTERVAL = 30;   // ~1s — mask geometry only, no texture re-bake
 function refreshBiomeTile(row: number, col: number) {
   const btv = biomeTileVisuals[row][col];
   if (!btv) return;
@@ -1622,15 +1628,17 @@ function clearBiomeTrans() {
   biomeTrans.clear();
 }
 
-// Apply any pending biome re-bake / water-mask rebuild, throttled.
+// Apply the pending water-mask rebuild (often) and the biome cache re-bake
+// (rarely) — both throttled, on separate clocks.
 function flushBiomeChanges(tick: number) {
-  if (!biomeCacheDirty && !waterMaskDirty) return;
-  if (tick - lastBiomeBake < BIOME_BAKE_INTERVAL) return;
-  if (waterMaskDirty) { rebuildWaterMask(); waterMaskDirty = false; }
-  if (biomeCacheDirty) { (biomeLayer as any).updateCacheTexture?.(); biomeCacheDirty = false; }
-  lastBiomeBake = tick;
-  // Committed tiles are now in the cache — retire their fade overlays.
-  for (const [key, tr] of biomeTrans) if (tr.committed) { biomeTransLayer.removeChild(tr.g); tr.g.destroy(); biomeTrans.delete(key); }
+  if (waterMaskDirty && tick - lastWaterMask >= WATER_MASK_INTERVAL) {
+    rebuildWaterMask(); waterMaskDirty = false; lastWaterMask = tick;
+  }
+  if (biomeCacheDirty && tick - lastBiomeBake >= BIOME_BAKE_INTERVAL) {
+    (biomeLayer as any).updateCacheTexture?.(); biomeCacheDirty = false; lastBiomeBake = tick;
+    // Committed tiles are now in the cache — retire their fade overlays.
+    for (const [key, tr] of biomeTrans) if (tr.committed) { biomeTransLayer.removeChild(tr.g); tr.g.destroy(); biomeTrans.delete(key); }
+  }
 }
 
 function clearSimLayer() {
@@ -3764,7 +3772,9 @@ let farmCacheDirty = false;
 let farmGrowDrawn = false;
 let lastFarmBake = -1e9;
 const FARM_GROW_SPEED = 0.05;     // per-frame ease toward full (~1s grow-in, like buildings)
-const FARM_BAKE_INTERVAL = 30;    // ticks between folding finished fields into the cache
+const FARM_BAKE_INTERVAL = 600;   // ~20s between cache re-bakes — finished fields wait in the
+                                  // uncached grow overlay meanwhile, so the cache re-bakes rarely
+                                  // (each re-bake can flash garbage for one frame on some GPUs)
 
 // Draw one field tile (its 3×3 sub-diamond quilt) into a target at the given
 // opacity multiplier.
