@@ -686,6 +686,9 @@ const farmGrowGfx = new Graphics();  // fields currently growing in, animated pe
 const seaTrailGfx = new Graphics();  // worn sea lanes (boats); brighten with reuse
 const landTrailGfx = new Graphics(); // worn land routes (caravans/trains)
 const airTrailGfx = new Graphics();  // flight corridors (planes)
+const platformGfx = new Graphics();  // offshore platforms (modern+), over water
+const satelliteGfx = new Graphics(); // satellites crossing the sky (screen-space)
+satelliteGfx.eventMode = 'none';
 const buildingLayer = new Container();
 buildingLayer.sortableChildren = true;
 const expeditionLayer = new Container();
@@ -724,6 +727,8 @@ world.addChild(expeditionLayer);
 world.addChild(nomadGfx);
 // Worn sea lanes lie on the water, beneath the boats that wear them.
 world.addChild(seaTrailGfx);
+// Offshore platforms stand on the sea lanes, beneath the boats.
+world.addChild(platformGfx);
 world.addChild(boatsGfx);
 // Directional land light sits under the cloud shadows (clouds block sun).
 world.addChild(atmos.landLightLayer);
@@ -794,6 +799,8 @@ app.stage.addChild(worldPlane);
 app.stage.addChild(atmos.limbMask);
 app.stage.addChild(atmos.limbBand);
 app.stage.addChild(atmos.glazeLayer);
+// Satellites cross the sky over the planet (screen-space, in front of the limb).
+app.stage.addChild(satelliteGfx);
 // The silhouette remap needs the diamond's corners in texture pixels.
 const toTex = (wx: number, wy: number) => ({
   x: (wx - WORLD_CAPTURE.x0) * captureScale,
@@ -2795,6 +2802,105 @@ function maybeSpawnRockets(dt: number) {
   triggerPing(city.row, city.col, 0xfff0d0);
 }
 
+// The space age: any living modern-or-later civ has put things in orbit.
+function spaceAge(): boolean {
+  for (const civ of simWorld.civs.values()) if (civ.phase !== 'dead' && ERA_RANK[civ.era] >= 4) return true;
+  return false;
+}
+
+// Satellites: slow points of light gliding across the sky once a civ reaches the
+// space age — brightest at night, all but invisible by day. Screen-space, so
+// they cross the whole firmament over the planet.
+interface Satellite { x: number; y: number; vx: number; vy: number; blink: number }
+const satellites: Satellite[] = [];
+function maybeSpawnSatellite(dt: number) {
+  if (satellites.length >= 4 || !spaceAge() || Math.random() > dt / 4) return;
+  const W = window.innerWidth, H = window.innerHeight;
+  const leftToRight = Math.random() < 0.5;
+  const sp = 38 + Math.random() * 46;                 // px/s — a slow orbital glide
+  const slope = (Math.random() - 0.5) * 0.5;          // mostly horizontal
+  satellites.push({
+    x: leftToRight ? -24 : W + 24,
+    y: H * (0.06 + Math.random() * 0.48),             // up in the sky band
+    vx: (leftToRight ? 1 : -1) * sp,
+    vy: slope * sp,
+    blink: Math.random() * 10,
+  });
+}
+function updateSatellites(dt: number, nowSec: number, night: number) {
+  satelliteGfx.clear();
+  if (satellites.length === 0) return;
+  const W = window.innerWidth, H = window.innerHeight;
+  const vis = Math.min(1, 0.12 + night * 1.15); // bright at night, near-invisible by day
+  for (let i = satellites.length - 1; i >= 0; i--) {
+    const s = satellites[i];
+    s.x += s.vx * dt; s.y += s.vy * dt;
+    if (s.x < -40 || s.x > W + 40 || s.y < -40 || s.y > H + 40) { satellites.splice(i, 1); continue; }
+    // a faint trailing streak, then the blinking body
+    satelliteGfx.moveTo(s.x - s.vx * 0.07, s.y - s.vy * 0.07).lineTo(s.x, s.y)
+      .stroke({ color: 0xcfe0ff, alpha: 0.22 * vis, width: 1 });
+    const bl = 0.55 + 0.45 * Math.sin(nowSec * 3 + s.blink);
+    satelliteGfx.circle(s.x, s.y, 1.5).fill({ color: 0xffffff, alpha: vis * bl });
+    satelliteGfx.circle(s.x, s.y, 0.7).fill({ color: 0xbad6ff, alpha: vis });
+  }
+}
+
+// Offshore platforms: artificial decks standing in open water that a space-age
+// civ raises off its coast — sea-station waypoints, wired into the sea lanes.
+interface Platform { row: number; col: number; color: number }
+const platforms: Platform[] = [];
+const PLATFORM_PER_CIV = 2;
+// A deterministic open-water tile a few steps off a coastal city (stable across
+// rebuilds so platforms don't jump around).
+function findOffshore(city: CivCity): { row: number; col: number } | null {
+  const w = coastalWaterNear(city);
+  if (!w) return null;
+  let dr = Math.sign(w.row - city.row), dc = Math.sign(w.col - city.col);
+  if (dr === 0 && dc === 0) dc = 1;
+  const dist = 3 + ((city.row * 7 + city.col * 13) % 4);
+  let r = w.row, c = w.col;
+  for (let k = 0; k < dist; k++) {
+    const nr = r + dr, nc = c + dc;
+    if (nr < 0 || nr >= GRID_SIZE || nc < 0 || nc >= GRID_SIZE || biomeMap[nr][nc] !== 'water') break;
+    r = nr; c = nc;
+  }
+  return (r !== w.row || c !== w.col) && biomeMap[r][c] === 'water' ? { row: r, col: c } : null;
+}
+function rebuildPlatforms() {
+  platforms.length = 0;
+  for (const civ of simWorld.civs.values()) {
+    if (civ.phase === 'dead' || ERA_RANK[civ.era] < 4) continue;
+    let made = 0;
+    for (const city of civ.cities) {
+      if (made >= PLATFORM_PER_CIV) break;
+      const off = findOffshore(city);
+      if (!off) continue;
+      platforms.push({ row: off.row, col: off.col, color: civ.color });
+      made++;
+      const cw = coastalWaterNear(city);
+      if (cw) trailAdd(seaTrail, sampleLine(cw.row, cw.col, off.row, off.col), 2); // wire it to the lanes
+    }
+  }
+}
+function updatePlatforms(nowSec: number, night: number) {
+  platformGfx.clear();
+  for (const p of platforms) {
+    const { x, y } = gridToScreen(p.col, p.row);
+    // pylons into the sea
+    platformGfx.moveTo(x - 5, y + 1).lineTo(x - 5, y + 5).moveTo(x + 5, y + 1).lineTo(x + 5, y + 5)
+      .stroke({ color: 0x3c3c44, alpha: 0.7, width: 1.2 });
+    // the deck, with a civ-coloured rim, and a small mast
+    platformGfx.poly([x, y - 3, x + 7, y, x, y + 3, x - 7, y]).fill({ color: 0x6b6b73, alpha: 0.96 });
+    platformGfx.poly([x, y - 3, x + 7, y, x, y + 3, x - 7, y]).stroke({ color: lerpColor(p.color, 0xffffff, 0.25), alpha: 0.6, width: 1 });
+    platformGfx.rect(x - 1, y - 7, 2, 4).fill({ color: 0x55555c });
+    // a beacon that pulses, stronger after dark
+    const bl = 0.5 + 0.5 * Math.sin(nowSec * 2 + p.row);
+    const ng = Math.max(0.25, night);
+    platformGfx.circle(x, y - 8, 2.6).fill({ color: 0xffca6a, alpha: 0.12 * ng * bl });
+    platformGfx.circle(x, y - 8, 1.0).fill({ color: 0xffe6a0, alpha: (0.45 + 0.45 * ng) * bl });
+  }
+}
+
 function updateAir(dt: number, night: number) {
   if (planes.length === 0 && rockets.length === 0) { airGfx.clear(); return; }
   airGfx.clear();
@@ -3171,6 +3277,8 @@ function resetStorySurfaces() {
   roadLines.clear();
   clearFarmland();
   seaTrail.clear(); landTrail.clear(); airTrail.clear(); redrawTrails();
+  satellites.length = 0; satelliteGfx.clear();
+  platforms.length = 0; platformGfx.clear();
   waterRouteCache.clear();
   warHeat.clear();
   conflictFlashes.length = 0;
@@ -3742,6 +3850,9 @@ app.ticker.add((ticker) => {
   updateNomads(nowSec, dtSec, n);
   maybeSpawnRockets(dtSec);
   updateAir(dtSec, n);
+  maybeSpawnSatellite(dtSec);
+  updateSatellites(dtSec, nowSec, n);
+  updatePlatforms(nowSec, n);
   updateBirdFlocks(dtSec, nowSec, n);
   maybeGhost(dtSec, n);
   updateFestival(n);
@@ -3783,6 +3894,7 @@ app.ticker.add((ticker) => {
     maybeSpawnCaravans();
     maybeSpawnHerds();
     maybeSpawnPlanes();
+    rebuildPlatforms();
     // Route trails fade slowly toward the unused, then redraw the worn web.
     trailDecay(seaTrail, 0.99); trailDecay(landTrail, 0.99); trailDecay(airTrail, 0.988);
     redrawTrails();
@@ -4178,6 +4290,7 @@ document.getElementById('skip')!.addEventListener('click', () => {
   }
   rebuildBuildingSprites();
   snapFarmland();
+  rebuildPlatforms();
   seedTrailsAfterSkip();
   drawCityMarkers();
   eventLog.length = 0;
