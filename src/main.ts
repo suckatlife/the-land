@@ -4014,6 +4014,14 @@ app.ticker.add((ticker) => {
   const L = atmos.light();
   const n = L.nightness;
   cityLightsGfx.alpha = LIGHTS.maxAlpha * (n * n * (3 - 2 * n));
+  // Clock text reads dark over the day sky, light over the night sky — softly,
+  // with a contrasting glow so it stays legible without a panel.
+  if (Math.abs(n - lastClockNight) > 0.01) {
+    lastClockNight = n;
+    const lum = 1 - n; // 1 day … 0 night
+    clock.style.color = hexToCss(lerpColor(0xe2e6ee, 0x363a40, lum)); // night light → day dark, neither stark
+    clock.style.textShadow = `0 1px 2px rgba(255,255,255,${(0.45 * lum).toFixed(2)}), 0 1px 3px rgba(0,0,0,${(0.5 * n).toFixed(2)})`;
+  }
   riverGfx.tint = lerpColor(0xffffff, L.color, 0.35);
   const dtSec = ticker.deltaMS / 1000;
   const nowSec = performance.now() / 1000;
@@ -4356,16 +4364,16 @@ hudToggle.textContent = '+';
 // --- Clock + deep-time readout, top-right ---
 const clock = document.createElement('div');
 clock.style.cssText = `
-  position: fixed; top: 12px; right: 12px; text-align: right;
+  position: fixed; top: 14px; right: 16px; text-align: right;
   font-family: ui-monospace, Menlo, Consolas, monospace;
-  background: rgba(255,255,255,0.72); padding: 6px 12px; border-radius: 4px;
-  color: #2a2a2a; user-select: none; pointer-events: none; line-height: 1.25;
+  user-select: none; pointer-events: none; line-height: 1.3;
 `;
-clock.innerHTML = `<div id="clock-time" style="font-size:20px;font-weight:600;letter-spacing:0.5px"></div><div id="clock-date" style="font-size:11px;color:#555"></div><div id="clock-age" style="font-size:10px;color:#7a6a55;margin-top:2px;font-style:italic"></div>`;
+clock.innerHTML = `<div id="clock-time" style="font-size:20px;font-weight:600;letter-spacing:0.5px"></div><div id="clock-date" style="font-size:11px;opacity:0.8"></div><div id="clock-age" style="font-size:10px;opacity:0.66;margin-top:2px;font-style:italic"></div>`;
 document.body.appendChild(clock);
 const clockTime = document.getElementById('clock-time')!;
 const clockDate = document.getElementById('clock-date')!;
 const clockAge = document.getElementById('clock-age')!;
+let lastClockNight = -1; // drives the day/night recolour of the clock text
 const ERA_NAMES: Record<Era, string> = {
   neolithic: 'Stone Age', classical: 'Classical Age', medieval: 'Medieval Age',
   industrial: 'Industrial Age', modern: 'Modern Age', post: 'Age to Come',
@@ -4407,8 +4415,9 @@ requestWakeLock();
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') requestWakeLock(); });
 
 // Idle: after a few seconds of stillness, hide the cursor and fade the chrome to
-// near-nothing so the screen is pure scene; movement brings it all back.
-const fadeUI = [clock, fsBtn, hud];
+// near-nothing so the screen is pure scene; movement brings it all back. The
+// clock stays — it's the one piece of always-on signage.
+const fadeUI = [fsBtn, hud];
 for (const el of fadeUI) (el as HTMLElement).style.transition = 'opacity 0.8s ease';
 let idleTimer = 0;
 function onActivity() {
