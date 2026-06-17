@@ -692,6 +692,7 @@ const cableGfx = new Graphics();     // undersea power/data cables between citie
 const satelliteGfx = new Graphics(); // satellites crossing the sky (screen-space)
 satelliteGfx.eventMode = 'none';
 const buildingLayer = new Container();
+const scaffoldGfx = new Graphics();   // construction frames over buildings going up
 buildingLayer.sortableChildren = true;
 const expeditionLayer = new Container();
 const cityMarkersContainer = new Container();
@@ -719,6 +720,7 @@ world.addChild(wildlifeGfx);
 // Wind shimmer brightens the ground, masked to land below.
 world.addChild(atmos.shimmerLayer);
 world.addChild(buildingLayer);
+world.addChild(scaffoldGfx);
 // The power grid strings over the rooftops (industrial+).
 world.addChild(powerGfx);
 // Conflict flickers and monuments stand among the buildings.
@@ -2830,6 +2832,22 @@ function drawWreck(g: Graphics, w: Wreck, S: number) {
   for (let d = 0; d < 3; d++) g.circle(w.x + Math.sin(w.t * 1.5 + d * 2) * 4, w.y + 1 + d, 0.6).fill({ color: 0x4a4038, alpha: 0.45 * op });
 }
 
+// A building going up wears a timber/steel scaffold (posts + platform beams +
+// a brace) that comes down as the walls fill in. Drawn over the rising sprite.
+function drawScaffold(bx: number, byBase: number, byTop: number, a: number) {
+  const op = Math.max(0, 1 - a / 0.9) * 0.8;
+  if (op <= 0.01) return;
+  const ht = byBase - byTop, sw = 2.6;
+  const post = 0x9a8763, beam = 0xc2b290;
+  scaffoldGfx.rect(bx - sw, byTop, 0.7, ht).fill({ color: post, alpha: op });          // corner posts
+  scaffoldGfx.rect(bx + sw - 0.7, byTop, 0.7, ht).fill({ color: post, alpha: op });
+  for (let lv = 0; lv <= 3; lv++) {                                                     // platform beams
+    const yy = byTop + ht * lv / 3;
+    scaffoldGfx.rect(bx - sw - 0.5, yy, sw * 2 + 1, 0.6).fill({ color: beam, alpha: op * 0.9 });
+  }
+  scaffoldGfx.moveTo(bx - sw, byBase).lineTo(bx + sw, byTop).stroke({ color: post, alpha: op * 0.55, width: 0.6 }); // diagonal brace
+}
+
 function updateWater(dt: number, nowSec: number, night: number) {
   const empty = boats.length === 0 && wrecks.length === 0 && fishSpots.length === 0 && !whale;
   if (empty) { boatsGfx.clear(); return; }
@@ -4218,6 +4236,7 @@ app.ticker.add((ticker) => {
   const ROOF_EASE = 0.10;     // per-frame ease for roof Y slide on era change
   const MID_FLOOR_EASE = 0.07; // per-frame ease for mid-floor alpha
   const bldDone: string[] = [];
+  scaffoldGfx.clear(); // construction frames are redrawn each frame for rising buildings
   for (const key of animatingBuildingTiles) {
     const [r, c] = key.split(',').map(Number);
     const bts = buildingTileStates[r][c];
@@ -4282,6 +4301,13 @@ app.ticker.add((ticker) => {
         // Active building: visibility-driven alpha + era mid-floor/roof eases.
         if (bts.floor1[s]) { bts.floor1[s]!.alpha = a; bts.floor1[s]!.scale.y = BUILDING_SCALE; }
         if (bts.roof[s])   bts.roof[s]!.alpha   = a;
+        // A building going up wears a timber/steel scaffold that comes down as
+        // it fills in — the frame is strongest before the walls arrive.
+        if (bts.floor1[s] && a < 0.9 && bts.targetAlphas[s] - a > 0.02) {
+          const f1 = bts.floor1[s]!;
+          const topY = bts.roof[s] ? bts.roofCurY[s] : f1.y - 8;
+          drawScaffold(f1.x, f1.y, topY, a);
+        }
         for (let i = mfs.length - 1; i >= 0; i--) {
           const mf = mfs[i];
           mf.curAlpha += (mf.targetAlpha - mf.curAlpha) * MID_FLOOR_EASE;
