@@ -699,6 +699,10 @@ const cityMarkersContainer = new Container();
 const labelLayer = new Container();
 const world = new Container();
 world.addChild(biomeLayer);
+// Biome changes (breathing land, forming islands) crossfade in here, over the
+// cached base, until they finish and are folded into the cache.
+const biomeTransLayer = new Container();
+world.addChild(biomeTransLayer);
 // Sun glitter / moon path on the water, masked to water tiles below.
 world.addChild(atmos.glitterLayer);
 // Scenery land sits over the glitter (so the simple water mask suffices).
@@ -1522,6 +1526,7 @@ function decorateTile(g: Graphics, biome: Biome, row: number, col: number) {
 }
 
 function drawBiomes() {
+  clearBiomeTrans(); // a full redraw supersedes any in-flight tile crossfades
   biomeLayer.removeChildren();
   oceanApron = drawOceanApron();
   biomeLayer.addChild(oceanApron);
@@ -1575,6 +1580,48 @@ function refreshBiomeTile(row: number, col: number) {
   biomeCacheDirty = true;
   waterMaskDirty = true;
 }
+// A biome change crossfades in: the NEW tile is drawn in an uncached overlay,
+// easing up over the OLD tile still showing in the cache; when it reaches full
+// it commits to the cache, and the overlay is dropped after the next re-bake (so
+// there's never a one-frame gap between the two).
+interface BiomeTrans { row: number; col: number; alpha: number; committed: boolean; g: Graphics }
+const biomeTrans = new Map<number, BiomeTrans>();
+const BIOME_FADE = 0.016; // per-frame ease — ~1s crossfade at 60fps
+function enrollBiomeTrans(row: number, col: number) {
+  const key = row * GRID_SIZE + col;
+  const biome = biomeMap[row][col];
+  const base = biome === 'water' ? waterColorAt(row, col)
+    : (biome === 'forest' || biome === 'rock') ? BIOME_COLORS.grass
+    : BIOME_COLORS[biome];
+  let tr = biomeTrans.get(key);
+  if (!tr) {
+    const g = new Graphics();
+    const { x, y } = gridToScreen(col, row);
+    g.x = x; g.y = y; g.alpha = 0;
+    biomeTransLayer.addChild(g);
+    tr = { row, col, alpha: 0, committed: false, g };
+    biomeTrans.set(key, tr);
+  }
+  // (Re)draw the new biome into the overlay tile; if it changed again mid-fade,
+  // keep fading from where we are toward the newest look.
+  tr.g.clear();
+  redrawBiomeTile(tr.g, base);
+  if (biome !== 'water') decorateTile(tr.g, biome, row, col);
+  tr.committed = false;
+}
+function updateBiomeTrans() {
+  for (const tr of biomeTrans.values()) {
+    if (tr.committed) continue;
+    tr.alpha = Math.min(1, tr.alpha + BIOME_FADE);
+    tr.g.alpha = tr.alpha;
+    if (tr.alpha >= 1) { refreshBiomeTile(tr.row, tr.col); tr.committed = true; } // fold into the cache
+  }
+}
+function clearBiomeTrans() {
+  for (const tr of biomeTrans.values()) { biomeTransLayer.removeChild(tr.g); tr.g.destroy(); }
+  biomeTrans.clear();
+}
+
 // Apply any pending biome re-bake / water-mask rebuild, throttled.
 function flushBiomeChanges(tick: number) {
   if (!biomeCacheDirty && !waterMaskDirty) return;
@@ -1582,6 +1629,8 @@ function flushBiomeChanges(tick: number) {
   if (waterMaskDirty) { rebuildWaterMask(); waterMaskDirty = false; }
   if (biomeCacheDirty) { (biomeLayer as any).updateCacheTexture?.(); biomeCacheDirty = false; }
   lastBiomeBake = tick;
+  // Committed tiles are now in the cache — retire their fade overlays.
+  for (const [key, tr] of biomeTrans) if (tr.committed) { biomeTransLayer.removeChild(tr.g); tr.g.destroy(); biomeTrans.delete(key); }
 }
 
 function clearSimLayer() {
@@ -3999,9 +4048,9 @@ app.ticker.add((ticker) => {
     const { changes, events, biomeChanges } = step(simWorld, biomeMap, elevationMap);
     frameEvents.push(...events);
     for (const { row, col } of changes) { noteTileChange(row, col); refreshTileOverlay(row, col); refreshBuildingSprite(row, col); noteFarmTile(row, col); }
-    // Biome changes (the breathing land, plus floods/quakes) re-draw the tile;
-    // the cache re-bake + water mask follow on a throttle (flushBiomeChanges).
-    for (const { row, col } of biomeChanges) { refreshBiomeTile(row, col); }
+    // Biome changes (the breathing land, plus floods/quakes) crossfade in over
+    // the cached base, then commit to the cache when the fade completes.
+    for (const { row, col } of biomeChanges) { enrollBiomeTrans(row, col); }
     // When a civ transitions to 'dead', its still-built tiles change 
     // color (toward gray). The per-tile `changes` list won't include 
     // them because their *state* didn't change. So once a tick we 
@@ -4104,6 +4153,7 @@ app.ticker.add((ticker) => {
   }
   updateSmoke(dtSec);
   updateFarmGrowth(simWorld.tick);
+  updateBiomeTrans();
   flushBiomeChanges(simWorld.tick);
   drawRoads(dtSec);
   drawPowerLines(dtSec, n);
