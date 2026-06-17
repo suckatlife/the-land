@@ -683,6 +683,9 @@ const biomeLayer = new Container();
 const simLayer = new Container();
 const farmGfx = new Graphics();      // mature fields, cached to one texture (cheap)
 const farmGrowGfx = new Graphics();  // fields currently growing in, animated per-frame
+const seaTrailGfx = new Graphics();  // worn sea lanes (boats); brighten with reuse
+const landTrailGfx = new Graphics(); // worn land routes (caravans/trains)
+const airTrailGfx = new Graphics();  // flight corridors (planes)
 const buildingLayer = new Container();
 buildingLayer.sortableChildren = true;
 const expeditionLayer = new Container();
@@ -702,6 +705,8 @@ world.addChild(farmGfx);
 world.addChild(farmGrowGfx);
 // Roads over the tints (still under scars and buildings).
 world.addChild(roadsGfx);
+// Worn land routes (traffic heat) sit just over the roads.
+world.addChild(landTrailGfx);
 // Scars sit above civ tints (catastrophes hit settled land) but below buildings.
 world.addChild(atmos.scarLayer);
 // Wild herds graze the open land, beneath the towns that will displace them.
@@ -717,6 +722,8 @@ world.addChild(wonderGfx);
 world.addChild(expeditionLayer);
 // Nomad bands and sea craft travel the surface.
 world.addChild(nomadGfx);
+// Worn sea lanes lie on the water, beneath the boats that wear them.
+world.addChild(seaTrailGfx);
 world.addChild(boatsGfx);
 // Directional land light sits under the cloud shadows (clouds block sun).
 world.addChild(atmos.landLightLayer);
@@ -735,6 +742,8 @@ world.addChild(atmos.stormLayer);
 world.addChild(atmos.birdLayer);
 // Smaller flocks skim the canopy, forest to forest, above the surface life.
 world.addChild(birdFlockGfx);
+// Flight corridors hang faintly in the air, beneath the planes that trace them.
+world.addChild(airTrailGfx);
 // Planes and rockets fly in the air, above everything on the ground.
 world.addChild(airGfx);
 world.addChild(cityMarkersContainer);
@@ -2389,6 +2398,82 @@ function rebuildWonders() {
   }
 }
 
+// Route trails: every dispatched boat / caravan / train / plane lays a faint
+// trail along its route; reused routes brighten and thicken, disused ones fade.
+// By the modern age the map shows the worn web of sea lanes, rails, and flight
+// corridors. Keyed by the unordered pair of adjacent tiles (an edge), so the
+// trails read as continuous lines.
+const TRAIL_N = GRID_SIZE * GRID_SIZE;
+const TRAIL_CAP = 12;        // heat at which a route is fully worn in
+type Trail = Map<number, number>;
+const seaTrail: Trail = new Map();
+const landTrail: Trail = new Map();
+const airTrail: Trail = new Map();
+
+function trailAdd(trail: Trail, path: Array<{ row: number; col: number }>, amount: number) {
+  for (let i = 0; i < path.length - 1; i++) {
+    const ka = path[i].row * GRID_SIZE + path[i].col;
+    const kb = path[i + 1].row * GRID_SIZE + path[i + 1].col;
+    if (ka === kb) continue;
+    const ek = ka < kb ? ka * TRAIL_N + kb : kb * TRAIL_N + ka;
+    trail.set(ek, Math.min(TRAIL_CAP, (trail.get(ek) || 0) + amount));
+  }
+}
+function trailDecay(trail: Trail, f: number) {
+  for (const [k, v] of trail) { const nv = v * f; if (nv < 0.3) trail.delete(k); else trail.set(k, nv); }
+}
+function drawTrail(g: Graphics, trail: Trail, color: number, baseA: number, peakA: number, baseW: number, peakW: number) {
+  g.clear();
+  for (const [ek, heat] of trail) {
+    const ka = (ek / TRAIL_N) | 0, kb = ek % TRAIL_N;
+    const pa = gridToScreen(ka % GRID_SIZE, (ka / GRID_SIZE) | 0);
+    const pb = gridToScreen(kb % GRID_SIZE, (kb / GRID_SIZE) | 0);
+    const t = Math.min(1, heat / TRAIL_CAP);
+    g.moveTo(pa.x, pa.y).lineTo(pb.x, pb.y)
+      .stroke({ color, alpha: baseA + (peakA - baseA) * t, width: baseW + (peakW - baseW) * t, cap: 'round' });
+  }
+}
+// Tiles along the straight line between two points (for flight corridors).
+function sampleLine(r0: number, c0: number, r1: number, c1: number): Array<{ row: number; col: number }> {
+  const steps = Math.max(Math.abs(r1 - r0), Math.abs(c1 - c0));
+  const out: Array<{ row: number; col: number }> = [];
+  for (let s = 0; s <= steps; s++) {
+    const t = steps ? s / steps : 0;
+    out.push({ row: Math.round(r0 + (r1 - r0) * t), col: Math.round(c0 + (c1 - c0) * t) });
+  }
+  return out;
+}
+function redrawTrails() {
+  drawTrail(seaTrailGfx, seaTrail, 0xeafdff, 0.12, 0.70, 1.1, 3.8);
+  drawTrail(landTrailGfx, landTrail, 0x46371f, 0.12, 0.55, 1.0, 3.0);
+  drawTrail(airTrailGfx, airTrail, 0xeaf0fa, 0.07, 0.40, 0.7, 2.2);
+}
+// A "skip 5k" fast-forwards past all the real-time travel that would have worn
+// the routes in, so seed the trails from each civ's city network (older, larger
+// civs more worn) — otherwise jumping to the modern age shows a blank map.
+function seedTrailsAfterSkip() {
+  let budget = 90;
+  for (const civ of simWorld.civs.values()) {
+    if (civ.phase === 'dead' || civ.cities.length < 2) continue;
+    const era = ERA_RANK[civ.era];
+    const hub = civ.cities[0];
+    for (let i = 1; i < civ.cities.length && budget > 0; i++, budget--) {
+      const city = civ.cities[i];
+      const rp = roadBetween(hub, city);
+      if (rp && rp.length >= 2) trailAdd(landTrail, rp, 4 + era);
+      const wa = coastalWaterNear(hub), wb = coastalWaterNear(city);
+      if (wa && wb) {
+        const ck = `${wa.row},${wa.col}-${wb.row},${wb.col}`;
+        if (!waterRouteCache.has(ck)) waterRouteCache.set(ck, findWaterPath(wa.row, wa.col, wb.row, wb.col));
+        const r = waterRouteCache.get(ck);
+        if (r && r.length >= 6) trailAdd(seaTrail, r, 3 + era * 0.5);
+      }
+      if (era >= 4) trailAdd(airTrail, sampleLine(hub.row, hub.col, city.row, city.col), 3 + era * 0.5);
+    }
+  }
+  redrawTrails();
+}
+
 // Boats, fishing dots, whales — small life on the water.
 interface Boat { pts: Array<{ x: number; y: number }>; idx: number; speed: number; color: number }
 const boats: Boat[] = [];
@@ -2557,6 +2642,7 @@ function maybeSpawnBoats() {
     if (!waterRouteCache.has(ck)) waterRouteCache.set(ck, findWaterPath(a.row, a.col, b.row, b.col));
     const route = waterRouteCache.get(ck);
     if (!route || route.length < 6) continue;
+    trailAdd(seaTrail, route, 1.3); // wear the sea lane
     boats.push({
       pts: route.map((p) => gridToScreen(p.col, p.row)),
       idx: 0,
@@ -2656,6 +2742,7 @@ function maybeSpawnCaravans() {
     if (j >= i) j++;
     const path = roadBetween(cities[i], cities[j]);
     if (!path || path.length < 4) continue;
+    trailAdd(landTrail, path, 1.3); // wear the road
     const train = ERA_RANK[civ.era] >= 3; // industrial onward runs rails
     caravans.push({
       pts: path.map((p) => gridToScreen(p.col, p.row)),
@@ -2678,15 +2765,21 @@ const rockets: Rocket[] = [];
 function maybeSpawnPlanes() {
   if (planes.length >= 5) return;
   for (const civ of simWorld.civs.values()) {
-    if (civ.phase === 'dead' || ERA_RANK[civ.era] < 4) continue;
+    if (civ.phase === 'dead' || ERA_RANK[civ.era] < 4 || civ.cities.length < 2) continue;
     if (Math.random() > 0.4) continue;
-    const city = civ.cities[Math.floor(Math.random() * civ.cities.length)];
-    if (!city) continue;
-    const { x, y } = gridToScreen(city.col, city.row);
-    const ang = Math.random() * Math.PI * 2;
+    // Fly between two of the civ's cities so the corridor is reused and worn in.
+    const cities = civ.cities;
+    const i = Math.floor(Math.random() * cities.length);
+    let j = Math.floor(Math.random() * (cities.length - 1));
+    if (j >= i) j++;
+    const A = cities[i], B = cities[j];
+    trailAdd(airTrail, sampleLine(A.row, A.col, B.row, B.col), 1.6); // lay the flight corridor
+    const pa = gridToScreen(A.col, A.row), pb = gridToScreen(B.col, B.row);
+    let dx = pb.x - pa.x, dy = pb.y - pa.y;
+    const d = Math.hypot(dx, dy) || 1; dx /= d; dy /= d;
     const sp = 130 + Math.random() * 90;
-    // Start off to one side so it flies across through the city's region.
-    planes.push({ x: x - Math.cos(ang) * 700, y: y - Math.sin(ang) * 350, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp * 0.5, trail: [], color: 0xeef2f8 });
+    // Start a little before A and fly through B and off the far side.
+    planes.push({ x: pa.x - dx * 140, y: pa.y - dy * 140, vx: dx * sp, vy: dy * sp, trail: [], color: 0xeef2f8 });
     if (planes.length >= 5) return;
   }
 }
@@ -3077,6 +3170,7 @@ function resetStorySurfaces() {
   roadPathCache.clear();
   roadLines.clear();
   clearFarmland();
+  seaTrail.clear(); landTrail.clear(); airTrail.clear(); redrawTrails();
   waterRouteCache.clear();
   warHeat.clear();
   conflictFlashes.length = 0;
@@ -3689,6 +3783,9 @@ app.ticker.add((ticker) => {
     maybeSpawnCaravans();
     maybeSpawnHerds();
     maybeSpawnPlanes();
+    // Route trails fade slowly toward the unused, then redraw the worn web.
+    trailDecay(seaTrail, 0.99); trailDecay(landTrail, 0.99); trailDecay(airTrail, 0.988);
+    redrawTrails();
     queueFestivals();
     checkWarQuiet();
     maybeNameConstellations();
@@ -4081,6 +4178,7 @@ document.getElementById('skip')!.addEventListener('click', () => {
   }
   rebuildBuildingSprites();
   snapFarmland();
+  seedTrailsAfterSkip();
   drawCityMarkers();
   eventLog.length = 0;
   accumulator = 0;
