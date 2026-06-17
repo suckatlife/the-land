@@ -2553,8 +2553,13 @@ function seedTrailsAfterSkip() {
 }
 
 // Boats, fishing dots, whales — small life on the water.
-interface Boat { pts: Array<{ x: number; y: number }>; idx: number; speed: number; color: number; era: number }
+interface Boat { pts: Array<{ x: number; y: number }>; idx: number; speed: number; color: number; era: number; fade: number }
 const boats: Boat[] = [];
+// Shipwrecks: a boat that founders becomes a broken hull that settles, sinks,
+// and fades over a few seconds.
+interface Wreck { x: number; y: number; fx: number; fy: number; color: number; era: number; t: number }
+const wrecks: Wreck[] = [];
+const WRECK_LIFE = 8;
 const waterRouteCache = new Map<string, Array<{ row: number; col: number }> | null>();
 let fishSpots: Array<{ x: number; y: number }> = [];
 let whale: { x: number; y: number; t: number } | null = null;
@@ -2634,7 +2639,7 @@ function travelerDot(g: Graphics, x: number, y: number, r: number, color: number
 // night. Replaces the old dot so craft read as boats moving on the sea.
 // Trade boats progress through the ages: a sailboat in the early eras, a
 // smoking steamship in the industrial age, a container ship by the modern age.
-function drawBoat(g: Graphics, x: number, y: number, fx: number, fy: number, color: number, S: number, night: number, era: number) {
+function drawBoat(g: Graphics, x: number, y: number, fx: number, fy: number, color: number, S: number, night: number, era: number, op = 1) {
   const rx = -fy, ry = fx; // beam (perpendicular to heading)
   const ng = Math.min(1, night);
   if (era >= 4) {
@@ -2645,20 +2650,20 @@ function drawBoat(g: Graphics, x: number, y: number, fx: number, fy: number, col
       x + rx * W * 0.5, y + ry * W * 0.5,
       x - fx * L * 0.95, y - fy * L * 0.95,    // squared stern
       x - rx * W * 0.5, y - ry * W * 0.5,
-    ]).fill({ color: 0x39434e, alpha: 0.96 });
+    ]).fill({ color: 0x39434e, alpha: 0.96 * op });
     const cc = [0xb5532e, 0x2f6ea8, 0x3f8f5a, 0xc9a23a, color]; // cargo + a civ-coloured box
     for (let n = 0; n < 5; n++) {
       const t = -0.55 + n * 0.3;
       const dx = x + fx * L * t, dy = y + fy * L * t;
       const hh = (1.5 + (n % 2) * 1.1) * S;
-      g.rect(dx - 0.85 * S, dy - hh, 1.7 * S, hh).fill({ color: cc[n % cc.length], alpha: 0.95 });
+      g.rect(dx - 0.85 * S, dy - hh, 1.7 * S, hh).fill({ color: cc[n % cc.length], alpha: 0.95 * op });
     }
     const ax = x - fx * L * 0.78, ay = y - fy * L * 0.78;
-    g.rect(ax - 0.9 * S, ay - 2.6 * S, 1.8 * S, 2.6 * S).fill({ color: 0xe7ecf1, alpha: 0.95 }); // bridge
-    g.rect(ax - 0.35 * S, ay - 3.6 * S, 0.7 * S, 1.1 * S).fill({ color: 0x7a4a36 });             // funnel
+    g.rect(ax - 0.9 * S, ay - 2.6 * S, 1.8 * S, 2.6 * S).fill({ color: 0xe7ecf1, alpha: 0.95 * op }); // bridge
+    g.rect(ax - 0.35 * S, ay - 3.6 * S, 0.7 * S, 1.1 * S).fill({ color: 0x7a4a36, alpha: op });        // funnel
     if (night > 0.2) {
-      g.circle(ax, ay - 3.4 * S, 0.7 * S).fill({ color: 0xffe6a8, alpha: 0.7 * ng });
-      g.circle(x + fx * L, y + fy * L, 0.6 * S).fill({ color: 0xff6a5a, alpha: 0.6 * ng });
+      g.circle(ax, ay - 3.4 * S, 0.7 * S).fill({ color: 0xffe6a8, alpha: 0.7 * ng * op });
+      g.circle(x + fx * L, y + fy * L, 0.6 * S).fill({ color: 0xff6a5a, alpha: 0.6 * ng * op });
     }
     return;
   }
@@ -2670,14 +2675,14 @@ function drawBoat(g: Graphics, x: number, y: number, fx: number, fy: number, col
       x + rx * W * 0.5, y + ry * W * 0.5,
       x - fx * L * 0.5, y - fy * L * 0.5,
       x - rx * W * 0.5, y - ry * W * 0.5,
-    ]).fill({ color: 0x3a3530, alpha: 0.96 });
-    g.rect(x - 0.75 * S, y - 4.4 * S, 1.5 * S, 3.2 * S).fill({ color: 0x5a4038 });  // funnel
-    g.rect(x - 0.75 * S, y - 4.4 * S, 1.5 * S, 0.6 * S).fill({ color: 0x2a201c });  // cap band
-    for (let s = 0; s < 3; s++) {                                                   // smoke drifting astern
+    ]).fill({ color: 0x3a3530, alpha: 0.96 * op });
+    g.rect(x - 0.75 * S, y - 4.4 * S, 1.5 * S, 3.2 * S).fill({ color: 0x5a4038, alpha: op });  // funnel
+    g.rect(x - 0.75 * S, y - 4.4 * S, 1.5 * S, 0.6 * S).fill({ color: 0x2a201c, alpha: op });  // cap band
+    for (let s = 0; s < 3; s++) {                                                              // smoke drifting astern
       g.circle(x - fx * (2 + s * 2.2) * S, y - (4.8 + s * 0.7) * S, (1 + s * 0.6) * S)
-        .fill({ color: 0x6c6c72, alpha: 0.32 - s * 0.08 });
+        .fill({ color: 0x6c6c72, alpha: (0.32 - s * 0.08) * op });
     }
-    if (night > 0.2) g.circle(x, y - 2 * S, 0.7 * S).fill({ color: 0xffe6a8, alpha: 0.6 * ng });
+    if (night > 0.2) g.circle(x, y - 2 * S, 0.7 * S).fill({ color: 0xffe6a8, alpha: 0.6 * ng * op });
     return;
   }
   // Sail era (neolithic → medieval): a wooden hull with a triangular sail that
@@ -2688,14 +2693,14 @@ function drawBoat(g: Graphics, x: number, y: number, fx: number, fy: number, col
     x + rx * W * 0.5, y + ry * W * 0.5,
     x - fx * L * 0.45, y - fy * L * 0.45,   // stern
     x - rx * W * 0.5, y - ry * W * 0.5,
-  ]).fill({ color: 0x4a3a2a, alpha: 0.95 });
+  ]).fill({ color: 0x4a3a2a, alpha: 0.95 * op });
   const sh = (era >= 2 ? 6.6 : 5.4) * S, sw = (era >= 2 ? 2.7 : 2.3) * S;
-  g.poly([x, y - sh, x - sw, y - S, x + sw, y - S]).fill({ color: lerpColor(color, 0xffffff, 0.2), alpha: 0.96 });
-  if (era >= 2) g.poly([x, y - sh, x - sw * 0.5, y - sh * 0.55, x, y - sh * 0.55]).fill({ color: lerpColor(color, 0xffffff, 0.4), alpha: 0.6 });
+  g.poly([x, y - sh, x - sw, y - S, x + sw, y - S]).fill({ color: lerpColor(color, 0xffffff, 0.2), alpha: 0.96 * op });
+  if (era >= 2) g.poly([x, y - sh, x - sw * 0.5, y - sh * 0.55, x, y - sh * 0.55]).fill({ color: lerpColor(color, 0xffffff, 0.4), alpha: 0.6 * op });
   if (night > 0.2) {
     const ng2 = ng * TRAVELERS.nightGlow;
-    g.circle(x, y - sh * 0.45, 3.4 * S).fill({ color: 0xffca8a, alpha: 0.10 * ng2 });
-    g.circle(x, y - sh * 0.45, 1.2 * S).fill({ color: 0xffe6a8, alpha: 0.55 * ng2 });
+    g.circle(x, y - sh * 0.45, 3.4 * S).fill({ color: 0xffca8a, alpha: 0.10 * ng2 * op });
+    g.circle(x, y - sh * 0.45, 1.2 * S).fill({ color: 0xffe6a8, alpha: 0.55 * ng2 * op });
   }
 }
 
@@ -2787,6 +2792,7 @@ function maybeSpawnBoats() {
       speed: (1.6 + Math.random() * 0.8) * eraSpeed, // path points per second
       color: civ.color,
       era: rank,
+      fade: 1,
     });
     if (boats.length >= TRAVELERS.boatCap) return;
   }
@@ -2804,23 +2810,60 @@ function rebuildFishSpots() {
   }
 }
 
+function drawWreck(g: Graphics, w: Wreck, S: number) {
+  const op = Math.max(0, 1 - w.t / WRECK_LIFE);
+  const sink = Math.min(1, w.t / WRECK_LIFE); // settles lower and tips as it goes under
+  const rx = -w.fy, ry = w.fx;
+  // foam disturbance where she went down, fading fast
+  if (w.t < 2.2) g.circle(w.x, w.y, (3 + w.t * 2.4) * S).stroke({ color: 0xffffff, alpha: 0.22 * (1 - w.t / 2.2), width: 1 });
+  // the broken hull, bow tipping down, settling into the sea
+  const L = 4.6 * S, W = 1.9 * S, dip = sink * 3 * S;
+  g.poly([
+    w.x + w.fx * L * (1 - sink * 0.55), w.y + w.fy * L * (1 - sink * 0.55) + dip, // bow dips under
+    w.x + rx * W * 0.5, w.y + ry * W * 0.5,
+    w.x - w.fx * L * 0.45, w.y - w.fy * L * 0.45,
+    w.x - rx * W * 0.5, w.y - ry * W * 0.5,
+  ]).fill({ color: 0x352b22, alpha: 0.85 * op });
+  // a snapped mast leaning over, and a little floating debris
+  g.moveTo(w.x - w.fx * S, w.y - w.fy * S).lineTo(w.x - w.fx * 4 * S + 2, w.y - (4.5 * (1 - sink)) * S)
+    .stroke({ color: 0x2a241d, alpha: 0.7 * op, width: 1.2 });
+  for (let d = 0; d < 3; d++) g.circle(w.x + Math.sin(w.t * 1.5 + d * 2) * 4, w.y + 1 + d, 0.6).fill({ color: 0x4a4038, alpha: 0.45 * op });
+}
+
 function updateWater(dt: number, nowSec: number, night: number) {
-  const empty = boats.length === 0 && fishSpots.length === 0 && !whale;
+  const empty = boats.length === 0 && wrecks.length === 0 && fishSpots.length === 0 && !whale;
   if (empty) { boatsGfx.clear(); return; }
   const S = TRAVELERS.scale;
   boatsGfx.clear();
   for (let i = boats.length - 1; i >= 0; i--) {
     const b = boats[i];
-    b.idx += b.speed * dt;
-    if (b.idx >= b.pts.length - 1) { boats.splice(i, 1); continue; }
-    const k = Math.floor(b.idx), u = b.idx - k;
+    const last = b.pts.length - 1;
+    if (b.fade >= 1) {
+      b.idx += b.speed * dt;
+      if (b.idx >= last) { b.idx = last; b.fade = 0.999; } // arrived → fade out at the dock
+    } else {
+      b.fade -= dt / 1.3;
+      if (b.fade <= 0) { boats.splice(i, 1); continue; }
+    }
+    const k = Math.min(Math.floor(b.idx), last - 1), u = Math.min(1, b.idx - k);
     const x = b.pts[k].x + (b.pts[k + 1].x - b.pts[k].x) * u;
     const y = b.pts[k].y + (b.pts[k + 1].y - b.pts[k].y) * u;
     let fx = b.pts[k + 1].x - b.pts[k].x, fy = b.pts[k + 1].y - b.pts[k].y;
     const fl = Math.hypot(fx, fy) || 1; fx /= fl; fy /= fl;
-    // a little foam wake trailing astern
-    if (k > 1) boatsGfx.circle(x - fx * 4 * S, y - fy * 4 * S, 1.0 * S).fill({ color: 0xffffff, alpha: 0.16 });
-    drawBoat(boatsGfx, x, y, fx, fy, b.color, S, night, b.era);
+    // a rare wreck mid-voyage — she founders and becomes a sinking hulk
+    if (b.fade >= 1 && b.idx > 2 && b.idx < last - 2 && Math.random() < 0.004 * dt) {
+      wrecks.push({ x, y, fx, fy, color: b.color, era: b.era, t: 0 });
+      boats.splice(i, 1); continue;
+    }
+    // a little foam wake trailing astern (only while under way)
+    if (b.fade >= 1 && k > 1) boatsGfx.circle(x - fx * 4 * S, y - fy * 4 * S, 1.0 * S).fill({ color: 0xffffff, alpha: 0.16 });
+    drawBoat(boatsGfx, x, y, fx, fy, b.color, S, night, b.era, Math.min(1, b.fade));
+  }
+  for (let i = wrecks.length - 1; i >= 0; i--) {
+    const w = wrecks[i];
+    w.t += dt;
+    if (w.t >= WRECK_LIFE) { wrecks.splice(i, 1); continue; }
+    drawWreck(boatsGfx, w, S);
   }
   // Fishing grounds: a little school of silver fish circling, with a ripple —
   // so they read as fish in the sea, not a brown blob mistaken for an animal.
@@ -3471,6 +3514,7 @@ function resetStorySurfaces() {
   warHeat.clear();
   conflictFlashes.length = 0;
   boats.length = 0;
+  wrecks.length = 0;
   caravans.length = 0;
   planes.length = 0;
   rockets.length = 0;
