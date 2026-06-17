@@ -687,6 +687,7 @@ const seaTrailGfx = new Graphics();  // worn sea lanes (boats); brighten with re
 const landTrailGfx = new Graphics(); // worn land routes (caravans/trains)
 const airTrailGfx = new Graphics();  // flight corridors (planes)
 const causewayGfx = new Graphics();  // strait-spanning causeway islands + rail (modern+)
+const cableGfx = new Graphics();     // undersea power/data cables between cities
 const satelliteGfx = new Graphics(); // satellites crossing the sky (screen-space)
 satelliteGfx.eventMode = 'none';
 const buildingLayer = new Container();
@@ -723,6 +724,8 @@ world.addChild(powerGfx);
 world.addChild(conflictGfx);
 world.addChild(wonderGfx);
 world.addChild(expeditionLayer);
+// Undersea cables lie on the seabed, beneath everything that floats.
+world.addChild(cableGfx);
 // Causeway islands span the straits; trains ride over them, so they sit just
 // under the nomad/train layer.
 world.addChild(causewayGfx);
@@ -825,7 +828,7 @@ atmos.layout(window.innerWidth, window.innerHeight);
 (window as any).__rt = () => ({ res: worldRT.source.resolution, w: worldRT.source.pixelWidth, h: worldRT.source.pixelHeight, bound: worldPlane.texture === worldRT, tickerFPS: Math.round(app.ticker.FPS) });
 (window as any).__perf = { sky: atmos.skyLayer, plane: worldPlane, set skipRT(v: boolean) { (window as any).__skipRT = v; } };
 (window as any).__fx = { smogGfx, farmGfx, buildingLayer, sky: atmos.skyLayer, fog: atmos.fogLayer };
-(window as any).__life = () => ({ herds: herds.length, power: powerLines.length, caravans: caravans.length, boats: boats.length });
+(window as any).__life = () => ({ herds: herds.length, power: powerLines.length, cables: cables.length, caravans: caravans.length, boats: boats.length });
 
 const expeditionGfx = new Graphics();
 expeditionLayer.addChild(expeditionGfx);
@@ -2278,6 +2281,54 @@ interface PowerLine { a: { x: number; y: number }; b: { x: number; y: number } }
 const powerLines: PowerLine[] = [];
 let powerPulse = 0;
 
+// Undersea cables: where a civ's coastal cities can't be reached overland, a
+// submarine cable carries power and data across the seabed between them — a dim
+// line with glints of traffic running along it.
+interface Cable { a: { x: number; y: number }; b: { x: number; y: number }; color: number }
+const cables: Cable[] = [];
+let cablePulse = 0;
+const CABLE_MAX_TILES = 34;
+function rebuildCables() {
+  cables.length = 0;
+  for (const civ of simWorld.civs.values()) {
+    if (civ.phase === 'dead' || ERA_RANK[civ.era] < 3 || civ.cities.length < 2) continue;
+    // Anchor at the busiest coastal city.
+    let hub: CivCity | null = null;
+    for (const c of civ.cities) if (coastalWaterNear(c) && (!hub || c.prominence > hub.prominence)) hub = c;
+    if (!hub) continue;
+    for (const city of civ.cities) {
+      if (city === hub || !coastalWaterNear(city)) continue;
+      const d = Math.hypot(hub.row - city.row, hub.col - city.col);
+      if (d < 10 || d > CABLE_MAX_TILES) continue;
+      // The route must run mostly over open sea (a real crossing, not along a coast).
+      const line = sampleLine(hub.row, hub.col, city.row, city.col);
+      let water = 0;
+      for (const t of line) if (biomeMap[t.row]?.[t.col] === 'water') water++;
+      if (water < line.length * 0.5) continue;
+      cables.push({ a: gridToScreen(hub.col, hub.row), b: gridToScreen(city.col, city.row), color: civ.color });
+    }
+  }
+}
+function drawCables(dt: number, night: number) {
+  cableGfx.clear();
+  if (cables.length === 0) return;
+  cablePulse = (cablePulse + dt * 0.45) % 1;
+  const glow = 0.22 + 0.78 * night;
+  for (const c of cables) {
+    const dx = c.b.x - c.a.x, dy = c.b.y - c.a.y;
+    cableGfx.moveTo(c.a.x, c.a.y).lineTo(c.b.x, c.b.y)
+      .stroke({ color: 0x243845, alpha: 0.34, width: 1.3 }); // the cable on the seabed
+    // Power (cyan) and data (teal) glints run the length of the cable.
+    for (let k = 0; k < 4; k++) {
+      const t = (cablePulse + k / 4) % 1;
+      const px = c.a.x + dx * t, py = c.a.y + dy * t;
+      const teal = k % 2 === 1;
+      cableGfx.circle(px, py, 1.5).fill({ color: teal ? 0x7fffcf : 0x9fdcff, alpha: 0.45 * glow });
+      cableGfx.circle(px, py, 0.7).fill({ color: 0xeaffff, alpha: 0.75 * glow });
+    }
+  }
+}
+
 function rebuildPowerLines() {
   powerLines.length = 0;
   for (const civ of simWorld.civs.values()) {
@@ -2309,14 +2360,20 @@ function drawPowerLines(dt: number, night: number) {
       const t = i / nP, px = pl.a.x + dx * t, py = pl.a.y + dy * t;
       powerGfx.rect(px - 0.6, py - 2.6, 1.2, 5.2).fill({ color: 0x363f49, alpha: 0.32 + 0.12 * night });
     }
-    // Running light pulses along the wire at night — the live grid.
-    if (night > 0.12) {
-      for (let k = 0; k < 2; k++) {
-        const t = (powerPulse + k * 0.5) % 1;
-        const px = pl.a.x + dx * t, py = pl.a.y + dy * t;
-        powerGfx.circle(px, py, 1.7).fill({ color: 0x9fdcff, alpha: 0.5 * night });
-        powerGfx.circle(px, py, 0.8).fill({ color: 0xeaffff, alpha: 0.8 * night });
-      }
+    // Power and data pulse along the wire — subtle by day, brighter at night.
+    const glow = 0.2 + 0.8 * night;
+    // Power: a couple of cyan running lights.
+    for (let k = 0; k < 2; k++) {
+      const t = (powerPulse + k * 0.5) % 1;
+      const px = pl.a.x + dx * t, py = pl.a.y + dy * t;
+      powerGfx.circle(px, py, 1.7).fill({ color: 0x9fdcff, alpha: 0.5 * glow });
+      powerGfx.circle(px, py, 0.8).fill({ color: 0xeaffff, alpha: 0.8 * glow });
+    }
+    // Data (telecom): smaller, faster teal packets running the other way.
+    for (let k = 0; k < 3; k++) {
+      const t = (1 - (powerPulse * 1.7 + k / 3)) % 1;
+      const px = pl.a.x + dx * t, py = pl.a.y + dy * t;
+      powerGfx.circle(px, py, 0.9).fill({ color: 0x7fffcf, alpha: 0.42 * glow });
     }
   }
 }
@@ -2825,7 +2882,7 @@ function spaceAge(): boolean {
 // Satellites: slow points of light gliding across the sky once a civ reaches the
 // space age — brightest at night, all but invisible by day. Screen-space, so
 // they cross the whole firmament over the planet.
-interface Satellite { x: number; y: number; vx: number; vy: number; blink: number }
+interface Satellite { x: number; y: number; vx: number; vy: number; blink: number; trail: Array<{ x: number; y: number }> }
 const satellites: Satellite[] = [];
 function maybeSpawnSatellite(dt: number) {
   if (satellites.length >= 4 || !spaceAge() || Math.random() > dt / 4) return;
@@ -2839,6 +2896,7 @@ function maybeSpawnSatellite(dt: number) {
     vx: (leftToRight ? 1 : -1) * sp,
     vy: slope * sp,
     blink: Math.random() * 10,
+    trail: [],
   });
 }
 function updateSatellites(dt: number, nowSec: number, night: number) {
@@ -2850,9 +2908,14 @@ function updateSatellites(dt: number, nowSec: number, night: number) {
     const s = satellites[i];
     s.x += s.vx * dt; s.y += s.vy * dt;
     if (s.x < -40 || s.x > W + 40 || s.y < -40 || s.y > H + 40) { satellites.splice(i, 1); continue; }
-    // a faint trailing streak, then the blinking body
-    satelliteGfx.moveTo(s.x - s.vx * 0.07, s.y - s.vy * 0.07).lineTo(s.x, s.y)
-      .stroke({ color: 0xcfe0ff, alpha: 0.22 * vis, width: 1 });
+    s.trail.push({ x: s.x, y: s.y });
+    if (s.trail.length > 26) s.trail.shift();
+    // A faint glinting trail the satellite draws across the sky.
+    for (let t = 1; t < s.trail.length; t++) {
+      const f = t / s.trail.length;
+      satelliteGfx.moveTo(s.trail[t - 1].x, s.trail[t - 1].y).lineTo(s.trail[t].x, s.trail[t].y)
+        .stroke({ color: 0xcfe0ff, alpha: 0.4 * f * vis, width: 0.4 + 0.9 * f, cap: 'round' });
+    }
     const bl = 0.55 + 0.45 * Math.sin(nowSec * 3 + s.blink);
     satelliteGfx.circle(s.x, s.y, 1.5).fill({ color: 0xffffff, alpha: vis * bl });
     satelliteGfx.circle(s.x, s.y, 0.7).fill({ color: 0xbad6ff, alpha: vis });
@@ -2947,10 +3010,14 @@ function updateAir(dt: number, night: number) {
     const pl = planes[i];
     pl.x += pl.vx * dt; pl.y += pl.vy * dt;
     pl.trail.push({ x: pl.x, y: pl.y });
-    if (pl.trail.length > 22) pl.trail.shift();
+    if (pl.trail.length > 34) pl.trail.shift();
     if (Math.abs(pl.x) > 1900 || pl.y > 1800 || pl.y < -300) { planes.splice(i, 1); continue; }
-    for (let t = 0; t < pl.trail.length; t++) {
-      airGfx.circle(pl.trail[t].x, pl.trail[t].y, 0.8).fill({ color: 0xffffff, alpha: (t / pl.trail.length) * 0.22 });
+    // Contrail: a white streak the jet pulls behind it, fading and narrowing
+    // toward the tail.
+    for (let t = 1; t < pl.trail.length; t++) {
+      const f = t / pl.trail.length; // 0 tail … 1 at the jet
+      airGfx.moveTo(pl.trail[t - 1].x, pl.trail[t - 1].y).lineTo(pl.trail[t].x, pl.trail[t].y)
+        .stroke({ color: 0xffffff, alpha: 0.5 * f, width: 0.5 + 1.7 * f, cap: 'round' });
     }
     let hx = pl.vx, hy = pl.vy;
     const hl = Math.hypot(hx, hy) || 1; hx /= hl; hy /= hl;
@@ -3327,6 +3394,7 @@ function resetStorySurfaces() {
   rockets.length = 0;
   herds.length = 0; wildlifeGfx.clear();
   powerLines.length = 0; powerGfx.clear();
+  cables.length = 0; cableGfx.clear();
   curPollution = 0;
   pollutionNarrated = false;
   curBlight = 0;
@@ -3882,6 +3950,7 @@ app.ticker.add((ticker) => {
   flushBiomeChanges(simWorld.tick);
   drawRoads(dtSec);
   drawPowerLines(dtSec, n);
+  drawCables(dtSec, n);
   updateConflictFlashes(dtSec);
   updateWater(dtSec, nowSec, n);
   maybeWhale(dtSec);
@@ -3926,6 +3995,7 @@ app.ticker.add((ticker) => {
     rebuildSmokeEmitters();
     rebuildRoads();
     rebuildPowerLines();
+    rebuildCables();
     if (simWorld.tick - lastFarmReconcile >= 45) { lastFarmReconcile = simWorld.tick; reconcileFarmland(); }
     rebuildWonders();
     rebuildFishSpots();
