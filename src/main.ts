@@ -2025,10 +2025,15 @@ function rebuildCityLights() {
   for (const civ of simWorld.civs.values()) {
     if (civ.phase === 'dead') continue;
     const color = LIGHTS.eraColors[civ.era];
+    // The grid electrifies through the ages: sparse, dim hearths in the early
+    // eras → a dense, bright modern sprawl.
+    const rank = ERA_RANK[civ.era];
+    const glow = 0.5 + rank * 0.14;                                  // 0.5 (neolithic) → 1.2 (post)
+    const floor = LIGHTS.densityFloor * (rank >= 4 ? 0.55 : rank <= 1 ? 1.4 : 1.0); // modern lights more tiles
     for (const city of civ.cities) {
       const { x, y } = gridToScreen(city.col, city.row);
-      cityLightsGfx.circle(x, y, LIGHTS.cityHaloRadius * (0.5 + city.prominence))
-        .fill({ color, alpha: 0.10 + 0.08 * city.prominence });
+      cityLightsGfx.circle(x, y, LIGHTS.cityHaloRadius * (0.5 + city.prominence) * (0.85 + rank * 0.05))
+        .fill({ color, alpha: (0.10 + 0.08 * city.prominence) * glow });
     }
     const ts = civTiles.get(civ.id);
     if (!ts) continue;
@@ -2037,7 +2042,7 @@ function rebuildCityLights() {
       const c = key % GRID_SIZE;
       if (simWorld.tiles[r][c].state !== 'built') continue;
       const density = computeTileDensity(r, c, civ);
-      if (density < LIGHTS.densityFloor) continue;
+      if (density < floor) continue;
       const { x, y } = gridToScreen(c, r);
       // Lights sit on the building slots (not the tile center), each with a
       // deterministic jitter, size, and brightness — so windows are scattered
@@ -2055,7 +2060,7 @@ function rebuildCityLights() {
         // Some windows stay dark — a lit settlement isn't uniformly bright.
         if (av < 0.18) continue;
         const sz = (0.8 + szv * 2.0) * (0.55 + density * 0.5);
-        const a = Math.min(1, (0.22 + 0.5 * density) * (0.6 + av * 0.6));
+        const a = Math.min(1, (0.22 + 0.5 * density) * (0.6 + av * 0.6) * glow);
         cityLightsGfx.circle(x + sx + jx, y + sy + jy, sz).fill({ color, alpha: a });
       }
     }
@@ -2860,7 +2865,8 @@ const ERA_RANK: Record<Era, number> = { neolithic: 0, classical: 1, medieval: 2,
 
 // Land caravans (pre-industrial) and trains (industrial+) moving between a
 // civ's cities along its roads — the persistent "people roaming" on land.
-interface Caravan { pts: Array<{ x: number; y: number }>; idx: number; speed: number; color: number; train: boolean }
+type LandKind = 'caravan' | 'train' | 'car';
+interface Caravan { pts: Array<{ x: number; y: number }>; idx: number; speed: number; color: number; kind: LandKind }
 const caravans: Caravan[] = [];
 
 function maybeSpawnCaravans() {
@@ -2874,13 +2880,17 @@ function maybeSpawnCaravans() {
     const path = roadBetween(cities[i], cities[j]);
     if (!path || path.length < 4) continue;
     trailAdd(landTrail, path, 1.3); // wear the road
-    const train = ERA_RANK[civ.era] >= 3; // industrial onward runs rails
+    // Foot-and-wagon caravans give way to rail in the industrial age, then to
+    // cars and trucks on the roads by the modern age (with some rail still).
+    const rank = ERA_RANK[civ.era];
+    const kind: LandKind = rank >= 4 ? (Math.random() < 0.6 ? 'car' : 'train') : rank === 3 ? 'train' : 'caravan';
+    const speed = (kind === 'car' ? 3.6 : kind === 'train' ? 2.6 : 1.0) + Math.random() * 0.6;
     caravans.push({
       pts: path.map((p) => gridToScreen(p.col, p.row)),
       idx: 0,
-      speed: (train ? 2.6 : 1.0) + Math.random() * 0.6,
+      speed,
       color: civ.color,
-      train,
+      kind,
     });
     if (caravans.length >= TRAVELERS.caravanCap) return;
   }
@@ -3051,7 +3061,7 @@ function maybeSpawnCausewayTrains() {
   if (Math.random() > 0.4) return;
   const cw = causeways[Math.floor(Math.random() * causeways.length)];
   const path = Math.random() < 0.5 ? cw.line : [...cw.line].reverse();
-  caravans.push({ pts: path.map((t) => gridToScreen(t.col, t.row)), idx: 0, speed: 2.4 + Math.random() * 0.6, color: cw.color, train: true });
+  caravans.push({ pts: path.map((t) => gridToScreen(t.col, t.row)), idx: 0, speed: 2.4 + Math.random() * 0.6, color: cw.color, kind: 'train' });
 }
 
 function updateAir(dt: number, night: number) {
@@ -3112,10 +3122,10 @@ function updateNomads(nowSec: number, dt: number, night: number) {
     const cv = caravans[ci];
     cv.idx += cv.speed * dt;
     if (cv.idx >= cv.pts.length - 1) { caravans.splice(ci, 1); continue; }
-    // A train is a longer string of tighter-packed cars with a headlamp; a
-    // caravan is a few loose travellers.
-    const cars = cv.train ? 6 : 3;
-    const gap = cv.train ? 0.32 : 0.5;
+    // A train is a long coupled string; cars are a loose stream of traffic; a
+    // caravan is a few foot-and-wagon travellers.
+    const cars = cv.kind === 'train' ? 6 : 3;
+    const gap = cv.kind === 'train' ? 0.32 : cv.kind === 'car' ? 0.85 : 0.5;
     for (let m = 0; m < cars; m++) {
       const bi = cv.idx - m * gap;
       if (bi < 0) continue;
@@ -3123,12 +3133,12 @@ function updateNomads(nowSec: number, dt: number, night: number) {
       if (bk + 1 >= cv.pts.length) continue;
       const x = cv.pts[bk].x + (cv.pts[bk + 1].x - cv.pts[bk].x) * bu;
       const y = cv.pts[bk].y + (cv.pts[bk + 1].y - cv.pts[bk].y) * bu;
-      if (cv.train) {
+      let hx = cv.pts[bk + 1].x - cv.pts[bk].x, hy = cv.pts[bk + 1].y - cv.pts[bk].y;
+      const hl = Math.hypot(hx, hy) || 1; hx /= hl; hy /= hl;
+      const px = -hy, py = hx;
+      if (cv.kind === 'train') {
         // A coupled string of boxcars: a dark locomotive at the head with a
         // warm headlamp, followed by civ-coloured cars riding the rails.
-        let hx = cv.pts[bk + 1].x - cv.pts[bk].x, hy = cv.pts[bk + 1].y - cv.pts[bk].y;
-        const hl = Math.hypot(hx, hy) || 1; hx /= hl; hy /= hl;
-        const px = -hy, py = hx;
         const carL = (m === 0 ? 1.7 : 1.4) * S, carW = 0.85 * S;
         nomadGfx.poly([
           x + hx * carL + px * carW, y + hy * carL + py * carW,
@@ -3136,8 +3146,28 @@ function updateNomads(nowSec: number, dt: number, night: number) {
           x - hx * carL - px * carW, y - hy * carL - py * carW,
           x - hx * carL + px * carW, y - hy * carL + py * carW,
         ]).fill({ color: m === 0 ? 0x2c2c30 : cv.color, alpha: 0.92 });
-        // Headlamp casts forward off the locomotive.
         if (m === 0) travelerDot(nomadGfx, x + hx * carL, y + hy * carL, 0.7 * S, 0xfff0b0, Math.max(night, 0.5), 0.95);
+      } else if (cv.kind === 'car') {
+        // A little stream of cars and trucks — varied colours, headlights at night.
+        const body = m === 0 ? cv.color : m === 1 ? 0xdadde2 : 0x40434a;
+        const carL = 1.25 * S, carW = 0.62 * S;
+        nomadGfx.poly([
+          x + hx * carL + px * carW, y + hy * carL + py * carW,
+          x + hx * carL - px * carW, y + hy * carL - py * carW,
+          x - hx * carL - px * carW, y - hy * carL - py * carW,
+          x - hx * carL + px * carW, y - hy * carL + py * carW,
+        ]).fill({ color: body, alpha: 0.95 });
+        // cabin glass, toward the front
+        nomadGfx.poly([
+          x + hx * carL * 0.5 + px * carW * 0.7, y + hy * carL * 0.5 + py * carW * 0.7,
+          x + hx * carL * 0.5 - px * carW * 0.7, y + hy * carL * 0.5 - py * carW * 0.7,
+          x - hx * carL * 0.2 - px * carW * 0.7, y - hy * carL * 0.2 - py * carW * 0.7,
+          x - hx * carL * 0.2 + px * carW * 0.7, y - hy * carL * 0.2 + py * carW * 0.7,
+        ]).fill({ color: 0x9fb4c4, alpha: 0.7 });
+        if (night > 0.25) {
+          nomadGfx.circle(x + hx * carL, y + hy * carL, 0.55 * S).fill({ color: 0xfff0c0, alpha: 0.8 * night });   // headlights
+          nomadGfx.circle(x - hx * carL, y - hy * carL, 0.4 * S).fill({ color: 0xff5a4a, alpha: 0.6 * night });    // tail-light
+        }
       } else {
         travelerDot(nomadGfx, x, y, (m === 0 ? 1.2 : 1.0) * S, cv.color, night, m === 0 ? 0.85 : 0.6);
       }
