@@ -4134,8 +4134,11 @@ app.ticker.add((ticker) => {
   if (oceanApron) oceanApron.alpha = planetary;
   sceneryWaterGfx.alpha = planetary;
   sceneryLandGfx.alpha = planetary;
-  // Scenery land follows the seasonal land tint (it lives outside biomeLayer).
+  // Scenery land and the in-flight biome crossfade tiles follow the same
+  // seasonal/blight land tint as the cached biomeLayer — otherwise a changed
+  // tile renders at full brightness and reads as a bright spot at night.
   if (sceneryLandGfx.tint !== biomeLayer.tint) sceneryLandGfx.tint = biomeLayer.tint;
+  if (biomeTransLayer.tint !== biomeLayer.tint) biomeTransLayer.tint = biomeLayer.tint;
   // City lights follow the night; rivers catch the light; smoke drifts.
   const L = atmos.light();
   const n = L.nightness;
