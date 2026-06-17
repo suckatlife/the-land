@@ -2467,7 +2467,8 @@ function seedTrailsAfterSkip() {
   for (const civ of simWorld.civs.values()) {
     if (civ.phase === 'dead' || civ.cities.length < 2) continue;
     const era = ERA_RANK[civ.era];
-    const hub = civ.cities[0];
+    let hub = civ.cities[0];
+    for (const c of civ.cities) if (c.prominence > hub.prominence) hub = c;
     for (let i = 1; i < civ.cities.length && budget > 0; i++, budget--) {
       const city = civ.cities[i];
       const rp = roadBetween(hub, city);
@@ -2635,6 +2636,18 @@ function drawPlane(g: Graphics, x: number, y: number, hx: number, hy: number, ni
   if (night > 0.3) g.circle(x + hx * L * 0.7, y + hy * L * 0.7, 0.9).fill({ color: 0xff5a4a, alpha: 0.55 * Math.min(1, night) });
 }
 
+// Hub-and-spoke: most journeys radiate from a civ's busiest city, so prominent
+// cities become hubs with worn spokes fanning out to the rest of the network.
+const HUB_BIAS = 0.8;
+function hubAndSpoke(n: number, promAt: (k: number) => number): [number, number] {
+  let hub = 0;
+  for (let k = 1; k < n; k++) if (promAt(k) > promAt(hub)) hub = k;
+  const i = Math.random() < HUB_BIAS ? hub : Math.floor(Math.random() * n);
+  let j = Math.floor(Math.random() * (n - 1));
+  if (j >= i) j++;
+  return [i, j];
+}
+
 function maybeSpawnBoats() {
   if (boats.length >= TRAVELERS.boatCap) return;
   for (const civ of simWorld.civs.values()) {
@@ -2645,9 +2658,7 @@ function maybeSpawnBoats() {
       .map((city) => ({ city, w: coastalWaterNear(city) }))
       .filter((e) => e.w);
     if (coastal.length < 2) continue;
-    const i = Math.floor(Math.random() * coastal.length);
-    let j = Math.floor(Math.random() * (coastal.length - 1));
-    if (j >= i) j++;
+    const [i, j] = hubAndSpoke(coastal.length, (k) => coastal[k].city.prominence);
     const a = coastal[i].w!, b = coastal[j].w!;
     const ck = `${a.row},${a.col}-${b.row},${b.col}`;
     if (!waterRouteCache.has(ck)) waterRouteCache.set(ck, findWaterPath(a.row, a.col, b.row, b.col));
@@ -2748,9 +2759,7 @@ function maybeSpawnCaravans() {
     if (caravans.filter((c) => c.color === civ.color).length >= TRAVELERS.caravanPerCiv) continue;
     if (Math.random() > TRAVELERS.caravanSpawnChance) continue;
     const cities = civ.cities;
-    const i = Math.floor(Math.random() * cities.length);
-    let j = Math.floor(Math.random() * (cities.length - 1));
-    if (j >= i) j++;
+    const [i, j] = hubAndSpoke(cities.length, (k) => cities[k].prominence);
     const path = roadBetween(cities[i], cities[j]);
     if (!path || path.length < 4) continue;
     trailAdd(landTrail, path, 1.3); // wear the road
@@ -2780,9 +2789,7 @@ function maybeSpawnPlanes() {
     if (Math.random() > 0.4) continue;
     // Fly between two of the civ's cities so the corridor is reused and worn in.
     const cities = civ.cities;
-    const i = Math.floor(Math.random() * cities.length);
-    let j = Math.floor(Math.random() * (cities.length - 1));
-    if (j >= i) j++;
+    const [i, j] = hubAndSpoke(cities.length, (k) => cities[k].prominence);
     const A = cities[i], B = cities[j];
     trailAdd(airTrail, sampleLine(A.row, A.col, B.row, B.col), 1.6); // lay the flight corridor
     const pa = gridToScreen(A.col, A.row), pb = gridToScreen(B.col, B.row);
