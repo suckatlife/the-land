@@ -2547,7 +2547,7 @@ function seedTrailsAfterSkip() {
 }
 
 // Boats, fishing dots, whales — small life on the water.
-interface Boat { pts: Array<{ x: number; y: number }>; idx: number; speed: number; color: number }
+interface Boat { pts: Array<{ x: number; y: number }>; idx: number; speed: number; color: number; era: number }
 const boats: Boat[] = [];
 const waterRouteCache = new Map<string, Array<{ row: number; col: number }> | null>();
 let fishSpots: Array<{ x: number; y: number }> = [];
@@ -2626,22 +2626,70 @@ function travelerDot(g: Graphics, x: number, y: number, r: number, color: number
 // A little sailboat: a dark hull pointed along its heading, with a civ-coloured
 // sail standing up from the deck (readable from any direction) and a lantern at
 // night. Replaces the old dot so craft read as boats moving on the sea.
-function drawBoat(g: Graphics, x: number, y: number, fx: number, fy: number, color: number, S: number, night: number) {
+// Trade boats progress through the ages: a sailboat in the early eras, a
+// smoking steamship in the industrial age, a container ship by the modern age.
+function drawBoat(g: Graphics, x: number, y: number, fx: number, fy: number, color: number, S: number, night: number, era: number) {
   const rx = -fy, ry = fx; // beam (perpendicular to heading)
+  const ng = Math.min(1, night);
+  if (era >= 4) {
+    // Container ship: a long low steel hull stacked with cargo, white bridge aft.
+    const L = 7 * S, W = 2.5 * S;
+    g.poly([
+      x + fx * L, y + fy * L,                  // bow
+      x + rx * W * 0.5, y + ry * W * 0.5,
+      x - fx * L * 0.95, y - fy * L * 0.95,    // squared stern
+      x - rx * W * 0.5, y - ry * W * 0.5,
+    ]).fill({ color: 0x39434e, alpha: 0.96 });
+    const cc = [0xb5532e, 0x2f6ea8, 0x3f8f5a, 0xc9a23a, color]; // cargo + a civ-coloured box
+    for (let n = 0; n < 5; n++) {
+      const t = -0.55 + n * 0.3;
+      const dx = x + fx * L * t, dy = y + fy * L * t;
+      const hh = (1.5 + (n % 2) * 1.1) * S;
+      g.rect(dx - 0.85 * S, dy - hh, 1.7 * S, hh).fill({ color: cc[n % cc.length], alpha: 0.95 });
+    }
+    const ax = x - fx * L * 0.78, ay = y - fy * L * 0.78;
+    g.rect(ax - 0.9 * S, ay - 2.6 * S, 1.8 * S, 2.6 * S).fill({ color: 0xe7ecf1, alpha: 0.95 }); // bridge
+    g.rect(ax - 0.35 * S, ay - 3.6 * S, 0.7 * S, 1.1 * S).fill({ color: 0x7a4a36 });             // funnel
+    if (night > 0.2) {
+      g.circle(ax, ay - 3.4 * S, 0.7 * S).fill({ color: 0xffe6a8, alpha: 0.7 * ng });
+      g.circle(x + fx * L, y + fy * L, 0.6 * S).fill({ color: 0xff6a5a, alpha: 0.6 * ng });
+    }
+    return;
+  }
+  if (era === 3) {
+    // Steamship: a dark iron hull with a smoking funnel.
+    const L = 5.8 * S, W = 2.4 * S;
+    g.poly([
+      x + fx * L * 0.65, y + fy * L * 0.65,
+      x + rx * W * 0.5, y + ry * W * 0.5,
+      x - fx * L * 0.5, y - fy * L * 0.5,
+      x - rx * W * 0.5, y - ry * W * 0.5,
+    ]).fill({ color: 0x3a3530, alpha: 0.96 });
+    g.rect(x - 0.75 * S, y - 4.4 * S, 1.5 * S, 3.2 * S).fill({ color: 0x5a4038 });  // funnel
+    g.rect(x - 0.75 * S, y - 4.4 * S, 1.5 * S, 0.6 * S).fill({ color: 0x2a201c });  // cap band
+    for (let s = 0; s < 3; s++) {                                                   // smoke drifting astern
+      g.circle(x - fx * (2 + s * 2.2) * S, y - (4.8 + s * 0.7) * S, (1 + s * 0.6) * S)
+        .fill({ color: 0x6c6c72, alpha: 0.32 - s * 0.08 });
+    }
+    if (night > 0.2) g.circle(x, y - 2 * S, 0.7 * S).fill({ color: 0xffe6a8, alpha: 0.6 * ng });
+    return;
+  }
+  // Sail era (neolithic → medieval): a wooden hull with a triangular sail that
+  // grows taller, with a topsail hint, in the medieval age.
   const L = 5.4 * S, W = 2.4 * S;
   g.poly([
     x + fx * L * 0.6, y + fy * L * 0.6,     // bow
-    x + rx * W * 0.5, y + ry * W * 0.5,     // starboard beam
+    x + rx * W * 0.5, y + ry * W * 0.5,
     x - fx * L * 0.45, y - fy * L * 0.45,   // stern
-    x - rx * W * 0.5, y - ry * W * 0.5,     // port beam
+    x - rx * W * 0.5, y - ry * W * 0.5,
   ]).fill({ color: 0x4a3a2a, alpha: 0.95 });
-  // Sail — a civ-coloured triangle rising from the deck (always screen-up).
-  const sh = 5.4 * S, sw = 2.3 * S;
+  const sh = (era >= 2 ? 6.6 : 5.4) * S, sw = (era >= 2 ? 2.7 : 2.3) * S;
   g.poly([x, y - sh, x - sw, y - S, x + sw, y - S]).fill({ color: lerpColor(color, 0xffffff, 0.2), alpha: 0.96 });
+  if (era >= 2) g.poly([x, y - sh, x - sw * 0.5, y - sh * 0.55, x, y - sh * 0.55]).fill({ color: lerpColor(color, 0xffffff, 0.4), alpha: 0.6 });
   if (night > 0.2) {
-    const ng = Math.min(1, night) * TRAVELERS.nightGlow;
-    g.circle(x, y - sh * 0.45, 3.4 * S).fill({ color: 0xffca8a, alpha: 0.10 * ng });
-    g.circle(x, y - sh * 0.45, 1.2 * S).fill({ color: 0xffe6a8, alpha: 0.55 * ng });
+    const ng2 = ng * TRAVELERS.nightGlow;
+    g.circle(x, y - sh * 0.45, 3.4 * S).fill({ color: 0xffca8a, alpha: 0.10 * ng2 });
+    g.circle(x, y - sh * 0.45, 1.2 * S).fill({ color: 0xffe6a8, alpha: 0.55 * ng2 });
   }
 }
 
@@ -2725,11 +2773,14 @@ function maybeSpawnBoats() {
     const route = waterRouteCache.get(ck);
     if (!route || route.length < 6) continue;
     trailAdd(seaTrail, route, 1.3); // wear the sea lane
+    const rank = ERA_RANK[civ.era];
+    const eraSpeed = rank >= 4 ? 1.5 : rank === 3 ? 1.2 : rank === 2 ? 0.95 : 0.75; // sail is slow; steam and cargo are fast
     boats.push({
       pts: route.map((p) => gridToScreen(p.col, p.row)),
       idx: 0,
-      speed: 1.6 + Math.random() * 0.8, // path points per second
+      speed: (1.6 + Math.random() * 0.8) * eraSpeed, // path points per second
       color: civ.color,
+      era: rank,
     });
     if (boats.length >= TRAVELERS.boatCap) return;
   }
@@ -2763,7 +2814,7 @@ function updateWater(dt: number, nowSec: number, night: number) {
     const fl = Math.hypot(fx, fy) || 1; fx /= fl; fy /= fl;
     // a little foam wake trailing astern
     if (k > 1) boatsGfx.circle(x - fx * 4 * S, y - fy * 4 * S, 1.0 * S).fill({ color: 0xffffff, alpha: 0.16 });
-    drawBoat(boatsGfx, x, y, fx, fy, b.color, S, night);
+    drawBoat(boatsGfx, x, y, fx, fy, b.color, S, night, b.era);
   }
   // Fishing grounds: a little school of silver fish circling, with a ripple —
   // so they read as fish in the sea, not a brown blob mistaken for an animal.
