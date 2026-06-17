@@ -686,7 +686,7 @@ const farmGrowGfx = new Graphics();  // fields currently growing in, animated pe
 const seaTrailGfx = new Graphics();  // worn sea lanes (boats); brighten with reuse
 const landTrailGfx = new Graphics(); // worn land routes (caravans/trains)
 const airTrailGfx = new Graphics();  // flight corridors (planes)
-const platformGfx = new Graphics();  // offshore platforms (modern+), over water
+const causewayGfx = new Graphics();  // strait-spanning causeway islands + rail (modern+)
 const satelliteGfx = new Graphics(); // satellites crossing the sky (screen-space)
 satelliteGfx.eventMode = 'none';
 const buildingLayer = new Container();
@@ -723,12 +723,13 @@ world.addChild(powerGfx);
 world.addChild(conflictGfx);
 world.addChild(wonderGfx);
 world.addChild(expeditionLayer);
+// Causeway islands span the straits; trains ride over them, so they sit just
+// under the nomad/train layer.
+world.addChild(causewayGfx);
 // Nomad bands and sea craft travel the surface.
 world.addChild(nomadGfx);
 // Worn sea lanes lie on the water, beneath the boats that wear them.
 world.addChild(seaTrailGfx);
-// Offshore platforms stand on the sea lanes, beneath the boats.
-world.addChild(platformGfx);
 world.addChild(boatsGfx);
 // Directional land light sits under the cloud shadows (clouds block sun).
 world.addChild(atmos.landLightLayer);
@@ -2858,60 +2859,85 @@ function updateSatellites(dt: number, nowSec: number, night: number) {
   }
 }
 
-// Offshore platforms: artificial decks standing in open water that a space-age
-// civ raises off its coast — sea-station waypoints, wired into the sea lanes.
-interface Platform { row: number; col: number; color: number }
-const platforms: Platform[] = [];
-const PLATFORM_PER_CIV = 2;
-// A deterministic open-water tile a few steps off a coastal city (stable across
-// rebuilds so platforms don't jump around).
-function findOffshore(city: CivCity): { row: number; col: number } | null {
-  const w = coastalWaterNear(city);
-  if (!w) return null;
-  let dr = Math.sign(w.row - city.row), dc = Math.sign(w.col - city.col);
-  if (dr === 0 && dc === 0) dc = 1;
-  const dist = 3 + ((city.row * 7 + city.col * 13) % 4);
-  let r = w.row, c = w.col;
-  for (let k = 0; k < dist; k++) {
-    const nr = r + dr, nc = c + dc;
-    if (nr < 0 || nr >= GRID_SIZE || nc < 0 || nc >= GRID_SIZE || biomeMap[nr][nc] !== 'water') break;
-    r = nr; c = nc;
-  }
-  return (r !== w.row || c !== w.col) && biomeMap[r][c] === 'water' ? { row: r, col: c } : null;
-}
-function rebuildPlatforms() {
-  platforms.length = 0;
+// Causeways: in the modern age a civ bridges the straits between its lands with
+// a chain of artificial islands — each a little cluster of buildings — carrying
+// a rail across the water with trains running over it. They CONNECT landmasses
+// (spanning a strait between two of the civ's cities) rather than sticking out
+// from one coast.
+interface Causeway { line: Array<{ row: number; col: number }>; nodes: Array<{ row: number; col: number }>; color: number }
+const causeways: Causeway[] = [];
+const CAUSEWAY_PER_CIV = 2;
+function rebuildCauseways() {
+  causeways.length = 0;
+  const seen = new Set<number>();
   for (const civ of simWorld.civs.values()) {
     if (civ.phase === 'dead' || ERA_RANK[civ.era] < 4) continue;
+    const cities = civ.cities;
     let made = 0;
-    for (const city of civ.cities) {
-      if (made >= PLATFORM_PER_CIV) break;
-      const off = findOffshore(city);
-      if (!off) continue;
-      platforms.push({ row: off.row, col: off.col, color: civ.color });
-      made++;
-      const cw = coastalWaterNear(city);
-      if (cw) trailAdd(seaTrail, sampleLine(cw.row, cw.col, off.row, off.col), 2); // wire it to the lanes
+    for (let i = 0; i < cities.length && made < CAUSEWAY_PER_CIV; i++) {
+      for (let j = i + 1; j < cities.length && made < CAUSEWAY_PER_CIV; j++) {
+        const A = cities[i], B = cities[j];
+        const dist = Math.hypot(A.row - B.row, A.col - B.col);
+        if (dist < 4 || dist > 20) continue;
+        const line = sampleLine(A.row, A.col, B.row, B.col);
+        // The line must cross a real but spannable strait between two shores.
+        let run = 0, maxRun = 0, water = 0;
+        for (const t of line) {
+          if (biomeMap[t.row]?.[t.col] === 'water') { water++; run++; if (run > maxRun) maxRun = run; }
+          else run = 0;
+        }
+        if (maxRun < 3 || maxRun > 13 || water > line.length - 2) continue;
+        const ka = A.row * GRID_SIZE + A.col, kb = B.row * GRID_SIZE + B.col;
+        const key = Math.min(ka, kb) * TRAIL_N + Math.max(ka, kb);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const nodes = line.filter((t) => biomeMap[t.row]?.[t.col] === 'water');
+        causeways.push({ line, nodes, color: civ.color });
+        trailAdd(landTrail, line, 5); // the rail wears in across the span
+        made++;
+      }
     }
   }
 }
-function updatePlatforms(nowSec: number, night: number) {
-  platformGfx.clear();
-  for (const p of platforms) {
-    const { x, y } = gridToScreen(p.col, p.row);
-    // pylons into the sea
-    platformGfx.moveTo(x - 5, y + 1).lineTo(x - 5, y + 5).moveTo(x + 5, y + 1).lineTo(x + 5, y + 5)
-      .stroke({ color: 0x3c3c44, alpha: 0.7, width: 1.2 });
-    // the deck, with a civ-coloured rim, and a small mast
-    platformGfx.poly([x, y - 3, x + 7, y, x, y + 3, x - 7, y]).fill({ color: 0x6b6b73, alpha: 0.96 });
-    platformGfx.poly([x, y - 3, x + 7, y, x, y + 3, x - 7, y]).stroke({ color: lerpColor(p.color, 0xffffff, 0.25), alpha: 0.6, width: 1 });
-    platformGfx.rect(x - 1, y - 7, 2, 4).fill({ color: 0x55555c });
-    // a beacon that pulses, stronger after dark
-    const bl = 0.5 + 0.5 * Math.sin(nowSec * 2 + p.row);
-    const ng = Math.max(0.25, night);
-    platformGfx.circle(x, y - 8, 2.6).fill({ color: 0xffca6a, alpha: 0.12 * ng * bl });
-    platformGfx.circle(x, y - 8, 1.0).fill({ color: 0xffe6a0, alpha: (0.45 + 0.45 * ng) * bl });
+// One causeway island: a small sandy isle with a cluster of buildings and a beacon.
+function drawIslandStop(g: Graphics, row: number, col: number, color: number, nowSec: number, ng: number) {
+  const { x, y } = gridToScreen(col, row);
+  g.poly([x, y - 7, x + 15, y, x, y + 7, x - 15, y]).fill({ color: 0xcdb88a, alpha: 0.97 });        // sandy island
+  g.poly([x, y - 7, x + 15, y, x, y + 7, x - 15, y]).stroke({ color: 0x8f7a52, alpha: 0.5, width: 1 });
+  const s = row * 7 + col * 13;
+  for (let b = 0; b < 3; b++) {                                                                      // a little cluster of buildings
+    const ox = ((s * (b + 1)) % 11) - 5, oy = (((s >> 2) * (b + 1)) % 7) - 3;
+    const bh = 3 + ((s >> b) % 3);
+    g.rect(x + ox - 1.3, y + oy - bh, 2.6, bh).fill({ color: lerpColor(color, 0x2a2a30, 0.4), alpha: 0.95 });
+    g.rect(x + ox - 1.3, y + oy - bh, 2.6, 1).fill({ color: lerpColor(color, 0xffffff, 0.25), alpha: 0.8 });
   }
+  const bl = 0.5 + 0.5 * Math.sin(nowSec * 2 + row);                                                 // beacon
+  g.circle(x, y - 9, 2.4).fill({ color: 0xffca6a, alpha: 0.12 * ng * bl });
+  g.circle(x, y - 9, 1.0).fill({ color: 0xffe6a0, alpha: (0.45 + 0.45 * ng) * bl });
+}
+function drawCauseways(nowSec: number, night: number) {
+  causewayGfx.clear();
+  const ng = Math.max(0.25, night);
+  for (const cw of causeways) {
+    const pts = cw.line.map((t) => gridToScreen(t.col, t.row));
+    for (let i = 0; i < pts.length - 1; i++) {                                                       // bridge deck
+      causewayGfx.moveTo(pts[i].x, pts[i].y).lineTo(pts[i + 1].x, pts[i + 1].y)
+        .stroke({ color: 0x4a4038, alpha: 0.85, width: 2.6 });
+    }
+    for (let i = 0; i < pts.length - 1; i++) {                                                       // rail atop the deck
+      causewayGfx.moveTo(pts[i].x, pts[i].y).lineTo(pts[i + 1].x, pts[i + 1].y)
+        .stroke({ color: 0x9a8a76, alpha: 0.55, width: 0.9 });
+    }
+    for (const n of cw.nodes) drawIslandStop(causewayGfx, n.row, n.col, cw.color, nowSec, ng);       // island stops
+  }
+}
+// Trains crossing the straits on the causeways.
+function maybeSpawnCausewayTrains() {
+  if (causeways.length === 0 || caravans.length >= TRAVELERS.caravanCap) return;
+  if (Math.random() > 0.4) return;
+  const cw = causeways[Math.floor(Math.random() * causeways.length)];
+  const path = Math.random() < 0.5 ? cw.line : [...cw.line].reverse();
+  caravans.push({ pts: path.map((t) => gridToScreen(t.col, t.row)), idx: 0, speed: 2.4 + Math.random() * 0.6, color: cw.color, train: true });
 }
 
 function updateAir(dt: number, night: number) {
@@ -3291,7 +3317,7 @@ function resetStorySurfaces() {
   clearFarmland();
   seaTrail.clear(); landTrail.clear(); airTrail.clear(); redrawTrails();
   satellites.length = 0; satelliteGfx.clear();
-  platforms.length = 0; platformGfx.clear();
+  causeways.length = 0; causewayGfx.clear();
   waterRouteCache.clear();
   warHeat.clear();
   conflictFlashes.length = 0;
@@ -3865,7 +3891,7 @@ app.ticker.add((ticker) => {
   updateAir(dtSec, n);
   maybeSpawnSatellite(dtSec);
   updateSatellites(dtSec, nowSec, n);
-  updatePlatforms(nowSec, n);
+  drawCauseways(nowSec, n);
   updateBirdFlocks(dtSec, nowSec, n);
   maybeGhost(dtSec, n);
   updateFestival(n);
@@ -3907,7 +3933,8 @@ app.ticker.add((ticker) => {
     maybeSpawnCaravans();
     maybeSpawnHerds();
     maybeSpawnPlanes();
-    rebuildPlatforms();
+    rebuildCauseways();
+    maybeSpawnCausewayTrains();
     // Route trails fade slowly toward the unused, then redraw the worn web.
     trailDecay(seaTrail, 0.99); trailDecay(landTrail, 0.99); trailDecay(airTrail, 0.988);
     redrawTrails();
@@ -4303,7 +4330,7 @@ document.getElementById('skip')!.addEventListener('click', () => {
   }
   rebuildBuildingSprites();
   snapFarmland();
-  rebuildPlatforms();
+  rebuildCauseways();
   seedTrailsAfterSkip();
   drawCityMarkers();
   eventLog.length = 0;
