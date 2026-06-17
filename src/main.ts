@@ -4353,7 +4353,7 @@ toggleBars.textContent = 'civ panel: off';
 hudBody.style.display = 'none';
 hudToggle.textContent = '+';
 
-// --- Clock: time + date in Pacific time, top-right ---
+// --- Clock + deep-time readout, top-right ---
 const clock = document.createElement('div');
 clock.style.cssText = `
   position: fixed; top: 12px; right: 12px; text-align: right;
@@ -4361,17 +4361,43 @@ clock.style.cssText = `
   background: rgba(255,255,255,0.72); padding: 6px 12px; border-radius: 4px;
   color: #2a2a2a; user-select: none; pointer-events: none; line-height: 1.25;
 `;
-clock.innerHTML = `<div id="clock-time" style="font-size:20px;font-weight:600;letter-spacing:0.5px"></div><div id="clock-date" style="font-size:11px;color:#555"></div>`;
+clock.innerHTML = `<div id="clock-time" style="font-size:20px;font-weight:600;letter-spacing:0.5px"></div><div id="clock-date" style="font-size:11px;color:#555"></div><div id="clock-age" style="font-size:10px;color:#7a6a55;margin-top:2px;font-style:italic"></div>`;
 document.body.appendChild(clock);
 const clockTime = document.getElementById('clock-time')!;
 const clockDate = document.getElementById('clock-date')!;
+const clockAge = document.getElementById('clock-age')!;
+const ERA_NAMES: Record<Era, string> = {
+  neolithic: 'Stone Age', classical: 'Classical Age', medieval: 'Medieval Age',
+  industrial: 'Industrial Age', modern: 'Modern Age', post: 'Age to Come',
+};
 function updateClock() {
   const now = new Date();
   clockTime.textContent = now.toLocaleTimeString('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', minute: '2-digit', second: '2-digit', timeZoneName: 'short' });
   clockDate.textContent = now.toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', weekday: 'long', month: 'long', day: 'numeric' });
+  // Deep time: the world's leading era and its age, in years (this epoch resets
+  // when the cataclysm rolls a fresh world).
+  const year = Math.floor(simWorld.tick * 3).toLocaleString('en-US');
+  clockAge.textContent = `${ERA_NAMES[dominantEra(simWorld)]} · year ${year}`;
 }
 updateClock();
 setInterval(updateClock, 1000);
+
+// --- Fullscreen: a small corner button, and double-click anywhere ---
+function toggleFullscreen() {
+  if (!document.fullscreenElement) document.documentElement.requestFullscreen?.().catch(() => {});
+  else document.exitFullscreen?.();
+}
+const fsBtn = document.createElement('button');
+fsBtn.textContent = '⛶';
+fsBtn.title = 'fullscreen (or double-click anywhere)';
+fsBtn.style.cssText = `
+  position: fixed; bottom: 12px; right: 12px; width: 30px; height: 30px;
+  font-size: 16px; line-height: 1; cursor: pointer; border-radius: 4px;
+  border: none; background: rgba(255,255,255,0.6); color: #444;
+`;
+fsBtn.addEventListener('click', toggleFullscreen);
+document.body.appendChild(fsBtn);
+document.addEventListener('dblclick', toggleFullscreen);
 
 // Keep the screen awake (best-effort) — it's a screensaver, after all.
 async function requestWakeLock() {
@@ -4380,14 +4406,23 @@ async function requestWakeLock() {
 requestWakeLock();
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') requestWakeLock(); });
 
-// Hide the cursor after a few seconds of stillness so it doesn't sit on screen.
-let cursorTimer = 0;
-window.addEventListener('mousemove', () => {
+// Idle: after a few seconds of stillness, hide the cursor and fade the chrome to
+// near-nothing so the screen is pure scene; movement brings it all back.
+const fadeUI = [clock, fsBtn, hud];
+for (const el of fadeUI) (el as HTMLElement).style.transition = 'opacity 0.8s ease';
+let idleTimer = 0;
+function onActivity() {
   document.body.style.cursor = '';
-  clearTimeout(cursorTimer);
-  cursorTimer = window.setTimeout(() => { document.body.style.cursor = 'none'; }, 3000);
-});
-cursorTimer = window.setTimeout(() => { document.body.style.cursor = 'none'; }, 3000);
+  for (const el of fadeUI) (el as HTMLElement).style.opacity = '1';
+  clearTimeout(idleTimer);
+  idleTimer = window.setTimeout(() => {
+    document.body.style.cursor = 'none';
+    for (const el of fadeUI) (el as HTMLElement).style.opacity = '0.12';
+  }, 4000);
+}
+window.addEventListener('mousemove', onActivity);
+window.addEventListener('mousedown', onActivity);
+onActivity();
 
 const barsContainer = document.getElementById('bars')!;
 
