@@ -33,14 +33,15 @@ export const ATMOS = {
     // Add/move/remove keyframes freely; they are interpolated in t-order
     // with smoothstep easing between neighbours.
     keyframes: [
-      { t: 0.00, skyTop: 0xa9b7c3, skyHorizon: 0xe2c2a3, glaze: 0xe6cfae, glazeAlpha: 0.15 }, // dawn
-      { t: 0.10, skyTop: 0xb8c9d2, skyHorizon: 0xe8ddc6, glaze: 0xf2e6cd, glazeAlpha: 0.06 }, // morning
-      { t: 0.25, skyTop: 0xbfcfd8, skyHorizon: 0xe9e3d0, glaze: 0xffffff, glazeAlpha: 0.00 }, // noon
-      { t: 0.42, skyTop: 0xb4bfc6, skyHorizon: 0xe5d3ae, glaze: 0xf0dcb4, glazeAlpha: 0.08 }, // late afternoon
-      { t: 0.52, skyTop: 0x9d93a7, skyHorizon: 0xd8ae85, glaze: 0xd2ab7e, glazeAlpha: 0.28 }, // dusk
-      { t: 0.66, skyTop: 0x39455c, skyHorizon: 0x6a6577, glaze: 0x8195b8, glazeAlpha: 0.42 }, // nightfall
-      { t: 0.80, skyTop: 0x222c3d, skyHorizon: 0x434f66, glaze: 0x6f82a4, glazeAlpha: 0.50 }, // deep night
-      { t: 0.92, skyTop: 0x2a3547, skyHorizon: 0x55586b, glaze: 0x7b8dab, glazeAlpha: 0.45 }, // small hours
+      { t: 0.00, skyTop: 0x6a6f9a, skyHorizon: 0xf0a36a, glaze: 0xf0b878, glazeAlpha: 0.18 }, // sunrise: lilac over peach
+      { t: 0.08, skyTop: 0x7ba6d4, skyHorizon: 0xf6cf9c, glaze: 0xf8e4c2, glazeAlpha: 0.07 }, // early morning
+      { t: 0.25, skyTop: 0x5b9ad8, skyHorizon: 0xc7e0ee, glaze: 0xffffff, glazeAlpha: 0.00 }, // noon: clear blue
+      { t: 0.42, skyTop: 0x77a6d0, skyHorizon: 0xe9cf9a, glaze: 0xf2dcae, glazeAlpha: 0.08 }, // afternoon
+      { t: 0.52, skyTop: 0x7c6a9e, skyHorizon: 0xef8a4c, glaze: 0xe49152, glazeAlpha: 0.26 }, // sunset: violet over orange
+      { t: 0.60, skyTop: 0x52506f, skyHorizon: 0xc06450, glaze: 0xb06658, glazeAlpha: 0.36 }, // afterglow: red-purple
+      { t: 0.68, skyTop: 0x303c58, skyHorizon: 0x6a5570, glaze: 0x8195b8, glazeAlpha: 0.44 }, // nightfall
+      { t: 0.80, skyTop: 0x182338, skyHorizon: 0x33405c, glaze: 0x6f82a4, glazeAlpha: 0.50 }, // deep night
+      { t: 0.92, skyTop: 0x1f2b44, skyHorizon: 0x46506a, glaze: 0x7b8dab, glazeAlpha: 0.45 }, // small hours
     ],
     // Fraction of screen height where the horizon band sits in the sky
     // gradient (the world diamond occupies the area below the upper sky).
@@ -445,8 +446,9 @@ export interface Atmosphere {
   stormLayer: Container;
   cometLayer: Container;
   auroraLayer: Container;
-  celestialLayer: Container;  // the sun & moon overhead, halo, rainbow (screen-space sky)
+  celestialLayer: Container;  // the sun & moon overhead, halo (behind the planet, in the sky)
   skyCloudLayer: Container;   // drifting clouds in the sky (screen-space)
+  rainbowLayer: Container;    // rainbow arc over the world (in front of the planet)
   setWaterMask(mask: Container | null): void; // restricts the glitter to water
   setLandMask(mask: Container | null): void;  // restricts the shimmer to land
   wind(): { x: number; y: number };
@@ -658,8 +660,10 @@ export function createAtmosphere(): Atmosphere {
     }
   }
 
-  // Sun & moon overhead, plus halo and rainbow — drawn fresh each frame.
+  // Sun & moon overhead (behind the planet) and the rainbow (in front) —
+  // drawn fresh each frame.
   const celestialLayer = new Graphics();
+  const rainbowLayer = new Graphics();
   // Drifting clouds in the sky (upper band), lit by the time of day.
   const skyCloudLayer = new Container();
   const skyClouds: Array<{ sp: Sprite; x: number; yFrac: number; sc: number }> = [];
@@ -1246,11 +1250,14 @@ export function createAtmosphere(): Atmosphere {
         cl.sp.alpha = cloudAlpha;
       }
 
-      // The sun or the moon, arcing across the upper sky band.
+      // The sun or the moon — it rises from behind the globe (celestialLayer is
+      // behind the world plane) and climbs into the sky. The phase shadow is
+      // painted in the sky's own colour, so it carves a clean crescent and never
+      // spills a dark blob.
       celestialLayer.clear();
       const bx = L.azimuth * w;
-      const by = h * (0.24 - 0.15 * L.altitude); // horizon (low) → zenith (high)
-      const fade = Math.min(1, L.altitude * 3.2);  // sink into the horizon haze
+      const by = h * (0.22 - 0.16 * L.altitude); // low (behind the limb) → high in the sky
+      const fade = Math.min(1, L.altitude * 3.2); // sink into the horizon haze
       if (L.isDay) {
         const a = fade;
         celestialLayer.circle(bx, by, 70).fill({ color: 0xfff1c2, alpha: 0.05 * a });
@@ -1261,14 +1268,17 @@ export function createAtmosphere(): Atmosphere {
       } else {
         const a = Math.max(0.55, L.nightness) * fade;
         const ph = Math.sin(moonPhaseAcc * 0.02); // slow phase, -1..1
-        celestialLayer.circle(bx, by, 30).fill({ color: 0xc2cee2, alpha: 0.05 * a });
-        celestialLayer.circle(bx, by, 11).fill({ color: 0xe2e8f4, alpha: 0.92 * a });
+        const R = 11;
+        celestialLayer.circle(bx, by, 28).fill({ color: 0xc2cee2, alpha: 0.05 * a });
+        celestialLayer.circle(bx, by, R).fill({ color: 0xe2e8f4, alpha: 0.94 * a });
         celestialLayer.circle(bx - 3, by - 2, 2.0).fill({ color: 0xc6cedc, alpha: 0.5 * a }); // maria
-        celestialLayer.circle(bx + 2, by + 3, 1.4).fill({ color: 0xc6cedc, alpha: 0.4 * a });
-        celestialLayer.circle(bx + ph * 9.5, by, 11.5).fill({ color: 0x10141f, alpha: 0.92 * a }); // phase shadow
+        celestialLayer.circle(bx + 2.5, by + 3, 1.4).fill({ color: 0xc6cedc, alpha: 0.4 * a });
+        // Phase shadow: sky-coloured, same size as the disk → a clean terminator.
+        celestialLayer.circle(bx + ph * R, by, R).fill({ color: top, alpha: a });
       }
 
-      // Rainbow: a soft arc when a storm breaks up in daylight.
+      // Rainbow (front of the planet): a soft arc when a storm breaks up by day.
+      rainbowLayer.clear();
       if (storm && L.isDay && L.altitude > 0.18) {
         const su = storm.t / ATMOS.storm.durationSec;
         const fresh = Math.max(0, Math.sin(Math.PI * Math.min(1, su * 1.15))) * Math.max(0, Math.min(1, (su - 0.35) / 0.3));
@@ -1276,7 +1286,7 @@ export function createAtmosphere(): Atmosphere {
           const rx = w * 0.5, ry = h * 1.05, rad = h * 0.6;
           const cols = [0xe06a6a, 0xe0b86a, 0xd9e06a, 0x6fcf8a, 0x6aa8e0, 0x9a7ad9];
           for (let bi = 0; bi < cols.length; bi++) {
-            celestialLayer.arc(rx, ry, rad + bi * 3.2, Math.PI * 1.2, Math.PI * 1.8)
+            rainbowLayer.arc(rx, ry, rad + bi * 3.2, Math.PI * 1.2, Math.PI * 1.8)
               .stroke({ color: cols[bi], alpha: 0.15 * fresh, width: 3 });
           }
         }
@@ -1438,6 +1448,7 @@ export function createAtmosphere(): Atmosphere {
     auroraLayer,
     celestialLayer,
     skyCloudLayer,
+    rainbowLayer,
     setLandMask: (mask: Container | null) => { shimmerLayer.mask = mask; },
     wind: () => lastWind,
     onCelestialEvent: (cb: (kind: string) => void) => { eventCb = cb; },
