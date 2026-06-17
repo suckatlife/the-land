@@ -274,8 +274,8 @@ export const SIM = {
   expeditionLaunchChance: 0.012,
 expeditionMinVitality: 0.5,      // slightly lower bar
 expeditionMinSize: 18,           // smaller civs can colonize
-expeditionSpeed: 0.23,            // travel faster (cross gaps before dying)
-expeditionMaxAge: 480,           // survive longer crossings
+expeditionSpeed: 0.11,            // slow sailing ships — a deliberate ocean crossing
+expeditionMaxAge: 760,           // longer life so slow ships still complete crossings
 expeditionLossBase: 0.001,       // half the loss rate
 expeditionLaunchCityRadius: 11,  // launch coast must be within this radius (× city prominence) of a city — keeps ships from sailing out of empty/ruined coast. Matches renderer's DENSITY.proximityScale.
 

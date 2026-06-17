@@ -510,9 +510,10 @@ logPanel.style.cssText = `
 `;
 document.body.appendChild(logPanel);
 
-// Visibility toggles, wired to HUD buttons further down.
-let showBars = true;
-let showLog = true;
+// Visibility toggles, wired to HUD buttons further down. Off by default so the
+// app opens clean as a second-screen screensaver.
+let showBars = false;
+let showLog = false;
 
 // One throttled, priority-aware queue for ALL narration. Earlier this was a
 // quiet-gate on sim events only, while ~7 story systems pushed straight to the
@@ -4343,6 +4344,50 @@ toggleLog.addEventListener('click', () => {
   logPanel.style.display = showLog ? 'flex' : 'none';
   toggleLog.textContent = showLog ? 'log: on' : 'log: off';
 });
+
+// Open clean for screensaver use: log + civ panel hidden, dev bar collapsed.
+logPanel.style.display = 'none';
+toggleLog.textContent = 'log: off';
+barPanel.style.display = 'none';
+toggleBars.textContent = 'civ panel: off';
+hudBody.style.display = 'none';
+hudToggle.textContent = '+';
+
+// --- Clock: time + date in Pacific time, top-right ---
+const clock = document.createElement('div');
+clock.style.cssText = `
+  position: fixed; top: 12px; right: 12px; text-align: right;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  background: rgba(255,255,255,0.72); padding: 6px 12px; border-radius: 4px;
+  color: #2a2a2a; user-select: none; pointer-events: none; line-height: 1.25;
+`;
+clock.innerHTML = `<div id="clock-time" style="font-size:20px;font-weight:600;letter-spacing:0.5px"></div><div id="clock-date" style="font-size:11px;color:#555"></div>`;
+document.body.appendChild(clock);
+const clockTime = document.getElementById('clock-time')!;
+const clockDate = document.getElementById('clock-date')!;
+function updateClock() {
+  const now = new Date();
+  clockTime.textContent = now.toLocaleTimeString('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', minute: '2-digit', second: '2-digit', timeZoneName: 'short' });
+  clockDate.textContent = now.toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', weekday: 'long', month: 'long', day: 'numeric' });
+}
+updateClock();
+setInterval(updateClock, 1000);
+
+// Keep the screen awake (best-effort) — it's a screensaver, after all.
+async function requestWakeLock() {
+  try { await (navigator as any).wakeLock?.request('screen'); } catch { /* unsupported or blocked */ }
+}
+requestWakeLock();
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') requestWakeLock(); });
+
+// Hide the cursor after a few seconds of stillness so it doesn't sit on screen.
+let cursorTimer = 0;
+window.addEventListener('mousemove', () => {
+  document.body.style.cursor = '';
+  clearTimeout(cursorTimer);
+  cursorTimer = window.setTimeout(() => { document.body.style.cursor = 'none'; }, 3000);
+});
+cursorTimer = window.setTimeout(() => { document.body.style.cursor = 'none'; }, 3000);
 
 const barsContainer = document.getElementById('bars')!;
 
