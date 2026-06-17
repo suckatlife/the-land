@@ -445,6 +445,8 @@ export interface Atmosphere {
   stormLayer: Container;
   cometLayer: Container;
   auroraLayer: Container;
+  celestialLayer: Container;  // the sun & moon overhead, halo, rainbow (screen-space sky)
+  skyCloudLayer: Container;   // drifting clouds in the sky (screen-space)
   setWaterMask(mask: Container | null): void; // restricts the glitter to water
   setLandMask(mask: Container | null): void;  // restricts the shimmer to land
   wind(): { x: number; y: number };
@@ -602,6 +604,8 @@ export function createAtmosphere(): Atmosphere {
   const brightStarsG = new Graphics();
   const faintStarsG = new Graphics();
   const constellationGfx = new Graphics();
+  const milkyWayG = new Graphics();
+  const planetG = new Graphics();
   const brightStarPos: Array<{ x: number; y: number }> = [];
   let constellationCount = 0;
   {
@@ -622,10 +626,50 @@ export function createAtmosphere(): Atmosphere {
     brightStarsG.alpha = 0;
     faintStarsG.alpha = 0;
     constellationGfx.alpha = 0;
+    starLayer.addChild(milkyWayG);   // behind the stars
     starLayer.addChild(faintStarsG);
     starLayer.addChild(constellationGfx);
     starLayer.addChild(brightStarsG);
+    starLayer.addChild(planetG);     // brightest, on top
   }
+
+  // The Milky Way: a soft glowing band of countless faint stars across the dome.
+  const fr = ATMOS.stars.fieldRadius;
+  {
+    const bandAng = 0.55; // tilt of the band across the field
+    const ca = Math.cos(bandAng), sa = Math.sin(bandAng);
+    for (let i = 0; i < 520; i++) {
+      const along = (celestialRand() - 0.5) * 2 * fr;
+      const across = (celestialRand() - celestialRand()) * fr * 0.16; // tight perpendicular spread
+      const x = along * ca - across * sa, y = along * sa + across * ca;
+      milkyWayG.circle(x, y, 0.5 + celestialRand() * 1.3)
+        .fill({ color: celestialRand() < 0.5 ? 0xdfe6f5 : 0xe8e0f0, alpha: 0.03 + celestialRand() * 0.06 });
+    }
+  }
+  // Planets: a few bright, steadily-coloured points wandering the dome.
+  {
+    const planetColors = [0xffd9a0, 0xff9e7a, 0xa8c8ff, 0xfff0c4];
+    for (let i = 0; i < 4; i++) {
+      const ang = celestialRand() * Math.PI * 2;
+      const d = 220 + celestialRand() * (fr * 0.65);
+      const px = Math.cos(ang) * d, py = Math.sin(ang) * d;
+      planetG.circle(px, py, 2.3).fill({ color: planetColors[i], alpha: 1 });
+      planetG.circle(px, py, 3.6).fill({ color: planetColors[i], alpha: 0.25 }); // tiny halo
+    }
+  }
+
+  // Sun & moon overhead, plus halo and rainbow — drawn fresh each frame.
+  const celestialLayer = new Graphics();
+  // Drifting clouds in the sky (upper band), lit by the time of day.
+  const skyCloudLayer = new Container();
+  const skyClouds: Array<{ sp: Sprite; x: number; yFrac: number; sc: number }> = [];
+  for (let i = 0; i < 7; i++) {
+    const sp = new Sprite(cloudTextures[i % cloudTextures.length]);
+    sp.anchor.set(0.5);
+    skyCloudLayer.addChild(sp);
+    skyClouds.push({ sp, x: celestialRand(), yFrac: 0.02 + celestialRand() * 0.2, sc: 0.45 + celestialRand() * 0.7 });
+  }
+  let moonPhaseAcc = celestialRand() * 100;
 
   // Constellations: astronomers join bright stars into a figure. The lines
   // live in the rotating dome and fade with the bright population.
@@ -1180,6 +1224,73 @@ export function createAtmosphere(): Atmosphere {
       d.sp.y += wy * extraMult * d.speedMult * dt;
     }
 
+    // --- Sky: sun & moon overhead, drifting clouds, deep-sky glow ---
+    moonPhaseAcc += dt;
+    milkyWayG.alpha = faintStarsG.alpha * 0.85;
+    planetG.alpha = brightStarsG.alpha;
+    if (limbLayout) {
+      const w = limbLayout.width, h = limbLayout.height;
+      // Drifting sky clouds — lit warm-white by day, grey and thin by night.
+      const dayAmt = 1 - L.nightness;
+      const cloudTint = lerpColor(0x5b6678, lerpColor(0xffffff, L.color, 0.35), dayAmt);
+      const cloudAlpha = 0.06 + 0.26 * dayAmt;
+      const driftDir = wx >= 0 ? 1 : -1;
+      for (const cl of skyClouds) {
+        cl.x += driftDir * 0.012 * dt;
+        if (cl.x > 1.18) cl.x -= 1.36;
+        if (cl.x < -0.18) cl.x += 1.36;
+        cl.sp.x = cl.x * w;
+        cl.sp.y = cl.yFrac * h;
+        cl.sp.scale.set(cl.sc * 0.62, cl.sc * 0.4);
+        cl.sp.tint = cloudTint;
+        cl.sp.alpha = cloudAlpha;
+      }
+
+      // The sun or the moon, arcing across the upper sky band.
+      celestialLayer.clear();
+      const bx = L.azimuth * w;
+      const by = h * (0.24 - 0.15 * L.altitude); // horizon (low) → zenith (high)
+      const fade = Math.min(1, L.altitude * 3.2);  // sink into the horizon haze
+      if (L.isDay) {
+        const a = fade;
+        celestialLayer.circle(bx, by, 70).fill({ color: 0xfff1c2, alpha: 0.05 * a });
+        celestialLayer.circle(bx, by, 34).fill({ color: 0xfff0bb, alpha: 0.13 * a });
+        celestialLayer.circle(bx, by, 46).stroke({ color: 0xfff2d2, alpha: 0.06 * a, width: 3 }); // halo
+        celestialLayer.circle(bx, by, 12).fill({ color: 0xfff7e2, alpha: 0.9 * a });
+        celestialLayer.circle(bx, by, 8).fill({ color: 0xfffdf4, alpha: 0.98 * a });
+      } else {
+        const a = Math.max(0.55, L.nightness) * fade;
+        const ph = Math.sin(moonPhaseAcc * 0.02); // slow phase, -1..1
+        celestialLayer.circle(bx, by, 30).fill({ color: 0xc2cee2, alpha: 0.05 * a });
+        celestialLayer.circle(bx, by, 11).fill({ color: 0xe2e8f4, alpha: 0.92 * a });
+        celestialLayer.circle(bx - 3, by - 2, 2.0).fill({ color: 0xc6cedc, alpha: 0.5 * a }); // maria
+        celestialLayer.circle(bx + 2, by + 3, 1.4).fill({ color: 0xc6cedc, alpha: 0.4 * a });
+        celestialLayer.circle(bx + ph * 9.5, by, 11.5).fill({ color: 0x10141f, alpha: 0.92 * a }); // phase shadow
+      }
+
+      // Rainbow: a soft arc when a storm breaks up in daylight.
+      if (storm && L.isDay && L.altitude > 0.18) {
+        const su = storm.t / ATMOS.storm.durationSec;
+        const fresh = Math.max(0, Math.sin(Math.PI * Math.min(1, su * 1.15))) * Math.max(0, Math.min(1, (su - 0.35) / 0.3));
+        if (fresh > 0.01) {
+          const rx = w * 0.5, ry = h * 1.05, rad = h * 0.6;
+          const cols = [0xe06a6a, 0xe0b86a, 0xd9e06a, 0x6fcf8a, 0x6aa8e0, 0x9a7ad9];
+          for (let bi = 0; bi < cols.length; bi++) {
+            celestialLayer.arc(rx, ry, rad + bi * 3.2, Math.PI * 1.2, Math.PI * 1.8)
+              .stroke({ color: cols[bi], alpha: 0.15 * fresh, width: 3 });
+          }
+        }
+      }
+
+      // Ambient shooting stars: the odd faint streak on a clear night.
+      if (L.nightness > 0.5 && !activeEvent && Math.random() < dt / 14) {
+        const ang2 = Math.PI * (0.15 + Math.random() * 0.25);
+        const sp = 240 + Math.random() * 160;
+        meteorStreaks.push({ x: w * (0.1 + Math.random() * 0.8), y: h * (0.02 + Math.random() * 0.16),
+          vx: Math.cos(ang2) * sp * (Math.random() < 0.5 ? 1 : -1), vy: Math.sin(ang2) * sp, age: 0 });
+      }
+    }
+
     // Scar fade envelopes.
     for (let i = scars.length - 1; i >= 0; i--) {
       const s = scars[i];
@@ -1325,6 +1436,8 @@ export function createAtmosphere(): Atmosphere {
     stormLayer,
     cometLayer,
     auroraLayer,
+    celestialLayer,
+    skyCloudLayer,
     setLandMask: (mask: Container | null) => { shimmerLayer.mask = mask; },
     wind: () => lastWind,
     onCelestialEvent: (cb: (kind: string) => void) => { eventCb = cb; },

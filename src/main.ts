@@ -790,6 +790,8 @@ const worldPlane = new MeshPlane({ texture: worldRT, verticesX: 110, verticesY: 
 app.stage.addChild(atmos.skyLayer);
 // Stars turn behind the planet; the world plane occludes them below the limb.
 app.stage.addChild(atmos.starLayer);
+// Clouds drift in the sky band above the planet (behind the world plane).
+app.stage.addChild(atmos.skyCloudLayer);
 // Comets and aurora share the night sky and set behind the planet.
 app.stage.addChild(atmos.cometLayer);
 app.stage.addChild(atmos.auroraLayer);
@@ -799,6 +801,8 @@ app.stage.addChild(worldPlane);
 app.stage.addChild(atmos.limbMask);
 app.stage.addChild(atmos.limbBand);
 app.stage.addChild(atmos.glazeLayer);
+// Sun & moon (and rainbow) ride over the world, in front of the planet.
+app.stage.addChild(atmos.celestialLayer);
 // Satellites cross the sky over the planet (screen-space, in front of the limb).
 app.stage.addChild(satelliteGfx);
 // The silhouette remap needs the diamond's corners in texture pixels.
