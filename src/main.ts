@@ -3674,12 +3674,17 @@ function drawFarmTile(g: Graphics, row: number, col: number, alphaMult: number) 
   }
 }
 
-// Re-bake the cached layer from the set of mature fields.
+// Re-bake the cached layer from the set of mature fields. We enable the cache
+// once and thereafter REFRESH it in place (updateCacheTexture) rather than
+// toggling cacheAsTexture off/on — toggling re-allocates a fresh RenderTexture
+// each bake, and on some drivers (Mesa/SteamOS) a newly-allocated framebuffer
+// shows uninitialised garbage for one frame: the flashing white polygons.
+let farmCacheEnabled = false;
 function bakeFarmCache() {
-  farmGfx.cacheAsTexture?.(false);
   farmGfx.clear();
   for (const key of matureFarm) drawFarmTile(farmGfx, (key / GRID_SIZE) | 0, key % GRID_SIZE, 1);
-  farmGfx.cacheAsTexture?.(true);
+  if (!farmCacheEnabled) { farmGfx.cacheAsTexture?.(true); farmCacheEnabled = true; }
+  else (farmGfx as any).updateCacheTexture?.();
   farmCacheDirty = false;
 }
 
