@@ -4380,7 +4380,7 @@ const ERA_NAMES: Record<Era, string> = {
 };
 function updateClock() {
   const now = new Date();
-  clockTime.textContent = now.toLocaleTimeString('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', minute: '2-digit', second: '2-digit', timeZoneName: 'short' });
+  clockTime.textContent = now.toLocaleTimeString('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' });
   clockDate.textContent = now.toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', weekday: 'long', month: 'long', day: 'numeric' });
   // Deep time: the world's leading era and its age, in years (this epoch resets
   // when the cataclysm rolls a fresh world).
