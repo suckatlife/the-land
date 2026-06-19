@@ -693,6 +693,7 @@ const cableGfx = new Graphics();     // undersea power/data cables between citie
 const lighthouseGfx = new Graphics(); // coastal lighthouses + sweeping beams at night
 const fireGfx = new Graphics();      // wildfires (additive glow)
 fireGfx.blendMode = 'add';
+const energyGfx = new Graphics();    // renewable energy farms (solar arrays, wind turbines)
 const megaGfx = new Graphics();      // post-era megastructures (arcologies, space elevators)
 const satelliteGfx = new Graphics(); // satellites crossing the sky (screen-space)
 satelliteGfx.eventMode = 'none';
@@ -751,6 +752,8 @@ world.addChild(boatsGfx);
 world.addChild(lighthouseGfx);
 // Wildfires glow over the burning land.
 world.addChild(fireGfx);
+// Renewable farms sit on open land near cities, beneath the megastructures.
+world.addChild(energyGfx);
 // Megastructures tower over their cities.
 world.addChild(megaGfx);
 // Directional land light sits under the cloud shadows (clouds block sun).
@@ -2569,15 +2572,16 @@ function updateFires(dt: number, nowSec: number, night: number) {
 
 // Megastructures: the most advanced civs raise a landmark over their greatest
 // city — an arcology dome or a space elevator threading toward orbit.
-interface Mega { row: number; col: number; kind: 'dome' | 'elevator'; color: number }
+type MegaKind = 'dome' | 'elevator' | 'megatower' | 'reactor';
+const MEGA_KINDS: MegaKind[] = ['elevator', 'megatower', 'dome', 'reactor'];
+interface Mega { row: number; col: number; kind: MegaKind; color: number }
 const megastructures: Mega[] = [];
 function rebuildMegastructures() {
   megastructures.length = 0;
   for (const civ of simWorld.civs.values()) {
     if (civ.phase === 'dead' || ERA_RANK[civ.era] < 5 || civ.cities.length === 0) continue;
     const hub = civ.cities.reduce((b, c) => (c.prominence > b.prominence ? c : b), civ.cities[0]);
-    const kind: 'dome' | 'elevator' = (civ.id % 2 === 0) ? 'dome' : 'elevator';
-    megastructures.push({ row: hub.row, col: hub.col, kind, color: civ.color });
+    megastructures.push({ row: hub.row, col: hub.col, kind: MEGA_KINDS[civ.id % MEGA_KINDS.length], color: civ.color });
   }
 }
 function drawMegastructures(nowSec: number, night: number) {
@@ -2586,27 +2590,123 @@ function drawMegastructures(nowSec: number, night: number) {
   const ng = Math.max(0.25, night);
   for (const m of megastructures) {
     const { x, y } = gridToScreen(m.col, m.row);
-    if (m.kind === 'dome') {
-      // A translucent arcology dome with ribs and rim lights.
-      const R = 16, N = 18, pts: number[] = [];
-      for (let i = 0; i <= N; i++) { const a = Math.PI + Math.PI * (i / N); pts.push(x + Math.cos(a) * R, y + Math.sin(a) * R * 0.6); }
-      megaGfx.poly(pts).fill({ color: lerpColor(m.color, 0xaaccff, 0.55), alpha: 0.12 });
-      megaGfx.poly(pts).stroke({ color: lerpColor(m.color, 0xffffff, 0.5), alpha: 0.45, width: 1 });
-      for (let k = 1; k < 5; k++) { const a = Math.PI + Math.PI * (k / 5); megaGfx.moveTo(x, y).lineTo(x + Math.cos(a) * R, y + Math.sin(a) * R * 0.6).stroke({ color: lerpColor(m.color, 0xffffff, 0.4), alpha: 0.22, width: 0.5 }); }
-      megaGfx.ellipse(x, y - R * 0.62, 1.8, 1.0).fill({ color: 0xfff0b0, alpha: 0.5 + 0.4 * ng * (0.6 + 0.4 * Math.sin(nowSec * 2)) }); // apex light
-    } else {
-      // A space elevator: a tapering tether up to a station and beacon, with a
-      // climber sliding up its length.
-      const topY = y - 72;
-      megaGfx.poly([x - 1.3, y, x + 1.3, y, x + 0.4, topY, x - 0.4, topY]).fill({ color: 0xc2cdd8, alpha: 0.72 });
-      const sy = y - 50;
-      megaGfx.rect(x - 3.2, sy - 1.6, 6.4, 3.2).fill({ color: lerpColor(m.color, 0xe8eef4, 0.6), alpha: 0.9 });   // orbital station
-      megaGfx.circle(x, topY, 2.2).fill({ color: 0xd8e2ee, alpha: 0.85 });                                        // counterweight
-      const climb = (nowSec * 0.16) % 1;
-      megaGfx.circle(x, y - climb * 72, 1.1).fill({ color: 0xfff0a0, alpha: 0.85 });                              // climber
-      megaGfx.circle(x, topY, 1.4).fill({ color: 0xff6a5a, alpha: (0.4 + 0.5 * Math.sin(nowSec * 3)) * ng });     // beacon
-      if (night > 0.2) megaGfx.circle(x, sy, 0.9).fill({ color: 0xbfe0ff, alpha: 0.7 * ng });
+    drawOneMega(megaGfx, x, y, m.kind, m.color, nowSec, ng, night);
+  }
+}
+function drawOneMega(megaGfx: Graphics, x: number, y: number, kind: MegaKind, color: number, nowSec: number, ng: number, night: number) {
+  if (kind === 'elevator') {
+    // Space elevator: a tether climbing high and fading into the sky, with
+    // way-stations and a climber sliding up it.
+    const H = 150, segs = 16;
+    for (let s = 0; s < segs; s++) {
+      const t0 = s / segs, t1 = (s + 1) / segs;
+      const w0 = 1.4 * (1 - t0 * 0.7), w1 = 1.4 * (1 - t1 * 0.7);
+      const a = 0.78 * (1 - t0) * (1 - t0); // dissolves toward the top
+      megaGfx.poly([x - w0, y - H * t0, x + w0, y - H * t0, x + w1, y - H * t1, x - w1, y - H * t1]).fill({ color: 0xc2cdd8, alpha: a });
     }
+    for (const sf of [0.32, 0.62]) { const sy = y - H * sf; megaGfx.rect(x - 3, sy - 1.4, 6, 2.8).fill({ color: lerpColor(color, 0xe8eef4, 0.6), alpha: 0.85 * (1 - sf * 0.4) }); }
+    const climb = (nowSec * 0.1) % 1;
+    megaGfx.circle(x, y - H * climb, 1.1).fill({ color: 0xfff0a0, alpha: 0.85 * (1 - climb * 0.7) }); // climber
+    megaGfx.circle(x, y - H * 0.8, 1.3).fill({ color: 0xff8a6a, alpha: (0.3 + 0.4 * Math.sin(nowSec * 3)) * ng * 0.7 }); // high beacon
+  } else if (kind === 'megatower') {
+    // A supertall tower stepping up to a spire, lit floor by floor at night.
+    const H = 84;
+    const steps = [[0, 5], [0.42, 3.6], [0.72, 2.2], [1, 1.2]];
+    for (let s = 0; s < steps.length - 1; s++) {
+      const y0 = y - H * steps[s][0], y1 = y - H * steps[s + 1][0], w0 = steps[s][1], w1 = steps[s + 1][1];
+      megaGfx.poly([x - w0, y0, x + w0, y0, x + w1, y1, x - w1, y1]).fill({ color: lerpColor(color, 0x70808f, 0.45), alpha: 0.96 });
+      megaGfx.poly([x - w0, y0, x + w0, y0, x + w1, y1, x - w1, y1]).stroke({ color: lerpColor(color, 0xffffff, 0.3), alpha: 0.3, width: 0.5 });
+    }
+    megaGfx.poly([x - 0.5, y - H, x + 0.5, y - H, x, y - H - 10]).fill({ color: 0x9aaabb, alpha: 0.9 }); // spire
+    if (night > 0.12) for (let r = 0; r < 12; r++) { const wy = y - H * (0.08 + r * 0.07); megaGfx.circle(x + ((r * 7) % 5 - 2), wy, 0.5).fill({ color: 0xffe6a8, alpha: 0.55 * ng }); }
+    megaGfx.circle(x, y - H - 10, 1).fill({ color: 0xff6a5a, alpha: (0.4 + 0.5 * Math.sin(nowSec * 3)) * ng }); // aircraft beacon
+  } else if (kind === 'reactor') {
+    // A fusion plant: a low dome flanked by cooling towers, with a pulsing core.
+    for (const cx of [-9, 9]) {
+      megaGfx.poly([x + cx - 4, y, x + cx + 4, y, x + cx + 2.6, y - 13, x + cx - 2.6, y - 13]).fill({ color: 0xb9bcc2, alpha: 0.92 }); // cooling tower
+      megaGfx.ellipse(x + cx, y - 13, 2.6, 0.9).fill({ color: 0xd6d9de, alpha: 0.9 });
+      megaGfx.circle(x + cx + (Math.sin(nowSec + cx) * 2), y - 15 - (nowSec * 4 % 4), 1.4).fill({ color: 0xdfe4ea, alpha: 0.18 }); // steam
+    }
+    const R = 8, N = 14, pts: number[] = [];
+    for (let i = 0; i <= N; i++) { const a = Math.PI + Math.PI * (i / N); pts.push(x + Math.cos(a) * R, y + Math.sin(a) * R * 0.6); }
+    megaGfx.poly(pts).fill({ color: 0x5a6470, alpha: 0.95 });
+    megaGfx.poly(pts).stroke({ color: 0x8a96a4, alpha: 0.5, width: 0.6 });
+    const pulse = 0.5 + 0.5 * Math.sin(nowSec * 4);
+    megaGfx.circle(x, y - R * 0.5, 3.5).fill({ color: 0x7afff0, alpha: (0.12 + 0.16 * pulse) }); // energy glow
+    megaGfx.circle(x, y - R * 0.5, 1.2).fill({ color: 0xeafffb, alpha: 0.5 + 0.4 * pulse });
+  } else {
+    // Arcology dome: a translucent ribbed dome with rim lights.
+    const R = 16, N = 18, pts: number[] = [];
+    for (let i = 0; i <= N; i++) { const a = Math.PI + Math.PI * (i / N); pts.push(x + Math.cos(a) * R, y + Math.sin(a) * R * 0.6); }
+    megaGfx.poly(pts).fill({ color: lerpColor(color, 0xaaccff, 0.55), alpha: 0.12 });
+    megaGfx.poly(pts).stroke({ color: lerpColor(color, 0xffffff, 0.5), alpha: 0.45, width: 1 });
+    for (let k = 1; k < 5; k++) { const a = Math.PI + Math.PI * (k / 5); megaGfx.moveTo(x, y).lineTo(x + Math.cos(a) * R, y + Math.sin(a) * R * 0.6).stroke({ color: lerpColor(color, 0xffffff, 0.4), alpha: 0.22, width: 0.5 }); }
+    megaGfx.ellipse(x, y - R * 0.62, 1.8, 1.0).fill({ color: 0xfff0b0, alpha: 0.5 + 0.4 * ng * (0.6 + 0.4 * Math.sin(nowSec * 2)) });
+  }
+}
+
+// Renewable energy farms: once a civ reaches the modern era it plants solar
+// arrays and wind turbines on the open land around its cities.
+type EnergyKind = 'solar' | 'wind';
+interface EnergyFarm { row: number; col: number; kind: EnergyKind; n: number }
+const energyFarms: EnergyFarm[] = [];
+function rebuildEnergyFarms() {
+  energyFarms.length = 0;
+  for (const civ of simWorld.civs.values()) {
+    if (civ.phase === 'dead' || ERA_RANK[civ.era] < 4) continue;
+    const owned = civTiles.get(civ.id);
+    if (!owned || owned.size === 0) continue;
+    // Solar arrays and wind farms sit on the civ's open farmland (its 'cleared'
+    // tiles) — abundant on any developed civ, unlike the vanishing wild frontier.
+    const cands: Array<{ r: number; c: number }> = [];
+    for (const key of owned) {
+      const r = (key / GRID_SIZE) | 0, c = key % GRID_SIZE;
+      if (simWorld.tiles[r][c].state === 'cleared' && biomeMap[r][c] !== 'water') cands.push({ r, c });
+    }
+    // Spread a handful evenly through the fields rather than clumping.
+    const take = Math.min(5, cands.length);
+    for (let i = 0; i < take; i++) {
+      const t = cands[Math.floor((i * cands.length) / take)];
+      const kind: EnergyKind = (t.r + t.c) % 2 === 0 ? 'solar' : 'wind';
+      energyFarms.push({ row: t.r, col: t.c, kind, n: energyFarms.length });
+    }
+  }
+}
+function drawEnergyFarms(nowSec: number, night: number) {
+  energyGfx.clear();
+  if (energyFarms.length === 0) return;
+  for (const f of energyFarms) {
+    const { x, y } = gridToScreen(f.col, f.row);
+    if (f.kind === 'solar') drawSolarFarm(energyGfx, x, y, night);
+    else drawWindFarm(energyGfx, x, y, nowSec, f.n, night);
+  }
+}
+function drawSolarFarm(g: Graphics, x: number, y: number, night: number) {
+  const glint = Math.max(0, 1 - night * 1.4); // panels catch the sun by day
+  for (let row = 0; row < 2; row++) for (let col = 0; col < 3; col++) {
+    const px = x + (col - 1) * 7 - row * 3.5, py = y + row * 4 - 1;
+    const panel = [px - 4, py, px + 2, py - 2.4, px + 5, py + 0.5, px - 1, py + 2.9];
+    g.poly(panel).fill({ color: 0x223a66, alpha: 0.92 });
+    g.poly(panel).stroke({ color: 0x4a6aa0, alpha: 0.5, width: 0.4 });
+    g.poly([px - 1, py + 0.3, px + 2, py - 1, px + 2.6, py - 0.4, px - 0.4, py + 0.9])
+      .fill({ color: 0xbfe0ff, alpha: 0.4 * glint });
+  }
+}
+function drawWindFarm(g: Graphics, x: number, y: number, nowSec: number, n: number, night: number) {
+  const blade = night > 0.4 ? 0xd6dac8 : 0xf4f6f0;
+  const positions = [[-7, 1], [4, -2], [-1, 4]];
+  for (let i = 0; i < positions.length; i++) {
+    const bx = x + positions[i][0], by = y + positions[i][1];
+    const H = 13 + (i % 2) * 3, hx = bx, hy = by - H;
+    g.poly([bx - 0.7, by, bx + 0.7, by, hx + 0.5, hy, hx - 0.5, hy]).fill({ color: 0xe6ead0, alpha: 0.9 });
+    const spin = nowSec * 1.6 + n * 1.3 + i;
+    for (let b = 0; b < 3; b++) {
+      const a = spin + b * (Math.PI * 2 / 3);
+      const tx = hx + Math.cos(a) * 6.5, ty = hy + Math.sin(a) * 6.5 * 0.7;
+      g.poly([hx, hy, tx, ty, hx + Math.cos(a + 0.3) * 2, hy + Math.sin(a + 0.3) * 2 * 0.7])
+        .fill({ color: blade, alpha: 0.9 });
+    }
+    g.circle(hx, hy, 0.9).fill({ color: 0xcfd4c0, alpha: 0.95 });
   }
 }
 
@@ -3234,7 +3334,7 @@ function maybeSpawnCaravans() {
 // Planes (modern+) cross the world in straight lines with a contrail; rockets
 // (post) lift off vertically from a city and fade into the sky.
 interface Plane { x: number; y: number; vx: number; vy: number; trail: Array<{ x: number; y: number }>; color: number }
-interface Rocket { x: number; y0: number; t: number }
+interface Rocket { x: number; y0: number; t: number; smoke: Array<{ x: number; y: number; t: number; r: number }> }
 const planes: Plane[] = [];
 const rockets: Rocket[] = [];
 
@@ -3259,13 +3359,13 @@ function maybeSpawnPlanes() {
 }
 
 function maybeSpawnRockets(dt: number) {
-  if (rockets.length >= 2 || Math.random() > dt / 25) return;
-  const posts = [...simWorld.civs.values()].filter((c) => c.phase !== 'dead' && ERA_RANK[c.era] >= 5 && c.cities.length);
+  if (rockets.length >= 3 || Math.random() > dt / 13) return;
+  const posts = [...simWorld.civs.values()].filter((c) => c.phase !== 'dead' && ERA_RANK[c.era] >= 4 && c.cities.length);
   if (!posts.length) return;
   const civ = posts[Math.floor(Math.random() * posts.length)];
   const city = civ.cities[Math.floor(Math.random() * civ.cities.length)];
   const { x, y } = gridToScreen(city.col, city.row);
-  rockets.push({ x, y0: y, t: 0 });
+  rockets.push({ x, y0: y, t: 0, smoke: [] });
   triggerPing(city.row, city.col, 0xfff0d0);
 }
 
@@ -3410,16 +3510,35 @@ function updateAir(dt: number, night: number) {
   for (let i = rockets.length - 1; i >= 0; i--) {
     const rk = rockets[i];
     rk.t += dt;
-    if (rk.t > 3.5) { rockets.splice(i, 1); continue; }
-    const rise = rk.t * rk.t * 70; // accelerating
+    if (rk.t > 6.5) { rockets.splice(i, 1); continue; }
+    const rise = rk.t * rk.t * 60; // accelerating, climbs far past the top of the frame
     const ry = rk.y0 - rise;
-    const fade = Math.max(0, 1 - rk.t / 3.5);
-    // Flame trail.
-    for (let f = 0; f < 6; f++) {
-      airGfx.circle(rk.x + (Math.random() - 0.5) * 2, ry + 4 + f * 3, (3 - f * 0.4) * fade)
-        .fill({ color: f < 2 ? 0xffe89a : 0xff7a30, alpha: (1 - f / 6) * 0.7 * fade });
+    const aloft = rk.t < 5.5; // still in flight (vs. just the lingering contrail)
+    // Shed a smoke puff at the exhaust each tick while climbing.
+    if (aloft) rk.smoke.push({ x: rk.x + (Math.random() - 0.5) * 1.5, y: ry + 7, t: 0, r: 2 });
+    // The contrail: puffs age, expand and drift, fading from grey to nothing.
+    for (let s = rk.smoke.length - 1; s >= 0; s--) {
+      const p = rk.smoke[s];
+      p.t += dt;
+      if (p.t > 2.6) { rk.smoke.splice(s, 1); continue; }
+      const pa = Math.max(0, 1 - p.t / 2.6);
+      p.r += dt * 6;
+      airGfx.circle(p.x, p.y - p.t * 4, p.r)
+        .fill({ color: 0xe8eef2, alpha: pa * 0.5 });
     }
-    airGfx.circle(rk.x, ry, 1.6).fill({ color: 0xf0f0f0, alpha: fade });
+    if (!aloft) continue; // rocket itself is gone; just let the trail dissipate
+    // Bright exhaust flame beneath the rocket.
+    for (let f = 0; f < 7; f++) {
+      airGfx.circle(rk.x + (Math.random() - 0.5) * 2.5, ry + 6 + f * 3.5, 3.6 - f * 0.4)
+        .fill({ color: f < 2 ? 0xfff0c0 : 0xff7a30, alpha: (1 - f / 7) * 0.8 });
+    }
+    // Rocket body: a little white capsule with a nose cone.
+    airGfx.roundRect(rk.x - 1.6, ry - 4, 3.2, 9, 1.4).fill({ color: 0xf4f6f8 });
+    airGfx.poly([rk.x - 1.6, ry - 4, rk.x + 1.6, ry - 4, rk.x, ry - 8]).fill({ color: 0xd84a3a });
+    // Launch glow at the base early in the climb.
+    if (rk.t < 1.2) {
+      airGfx.circle(rk.x, rk.y0, 14 * (1 - rk.t / 1.2)).fill({ color: 0xffd070, alpha: 0.25 * (1 - rk.t / 1.2) });
+    }
   }
 }
 
@@ -3802,6 +3921,7 @@ function resetStorySurfaces() {
   cables.length = 0; cableGfx.clear();
   lighthouses.length = 0; lighthouseGfx.clear();
   fires.length = 0; fireGfx.clear();
+  energyFarms.length = 0; energyGfx.clear();
   megastructures.length = 0; megaGfx.clear();
   riverBoats.length = 0; riverBridges.length = 0; riverCraftGfx.clear();
   curPollution = 0;
@@ -4392,6 +4512,7 @@ app.ticker.add((ticker) => {
   drawLighthouses(nowSec, n);
   updateFires(dtSec, nowSec, n);
   updateRiverCraft(dtSec, n);
+  drawEnergyFarms(nowSec, n);
   drawMegastructures(nowSec, n);
   updateBirdFlocks(dtSec, nowSec, n);
   maybeGhost(dtSec, n);
@@ -4429,6 +4550,7 @@ app.ticker.add((ticker) => {
     rebuildPowerLines();
     rebuildCables();
     rebuildLighthouses();
+    rebuildEnergyFarms();
     rebuildMegastructures();
     rebuildBridges();
     maybeSpawnRiverBoats();
@@ -4926,6 +5048,7 @@ document.getElementById('skip')!.addEventListener('click', () => {
   snapFarmland();
   rebuildCauseways();
   rebuildLighthouses();
+  rebuildEnergyFarms();
   rebuildMegastructures();
   seedTrailsAfterSkip();
   drawCityMarkers();
