@@ -690,6 +690,8 @@ const airTrailGfx = new Graphics();  // flight corridors (planes)
 const causewayGfx = new Graphics();  // strait-spanning causeway islands + rail (modern+)
 const cableGfx = new Graphics();     // undersea power/data cables between cities
 const lighthouseGfx = new Graphics(); // coastal lighthouses + sweeping beams at night
+const fireGfx = new Graphics();      // wildfires (additive glow)
+fireGfx.blendMode = 'add';
 const satelliteGfx = new Graphics(); // satellites crossing the sky (screen-space)
 satelliteGfx.eventMode = 'none';
 const buildingLayer = new Container();
@@ -744,6 +746,8 @@ world.addChild(seaTrailGfx);
 world.addChild(boatsGfx);
 // Lighthouses stand on the headlands, their beams sweeping the night sea.
 world.addChild(lighthouseGfx);
+// Wildfires glow over the burning land.
+world.addChild(fireGfx);
 // Directional land light sits under the cloud shadows (clouds block sun).
 world.addChild(atmos.landLightLayer);
 // City smoke rises beneath the clouds.
@@ -2438,6 +2442,67 @@ function drawLighthouses(nowSec: number, night: number) {
   }
 }
 
+// Wildfires: a forest catches and the blaze spreads tile by tile through the
+// wild woods, glowing at night, then burns out to grassland that the breathing
+// land slowly reforests.
+interface FireTile { row: number; col: number; t: number; spread: boolean; wasForest: boolean }
+const fires: FireTile[] = [];
+const FIRE_BURN = 5;            // seconds a tile burns
+const FIRE_CAP = 140;          // max tiles alight at once
+const FIRE_IGNITE_MEAN = 55;   // avg seconds between fresh wildfires
+const FIRE_DIRS = [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, 1], [-1, 1], [1, -1]];
+function flammable(r: number, c: number): boolean {
+  if (r < 0 || r >= GRID_SIZE || c < 0 || c >= GRID_SIZE) return false;
+  const st = simWorld.tiles[r][c].state;
+  if (st !== 'wild' && st !== 'ruin') return false; // only the wilds burn, not towns/farms
+  const b = biomeMap[r][c];
+  return b === 'forest' || b === 'grass' || b === 'fertile';
+}
+function igniteTile(r: number, c: number) {
+  if (fires.length >= FIRE_CAP || !flammable(r, c)) return;
+  if (fires.some((f) => f.row === r && f.col === c)) return;
+  fires.push({ row: r, col: c, t: 0, spread: false, wasForest: biomeMap[r][c] === 'forest' });
+}
+function updateFires(dt: number, nowSec: number, night: number) {
+  // A new fire breaks out now and then, on a random patch of wild forest.
+  if (fires.length === 0 && Math.random() < dt / FIRE_IGNITE_MEAN) {
+    for (let tries = 0; tries < 24; tries++) {
+      const r = (Math.random() * GRID_SIZE) | 0, c = (Math.random() * GRID_SIZE) | 0;
+      if (biomeMap[r][c] === 'forest' && simWorld.tiles[r][c].state === 'wild') { igniteTile(r, c); break; }
+    }
+  }
+  fireGfx.clear();
+  for (let i = fires.length - 1; i >= 0; i--) {
+    const f = fires[i];
+    f.t += dt;
+    // Partway through, the fire leaps to neighbouring fuel.
+    if (!f.spread && f.t > FIRE_BURN * 0.4) {
+      f.spread = true;
+      for (const [dr, dc] of FIRE_DIRS) {
+        const nr = f.row + dr, nc = f.col + dc;
+        if (!flammable(nr, nc)) continue;
+        const p = biomeMap[nr][nc] === 'forest' ? 0.5 : 0.16; // forests carry fire; grass less so
+        if (Math.random() < p) igniteTile(nr, nc);
+      }
+    }
+    if (f.t >= FIRE_BURN) {
+      if (f.wasForest && biomeMap[f.row][f.col] === 'forest') { biomeMap[f.row][f.col] = 'grass'; enrollBiomeTrans(f.row, f.col); } // burned to grassland
+      fires.splice(i, 1); continue;
+    }
+    // Flames, embers and a glow that reads strongly at night.
+    const { x, y } = gridToScreen(f.col, f.row);
+    const env = Math.sin(Math.PI * Math.min(1, f.t / FIRE_BURN * 1.25)); // grow then die down
+    const flick = 0.7 + 0.3 * Math.sin(nowSec * 12 + f.row * 3 + f.col * 5);
+    const size = (2.5 + env * 3.5) * flick;
+    fireGfx.circle(x, y - 2, size * 2.6).fill({ color: 0xff5a14, alpha: (0.05 + 0.16 * night) * env }); // glow
+    for (let k = 0; k < 3; k++) {
+      const ox = (k - 1) * 2.3 * flick, fy = -(size + Math.sin(nowSec * 10 + k + f.col) * 1.4);
+      fireGfx.poly([x + ox, y + fy, x + ox - 1.5, y, x + ox + 1.5, y]).fill({ color: k === 1 ? 0xffd24a : 0xff7a22, alpha: 0.8 * env });
+    }
+    fireGfx.poly([x, y - (size + 1.5), x - 1.8, y, x + 1.8, y]).fill({ color: 0xffe879, alpha: 0.7 * env }); // bright core
+  }
+}
+
 function rebuildPowerLines() {
   powerLines.length = 0;
   for (const civ of simWorld.civs.values()) {
@@ -3641,6 +3706,7 @@ function resetStorySurfaces() {
   powerLines.length = 0; powerGfx.clear();
   cables.length = 0; cableGfx.clear();
   lighthouses.length = 0; lighthouseGfx.clear();
+  fires.length = 0; fireGfx.clear();
   curPollution = 0;
   pollutionNarrated = false;
   curBlight = 0;
@@ -4227,6 +4293,7 @@ app.ticker.add((ticker) => {
   updateSatellites(dtSec, nowSec, n);
   drawCauseways(nowSec, n);
   drawLighthouses(nowSec, n);
+  updateFires(dtSec, nowSec, n);
   updateBirdFlocks(dtSec, nowSec, n);
   maybeGhost(dtSec, n);
   updateFestival(n);
