@@ -689,6 +689,7 @@ const landTrailGfx = new Graphics(); // worn land routes (caravans/trains)
 const airTrailGfx = new Graphics();  // flight corridors (planes)
 const causewayGfx = new Graphics();  // strait-spanning causeway islands + rail (modern+)
 const cableGfx = new Graphics();     // undersea power/data cables between cities
+const lighthouseGfx = new Graphics(); // coastal lighthouses + sweeping beams at night
 const satelliteGfx = new Graphics(); // satellites crossing the sky (screen-space)
 satelliteGfx.eventMode = 'none';
 const buildingLayer = new Container();
@@ -741,6 +742,8 @@ world.addChild(nomadGfx);
 // Worn sea lanes lie on the water, beneath the boats that wear them.
 world.addChild(seaTrailGfx);
 world.addChild(boatsGfx);
+// Lighthouses stand on the headlands, their beams sweeping the night sea.
+world.addChild(lighthouseGfx);
 // Directional land light sits under the cloud shadows (clouds block sun).
 world.addChild(atmos.landLightLayer);
 // City smoke rises beneath the clouds.
@@ -2394,6 +2397,47 @@ function drawCables(dt: number, night: number) {
   }
 }
 
+// Lighthouses: a seafaring civ raises a beacon at its busiest harbour — a
+// striped tower whose lamp sweeps the night sea.
+interface Lighthouse { row: number; col: number; phase: number }
+const lighthouses: Lighthouse[] = [];
+function rebuildLighthouses() {
+  lighthouses.length = 0;
+  for (const civ of simWorld.civs.values()) {
+    if (civ.phase === 'dead' || ERA_RANK[civ.era] < 1 || civ.cities.length === 0) continue;
+    let best: CivCity | null = null;
+    for (const c of civ.cities) if (coastalWaterNear(c) && (!best || c.prominence > best.prominence)) best = c;
+    if (!best) continue;
+    const w = coastalWaterNear(best)!;
+    lighthouses.push({ row: w.row, col: w.col, phase: (w.row * 7 + w.col * 13) % 100 });
+  }
+}
+function drawLighthouses(nowSec: number, night: number) {
+  lighthouseGfx.clear();
+  if (lighthouses.length === 0) return;
+  for (const lh of lighthouses) {
+    const { x, y } = gridToScreen(lh.col, lh.row);
+    // A lamp beam sweeping the sea, at night — an iso-flattened cone.
+    if (night > 0.08) {
+      const ang = nowSec * 0.6 + lh.phase;
+      const dx = Math.cos(ang), dy = Math.sin(ang) * 0.5;
+      const lx = x, ly = y - 7, bl = 46, hw = 6;
+      const ex = lx + dx * bl, ey = ly + dy * bl, px = -dy * hw, py = dx * hw;
+      lighthouseGfx.poly([lx, ly, ex + px, ey + py, ex - px, ey - py]).fill({ color: 0xfff0c0, alpha: 0.13 * night });
+    }
+    // The tower: white with red bands and a dark lantern room.
+    lighthouseGfx.poly([x - 1.6, y, x + 1.6, y, x + 1.1, y - 7, x - 1.1, y - 7]).fill({ color: 0xeef0f2, alpha: 0.95 });
+    lighthouseGfx.rect(x - 1.4, y - 2.6, 2.8, 1.3).fill({ color: 0xc83828, alpha: 0.9 });
+    lighthouseGfx.rect(x - 1.2, y - 5.4, 2.4, 1.1).fill({ color: 0xc83828, alpha: 0.9 });
+    lighthouseGfx.rect(x - 1.1, y - 8.4, 2.2, 1.6).fill({ color: 0x3a3f48, alpha: 0.95 }); // lantern room
+    // The lamp, blinking and brighter after dark.
+    const bl2 = 0.5 + 0.5 * Math.sin(nowSec * 2.5 + lh.phase);
+    const ng = Math.max(0.2, night);
+    lighthouseGfx.circle(x, y - 7.6, 2.4).fill({ color: 0xfff4c8, alpha: 0.14 * ng * bl2 });
+    lighthouseGfx.circle(x, y - 7.6, 1.0).fill({ color: 0xfffae0, alpha: (0.5 + 0.4 * ng) * bl2 });
+  }
+}
+
 function rebuildPowerLines() {
   powerLines.length = 0;
   for (const civ of simWorld.civs.values()) {
@@ -3596,6 +3640,7 @@ function resetStorySurfaces() {
   herds.length = 0; wildlifeGfx.clear();
   powerLines.length = 0; powerGfx.clear();
   cables.length = 0; cableGfx.clear();
+  lighthouses.length = 0; lighthouseGfx.clear();
   curPollution = 0;
   pollutionNarrated = false;
   curBlight = 0;
@@ -4181,6 +4226,7 @@ app.ticker.add((ticker) => {
   maybeSpawnSatellite(dtSec);
   updateSatellites(dtSec, nowSec, n);
   drawCauseways(nowSec, n);
+  drawLighthouses(nowSec, n);
   updateBirdFlocks(dtSec, nowSec, n);
   maybeGhost(dtSec, n);
   updateFestival(n);
@@ -4216,6 +4262,7 @@ app.ticker.add((ticker) => {
     rebuildRoads();
     rebuildPowerLines();
     rebuildCables();
+    rebuildLighthouses();
     if (simWorld.tick - lastFarmReconcile >= 45) { lastFarmReconcile = simWorld.tick; reconcileFarmland(); }
     rebuildWonders();
     rebuildFishSpots();
@@ -4709,6 +4756,7 @@ document.getElementById('skip')!.addEventListener('click', () => {
   rebuildBuildingSprites();
   snapFarmland();
   rebuildCauseways();
+  rebuildLighthouses();
   seedTrailsAfterSkip();
   drawCityMarkers();
   eventLog.length = 0;
