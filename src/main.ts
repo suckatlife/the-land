@@ -661,6 +661,7 @@ const atmos = createAtmosphere();
 // Declared ahead of the layer stack (they slot into it below); drawn/managed
 // further down.
 const riverGfx = new Graphics();
+const riverCraftGfx = new Graphics(); // riverboats + bridges on the rivers
 const sceneryWaterGfx = new Graphics(); // beyond-the-grid sea (under glitter)
 const sceneryLandGfx = new Graphics();  // beyond-the-grid land (over glitter)
 const roadsGfx = new Graphics();        // paths between cities, era-styled
@@ -713,6 +714,7 @@ world.addChild(atmos.glitterLayer);
 world.addChild(sceneryLandGfx);
 // Rivers run over the terrain, under settlement tints.
 world.addChild(riverGfx);
+world.addChild(riverCraftGfx);
 world.addChild(simLayer);
 // Cultivated fields over the ownership tint, under everything built on them.
 world.addChild(farmGfx);
@@ -1396,12 +1398,19 @@ function drawScenery() {
 
 // Rivers: polylines from the hills to the sea, tapering downstream, tinted
 // each frame toward the celestial light so they catch dawn and dusk.
+// River courses kept for the craft that ply them and the bridges that cross
+// them: the meandered screen polyline plus the grid tiles the river runs through.
+let riverPaths: Array<{ screen: Array<{ x: number; y: number }>; tiles: Array<{ row: number; col: number }> }> = [];
+const riverTileSet = new Set<number>();
 function drawRivers() {
   riverGfx.clear();
+  riverPaths = [];
+  riverTileSet.clear();
   const rivers = generateRivers(elevationMap, biomeMap, currentSeed);
   for (const path of rivers) {
     const pts = path.map(p => gridToScreen(p.col, p.row));
     if (pts.length < 2) continue;
+    for (const p of path) riverTileSet.add(p.row * GRID_SIZE + p.col);
     // Wiggle each point sideways (perpendicular to the local flow) with a
     // couple of overlaid waves, so dead-straight grid channels meander like
     // real rivers instead of ruler-straight lines. Amplitude grows downstream.
@@ -1423,6 +1432,7 @@ function drawRivers() {
       riverGfx.moveTo(a.x, a.y).lineTo(b.x, b.y)
         .stroke({ color: 0x6fa8c8, alpha: (0.55 + 0.3 * t) * mouth, width: 1.0 + 2.4 * t, cap: 'round', join: 'round' });
     }
+    riverPaths.push({ screen: m, tiles: path });
   }
 }
 
@@ -2442,6 +2452,57 @@ function drawLighthouses(nowSec: number, night: number) {
     const ng = Math.max(0.2, night);
     lighthouseGfx.circle(x, y - 7.6, 2.4).fill({ color: 0xfff4c8, alpha: 0.14 * ng * bl2 });
     lighthouseGfx.circle(x, y - 7.6, 1.0).fill({ color: 0xfffae0, alpha: (0.5 + 0.4 * ng) * bl2 });
+  }
+}
+
+// Rivers come alive: little barges drift downstream to the sea, and bridges
+// span the rivers where roads cross them.
+interface RiverBoat { pts: Array<{ x: number; y: number }>; idx: number; speed: number; fade: number }
+const riverBoats: RiverBoat[] = [];
+const riverBridges: number[] = []; // grid tile keys where a road crosses a river
+function rebuildBridges() {
+  riverBridges.length = 0;
+  if (riverTileSet.size === 0) return;
+  const seen = new Set<number>();
+  for (const ek of landTrail.keys()) {
+    const ka = (ek / TRAIL_N) | 0, kb = ek % TRAIL_N;
+    if (riverTileSet.has(ka) && !seen.has(ka)) { seen.add(ka); riverBridges.push(ka); }
+    if (riverTileSet.has(kb) && !seen.has(kb)) { seen.add(kb); riverBridges.push(kb); }
+  }
+}
+function maybeSpawnRiverBoats() {
+  if (riverPaths.length === 0 || riverBoats.length >= 8 || Math.random() > 0.35) return;
+  const rp = riverPaths[Math.floor(Math.random() * riverPaths.length)];
+  if (rp.screen.length < 8) return;
+  riverBoats.push({ pts: rp.screen, idx: 1 + Math.random() * 2, speed: 5 + Math.random() * 3, fade: 1 });
+}
+function updateRiverCraft(dt: number, night: number) {
+  riverCraftGfx.clear();
+  // Bridges: a short plank deck across the river at each road crossing.
+  for (const key of riverBridges) {
+    const r = (key / GRID_SIZE) | 0, c = key % GRID_SIZE;
+    const { x, y } = gridToScreen(c, r);
+    riverCraftGfx.poly([x - 7, y - 2, x + 7, y - 2, x + 7, y, x - 7, y]).fill({ color: 0x6a5238, alpha: 0.9 }); // deck
+    riverCraftGfx.rect(x - 6, y - 1, 1, 3).fill({ color: 0x4a3a28, alpha: 0.8 }); // posts
+    riverCraftGfx.rect(x + 5, y - 1, 1, 3).fill({ color: 0x4a3a28, alpha: 0.8 });
+  }
+  // Barges drifting down to the sea.
+  for (let i = riverBoats.length - 1; i >= 0; i--) {
+    const b = riverBoats[i];
+    const last = b.pts.length - 1;
+    if (b.fade >= 1) { b.idx += b.speed * dt; if (b.idx >= last) { b.idx = last; b.fade = 0.999; } }
+    else { b.fade -= dt / 1.2; if (b.fade <= 0) { riverBoats.splice(i, 1); continue; } }
+    const k = Math.min(Math.floor(b.idx), last - 1), u = Math.min(1, b.idx - k);
+    const x = b.pts[k].x + (b.pts[k + 1].x - b.pts[k].x) * u;
+    const y = b.pts[k].y + (b.pts[k + 1].y - b.pts[k].y) * u;
+    let fx = b.pts[k + 1].x - b.pts[k].x, fy = b.pts[k + 1].y - b.pts[k].y;
+    const fl = Math.hypot(fx, fy) || 1; fx /= fl; fy /= fl;
+    const rx = -fy, ry = fx, op = Math.min(1, b.fade);
+    // a small flat barge with a little cargo
+    riverCraftGfx.poly([x + fx * 3, y + fy * 3, x + rx * 1.5, y + ry * 1.5, x - fx * 3, y - fy * 3, x - rx * 1.5, y - ry * 1.5])
+      .fill({ color: 0x6a513a, alpha: 0.92 * op });
+    riverCraftGfx.rect(x - 1, y - 1.6, 2, 1.6).fill({ color: 0x8a6a44, alpha: 0.9 * op }); // cargo
+    if (night > 0.3) riverCraftGfx.circle(x + fx * 3, y + fy * 3, 0.6).fill({ color: 0xffe6a8, alpha: 0.7 * night * op }); // bow lamp
   }
 }
 
@@ -3754,6 +3815,7 @@ function resetStorySurfaces() {
   lighthouses.length = 0; lighthouseGfx.clear();
   fires.length = 0; fireGfx.clear();
   megastructures.length = 0; megaGfx.clear();
+  riverBoats.length = 0; riverBridges.length = 0; riverCraftGfx.clear();
   curPollution = 0;
   pollutionNarrated = false;
   curBlight = 0;
@@ -4341,6 +4403,7 @@ app.ticker.add((ticker) => {
   drawCauseways(nowSec, n);
   drawLighthouses(nowSec, n);
   updateFires(dtSec, nowSec, n);
+  updateRiverCraft(dtSec, n);
   drawMegastructures(nowSec, n);
   updateBirdFlocks(dtSec, nowSec, n);
   maybeGhost(dtSec, n);
@@ -4379,6 +4442,8 @@ app.ticker.add((ticker) => {
     rebuildCables();
     rebuildLighthouses();
     rebuildMegastructures();
+    rebuildBridges();
+    maybeSpawnRiverBoats();
     if (simWorld.tick - lastFarmReconcile >= 45) { lastFarmReconcile = simWorld.tick; reconcileFarmland(); }
     rebuildWonders();
     rebuildFishSpots();
