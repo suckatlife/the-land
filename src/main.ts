@@ -692,6 +692,7 @@ const cableGfx = new Graphics();     // undersea power/data cables between citie
 const lighthouseGfx = new Graphics(); // coastal lighthouses + sweeping beams at night
 const fireGfx = new Graphics();      // wildfires (additive glow)
 fireGfx.blendMode = 'add';
+const megaGfx = new Graphics();      // post-era megastructures (arcologies, space elevators)
 const satelliteGfx = new Graphics(); // satellites crossing the sky (screen-space)
 satelliteGfx.eventMode = 'none';
 const buildingLayer = new Container();
@@ -748,6 +749,8 @@ world.addChild(boatsGfx);
 world.addChild(lighthouseGfx);
 // Wildfires glow over the burning land.
 world.addChild(fireGfx);
+// Megastructures tower over their cities.
+world.addChild(megaGfx);
 // Directional land light sits under the cloud shadows (clouds block sun).
 world.addChild(atmos.landLightLayer);
 // City smoke rises beneath the clouds.
@@ -2503,6 +2506,49 @@ function updateFires(dt: number, nowSec: number, night: number) {
   }
 }
 
+// Megastructures: the most advanced civs raise a landmark over their greatest
+// city — an arcology dome or a space elevator threading toward orbit.
+interface Mega { row: number; col: number; kind: 'dome' | 'elevator'; color: number }
+const megastructures: Mega[] = [];
+function rebuildMegastructures() {
+  megastructures.length = 0;
+  for (const civ of simWorld.civs.values()) {
+    if (civ.phase === 'dead' || ERA_RANK[civ.era] < 5 || civ.cities.length === 0) continue;
+    const hub = civ.cities.reduce((b, c) => (c.prominence > b.prominence ? c : b), civ.cities[0]);
+    const kind: 'dome' | 'elevator' = (civ.id % 2 === 0) ? 'dome' : 'elevator';
+    megastructures.push({ row: hub.row, col: hub.col, kind, color: civ.color });
+  }
+}
+function drawMegastructures(nowSec: number, night: number) {
+  megaGfx.clear();
+  if (megastructures.length === 0) return;
+  const ng = Math.max(0.25, night);
+  for (const m of megastructures) {
+    const { x, y } = gridToScreen(m.col, m.row);
+    if (m.kind === 'dome') {
+      // A translucent arcology dome with ribs and rim lights.
+      const R = 16, N = 18, pts: number[] = [];
+      for (let i = 0; i <= N; i++) { const a = Math.PI + Math.PI * (i / N); pts.push(x + Math.cos(a) * R, y + Math.sin(a) * R * 0.6); }
+      megaGfx.poly(pts).fill({ color: lerpColor(m.color, 0xaaccff, 0.55), alpha: 0.12 });
+      megaGfx.poly(pts).stroke({ color: lerpColor(m.color, 0xffffff, 0.5), alpha: 0.45, width: 1 });
+      for (let k = 1; k < 5; k++) { const a = Math.PI + Math.PI * (k / 5); megaGfx.moveTo(x, y).lineTo(x + Math.cos(a) * R, y + Math.sin(a) * R * 0.6).stroke({ color: lerpColor(m.color, 0xffffff, 0.4), alpha: 0.22, width: 0.5 }); }
+      megaGfx.ellipse(x, y - R * 0.62, 1.8, 1.0).fill({ color: 0xfff0b0, alpha: 0.5 + 0.4 * ng * (0.6 + 0.4 * Math.sin(nowSec * 2)) }); // apex light
+    } else {
+      // A space elevator: a tapering tether up to a station and beacon, with a
+      // climber sliding up its length.
+      const topY = y - 72;
+      megaGfx.poly([x - 1.3, y, x + 1.3, y, x + 0.4, topY, x - 0.4, topY]).fill({ color: 0xc2cdd8, alpha: 0.72 });
+      const sy = y - 50;
+      megaGfx.rect(x - 3.2, sy - 1.6, 6.4, 3.2).fill({ color: lerpColor(m.color, 0xe8eef4, 0.6), alpha: 0.9 });   // orbital station
+      megaGfx.circle(x, topY, 2.2).fill({ color: 0xd8e2ee, alpha: 0.85 });                                        // counterweight
+      const climb = (nowSec * 0.16) % 1;
+      megaGfx.circle(x, y - climb * 72, 1.1).fill({ color: 0xfff0a0, alpha: 0.85 });                              // climber
+      megaGfx.circle(x, topY, 1.4).fill({ color: 0xff6a5a, alpha: (0.4 + 0.5 * Math.sin(nowSec * 3)) * ng });     // beacon
+      if (night > 0.2) megaGfx.circle(x, sy, 0.9).fill({ color: 0xbfe0ff, alpha: 0.7 * ng });
+    }
+  }
+}
+
 function rebuildPowerLines() {
   powerLines.length = 0;
   for (const civ of simWorld.civs.values()) {
@@ -3707,6 +3753,7 @@ function resetStorySurfaces() {
   cables.length = 0; cableGfx.clear();
   lighthouses.length = 0; lighthouseGfx.clear();
   fires.length = 0; fireGfx.clear();
+  megastructures.length = 0; megaGfx.clear();
   curPollution = 0;
   pollutionNarrated = false;
   curBlight = 0;
@@ -4294,6 +4341,7 @@ app.ticker.add((ticker) => {
   drawCauseways(nowSec, n);
   drawLighthouses(nowSec, n);
   updateFires(dtSec, nowSec, n);
+  drawMegastructures(nowSec, n);
   updateBirdFlocks(dtSec, nowSec, n);
   maybeGhost(dtSec, n);
   updateFestival(n);
@@ -4330,6 +4378,7 @@ app.ticker.add((ticker) => {
     rebuildPowerLines();
     rebuildCables();
     rebuildLighthouses();
+    rebuildMegastructures();
     if (simWorld.tick - lastFarmReconcile >= 45) { lastFarmReconcile = simWorld.tick; reconcileFarmland(); }
     rebuildWonders();
     rebuildFishSpots();
@@ -4824,6 +4873,7 @@ document.getElementById('skip')!.addEventListener('click', () => {
   snapFarmland();
   rebuildCauseways();
   rebuildLighthouses();
+  rebuildMegastructures();
   seedTrailsAfterSkip();
   drawCityMarkers();
   eventLog.length = 0;
