@@ -3358,27 +3358,16 @@ function rebuildCauseways() {
     }
   }
 }
-// One causeway island: a small sandy isle with a cluster of buildings and a beacon.
-function drawIslandStop(g: Graphics, row: number, col: number, color: number, nowSec: number, ng: number) {
-  const { x, y } = gridToScreen(col, row);
-  g.poly([x, y - 7, x + 15, y, x, y + 7, x - 15, y]).fill({ color: 0xcdb88a, alpha: 0.97 });        // sandy island
-  g.poly([x, y - 7, x + 15, y, x, y + 7, x - 15, y]).stroke({ color: 0x8f7a52, alpha: 0.5, width: 1 });
-  const s = row * 7 + col * 13;
-  for (let b = 0; b < 3; b++) {                                                                      // a little cluster of buildings
-    const ox = ((s * (b + 1)) % 11) - 5, oy = (((s >> 2) * (b + 1)) % 7) - 3;
-    const bh = 3 + ((s >> b) % 3);
-    g.rect(x + ox - 1.3, y + oy - bh, 2.6, bh).fill({ color: lerpColor(color, 0x2a2a30, 0.4), alpha: 0.95 });
-    g.rect(x + ox - 1.3, y + oy - bh, 2.6, 1).fill({ color: lerpColor(color, 0xffffff, 0.25), alpha: 0.8 });
-  }
-  const bl = 0.5 + 0.5 * Math.sin(nowSec * 2 + row);                                                 // beacon
-  g.circle(x, y - 9, 2.4).fill({ color: 0xffca6a, alpha: 0.12 * ng * bl });
-  g.circle(x, y - 9, 1.0).fill({ color: 0xffe6a0, alpha: (0.45 + 0.45 * ng) * bl });
-}
-function drawCauseways(nowSec: number, night: number) {
+function drawCauseways() {
   causewayGfx.clear();
-  const ng = Math.max(0.25, night);
   for (const cw of causeways) {
     const pts = cw.line.map((t) => gridToScreen(t.col, t.row));
+    // Piling supports rising from the seabed under the deck (no land).
+    for (const n of cw.nodes) {
+      const { x, y } = gridToScreen(n.col, n.row);
+      causewayGfx.rect(x - 3.4, y - 0.5, 0.9, 3.4).fill({ color: 0x352c22, alpha: 0.5 });
+      causewayGfx.rect(x + 2.5, y - 0.5, 0.9, 3.4).fill({ color: 0x352c22, alpha: 0.5 });
+    }
     for (let i = 0; i < pts.length - 1; i++) {                                                       // bridge deck
       causewayGfx.moveTo(pts[i].x, pts[i].y).lineTo(pts[i + 1].x, pts[i + 1].y)
         .stroke({ color: 0x4a4038, alpha: 0.85, width: 2.6 });
@@ -3387,7 +3376,6 @@ function drawCauseways(nowSec: number, night: number) {
       causewayGfx.moveTo(pts[i].x, pts[i].y).lineTo(pts[i + 1].x, pts[i + 1].y)
         .stroke({ color: 0x9a8a76, alpha: 0.55, width: 0.9 });
     }
-    for (const n of cw.nodes) drawIslandStop(causewayGfx, n.row, n.col, cw.color, nowSec, ng);       // island stops
   }
 }
 // Trains crossing the straits on the causeways.
@@ -4400,7 +4388,7 @@ app.ticker.add((ticker) => {
   updateAir(dtSec, n);
   maybeSpawnSatellite(dtSec);
   updateSatellites(dtSec, nowSec, n);
-  drawCauseways(nowSec, n);
+  drawCauseways();
   drawLighthouses(nowSec, n);
   updateFires(dtSec, nowSec, n);
   updateRiverCraft(dtSec, n);
