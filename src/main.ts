@@ -700,6 +700,8 @@ const plagueGfx = new Graphics();    // a sickly miasma dimming afflicted distri
 const floodGfx = new Graphics();     // river floods sheeting over the lowlands
 const energyGfx = new Graphics();    // renewable energy farms (solar arrays, wind turbines)
 const megaGfx = new Graphics();      // post-era megastructures (arcologies, space elevators)
+const ringGfx = new Graphics();      // orbital ring + space stations (screen-space, post era)
+ringGfx.eventMode = 'none';
 const satelliteGfx = new Graphics(); // satellites crossing the sky (screen-space)
 satelliteGfx.eventMode = 'none';
 // Sky structures — rockets and space elevators — draw in SCREEN space, above
@@ -848,6 +850,8 @@ app.stage.addChild(atmos.limbBand);
 app.stage.addChild(atmos.glazeLayer);
 // The rainbow arcs over the world, in front of the planet.
 app.stage.addChild(atmos.rainbowLayer);
+// The orbital ring encircles the world once a civ reaches the post era.
+app.stage.addChild(ringGfx);
 // Satellites cross the sky over the planet (screen-space, in front of the limb).
 app.stage.addChild(satelliteGfx);
 // Rockets & space elevators rise past the horizon (screen-space, unclipped).
@@ -3762,6 +3766,57 @@ function updateSatellites(dt: number, nowSec: number, night: number) {
   }
 }
 
+// Orbital ring: once a civ reaches the post era it girdles the world with a
+// faint tilted ring, a string of space stations drifting along it in formation.
+// Screen-space and brightest at night — the far-future payoff in the sky.
+let ringAlpha = 0;
+function postAge(): boolean {
+  for (const civ of simWorld.civs.values()) if (civ.phase !== 'dead' && ERA_RANK[civ.era] >= 5) return true;
+  return false;
+}
+function updateOrbitalRing(dt: number, nowSec: number, night: number) {
+  // Ease the ring in when the post era arrives, out when it passes.
+  const target = postAge() ? 1 : 0;
+  ringAlpha += (target - ringAlpha) * Math.min(1, dt * 0.4);
+  ringGfx.clear();
+  if (ringAlpha < 0.01) return;
+  const W = window.innerWidth, H = window.innerHeight;
+  const cx = W / 2, cy = H * 0.46;
+  const rx = W * 0.43, ry = H * 0.185;       // a shallow, near edge-on ring
+  const tilt = -0.05, ct = Math.cos(tilt), st = Math.sin(tilt);
+  const vis = Math.min(1, 0.2 + night * 1.1); // bright at night, ghostly by day
+  const onRing = (th: number) => {
+    const ex = Math.cos(th) * rx, ey = Math.sin(th) * ry;
+    return { x: cx + ex * ct - ey * st, y: cy + ex * st + ey * ct, front: Math.sin(th) > 0 };
+  };
+  // The band itself — the near (lower) arc reads brighter than the far arc.
+  const N = 128;
+  let prev = onRing(0);
+  for (let i = 1; i <= N; i++) {
+    const p = onRing((i / N) * Math.PI * 2);
+    const a = ringAlpha * vis * (p.front ? 0.5 : 0.34);
+    ringGfx.moveTo(prev.x, prev.y).lineTo(p.x, p.y)
+      .stroke({ color: 0xdcefff, alpha: a, width: p.front ? 2.0 : 1.4, cap: 'round' });
+    prev = p;
+  }
+  // Space stations drift along the ring in formation, glinting as they pass.
+  const M = 5;
+  for (let k = 0; k < M; k++) {
+    const th = nowSec * 0.06 + (k / M) * Math.PI * 2;
+    const p = onRing(th);
+    const fa = ringAlpha * vis * (p.front ? 1 : 0.55);
+    if (fa < 0.04) continue;
+    const sz = p.front ? 2.8 : 1.9;
+    ringGfx.circle(p.x, p.y, sz * 2.6).fill({ color: 0x9fd0ff, alpha: fa * 0.22 }); // soft glow
+    // Solar wings + a bright core module.
+    ringGfx.rect(p.x - 5.5, p.y - 0.7, 11, 1.4).fill({ color: 0x7d94b6, alpha: fa * 0.85 });
+    ringGfx.rect(p.x - 1.6, p.y - 1.6, 3.2, 3.2).fill({ color: 0xeef6ff, alpha: fa });
+    ringGfx.circle(p.x, p.y, sz * 0.55).fill({ color: 0xffffff, alpha: fa });
+    const bl = 0.5 + 0.5 * Math.sin(nowSec * 4 + k * 2);
+    ringGfx.circle(p.x + 4, p.y, 0.8).fill({ color: 0xff7a6a, alpha: fa * bl }); // nav beacon
+  }
+}
+
 // Causeways: in the modern age a civ bridges the straits between its lands with
 // a chain of artificial islands — each a little cluster of buildings — carrying
 // a rail across the water with trains running over it. They CONNECT landmasses
@@ -4254,6 +4309,7 @@ function resetStorySurfaces() {
   clearFarmland();
   seaTrail.clear(); landTrail.clear(); airTrail.clear(); redrawTrails();
   satellites.length = 0; satelliteGfx.clear();
+  ringAlpha = 0; ringGfx.clear();
   causeways.length = 0; causewayGfx.clear();
   waterRouteCache.clear();
   warHeat.clear();
@@ -4858,6 +4914,7 @@ app.ticker.add((ticker) => {
   updateAir(dtSec, n);
   maybeSpawnSatellite(dtSec);
   updateSatellites(dtSec, nowSec, n);
+  updateOrbitalRing(dtSec, nowSec, n);
   drawCauseways();
   drawLighthouses(nowSec, n);
   updateFires(dtSec, nowSec, n);
