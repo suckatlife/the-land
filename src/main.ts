@@ -666,6 +666,7 @@ const sceneryWaterGfx = new Graphics(); // beyond-the-grid sea (under glitter)
 const sceneryLandGfx = new Graphics();  // beyond-the-grid land (over glitter)
 const roadsGfx = new Graphics();        // paths between cities, era-styled
 const conflictGfx = new Graphics();     // war flickers at contested tiles
+const warGfx = new Graphics();          // armies, banners, siege camps at the fronts
 const wonderGfx = new Graphics();       // monuments (persist as ruins)
 const boatsGfx = new Graphics();        // sea craft, fishing dots, whales
 const nomadGfx = new Graphics();        // migrating bands, caravans, trains
@@ -748,6 +749,8 @@ world.addChild(scaffoldGfx);
 world.addChild(powerGfx);
 // Conflict flickers and monuments stand among the buildings.
 world.addChild(conflictGfx);
+// Armies clash at the war fronts, above the conflict glow.
+world.addChild(warGfx);
 world.addChild(wonderGfx);
 world.addChild(expeditionLayer);
 // Undersea cables lie on the seabed, beneath everything that floats.
@@ -3157,6 +3160,101 @@ function noteConquest(ev: { row: number; col: number; attackerId: number; defend
     const { x, y } = gridToScreen(ev.col, ev.row);
     conflictFlashes.push({ x, y, age: 0 });
   }
+  noteBattle(ev);
+}
+
+// Armies & sieges: a war front becomes a visible battle — two clusters of
+// troops with banners clashing in a haze of dust, reinforcements marching up
+// the road from the attacker's nearest city, and a ring of tents when a city
+// is under siege. Sustained by the conquest tile-flips the sim already emits.
+interface Battle {
+  row: number; col: number; cx: number; cy: number; born: number; lastHit: number;
+  ax: number; ay: number; dx: number; dy: number;   // attacker / defender cluster centres
+  mx: number; my: number;                            // march origin (attacker city)
+  aColor: number; dColor: number; siege: boolean; seed: number;
+}
+const battles: Battle[] = [];
+const BATTLE_LIFE = 9;   // seconds a front stays hot after the last clash
+function nearestCity(civ: { cities: Array<{ row: number; col: number }> } | undefined, row: number, col: number) {
+  if (!civ || !civ.cities.length) return null;
+  let best = civ.cities[0], bd = 1e9;
+  for (const c of civ.cities) { const d = (c.row - row) ** 2 + (c.col - col) ** 2; if (d < bd) { bd = d; best = c; } }
+  return best;
+}
+function noteBattle(ev: { row: number; col: number; attackerId: number; defenderId: number }) {
+  // Fold into a nearby existing front so one frontier is one battle, not many.
+  for (const b of battles) {
+    if (Math.abs(b.row - ev.row) <= 3 && Math.abs(b.col - ev.col) <= 3) { b.lastHit = performance.now() / 1000; return; }
+  }
+  if (battles.length >= 10) return;
+  const atk = simWorld.civs.get(ev.attackerId), def = simWorld.civs.get(ev.defenderId);
+  const { x: cx, y: cy } = gridToScreen(ev.col, ev.row);
+  // Attacker advances from its nearest city; the clusters face off across the tile.
+  const city = nearestCity(atk, ev.row, ev.col);
+  const cs = city ? gridToScreen(city.col, city.row) : { x: cx - 40, y: cy };
+  let vx = cs.x - cx, vy = cs.y - cy; const vl = Math.hypot(vx, vy) || 1; vx /= vl; vy /= vl;
+  // A siege if the contested tile sits against a defender-held city block.
+  let siege = false;
+  for (let dr = -1; dr <= 1 && !siege; dr++) for (let dc = -1; dc <= 1; dc++) {
+    const r = ev.row + dr, c = ev.col + dc;
+    if (r >= 0 && r < GRID_SIZE && c >= 0 && c < GRID_SIZE && simWorld.tiles[r][c].state === 'built' && simWorld.tiles[r][c].civId === ev.defenderId) { siege = true; break; }
+  }
+  battles.push({
+    row: ev.row, col: ev.col, cx, cy, born: performance.now() / 1000, lastHit: performance.now() / 1000,
+    ax: cx + vx * 7, ay: cy + vy * 7, dx: cx - vx * 7, dy: cy - vy * 7,
+    mx: cs.x, my: cs.y, aColor: atk?.color ?? 0xcc5544, dColor: def?.color ?? 0x4466cc,
+    siege, seed: (ev.row * 13 + ev.col * 7) % 100,
+  });
+}
+function drawTrooper(g: Graphics, x: number, y: number, color: number) {
+  g.rect(x - 0.8, y - 3, 1.6, 3).fill({ color: 0x322f29, alpha: 0.92 });       // body
+  g.circle(x, y - 3.4, 0.7).fill({ color: 0x4b463f, alpha: 0.92 });            // head
+  g.rect(x - 1.2, y - 2.5, 2.4, 1, ).fill({ color, alpha: 0.85 });             // shield in civ colour
+}
+function drawBanner(g: Graphics, x: number, y: number, color: number, nowSec: number) {
+  g.rect(x - 0.4, y - 12, 0.9, 12).fill({ color: 0x2a2620, alpha: 0.9 });      // pole
+  const w = 5.5 + Math.sin(nowSec * 4 + x) * 1.2;
+  g.poly([x + 0.5, y - 12, x + 0.5 + w, y - 10.6, x + 0.5, y - 8.4]).fill({ color, alpha: 0.92 });
+}
+function updateWarfare(nowSec: number) {
+  warGfx.clear();
+  for (let i = battles.length - 1; i >= 0; i--) {
+    const b = battles[i];
+    const cold = nowSec - b.lastHit;
+    if (cold > BATTLE_LIFE) { battles.splice(i, 1); continue; }
+    const env = Math.min(1, (nowSec - b.born) / 1) * Math.min(1, (BATTLE_LIFE - cold) / 2);
+    if (env < 0.02) continue;
+    // Dust haze rolling over the melee.
+    for (let k = 0; k < 3; k++) {
+      const px = b.cx + Math.sin(nowSec * 1.3 + k * 2 + b.seed) * 6, py = b.cy - 1 - ((nowSec * 4 + k * 5) % 7);
+      warGfx.ellipse(px, py, 6 - k, 2.6 - k * 0.4).fill({ color: 0xb6a890, alpha: 0.13 * env * (1 - k / 3) });
+    }
+    // Siege tents pitched on the attacker's side.
+    if (b.siege) for (let k = 0; k < 3; k++) {
+      const tx = b.ax + (k - 1) * 5, ty = b.ay + 2;
+      warGfx.poly([tx, ty - 4, tx - 3, ty, tx + 3, ty]).fill({ color: 0xb8a079, alpha: 0.85 * env });
+    }
+    // Reinforcements marching up the road from the attacker's city.
+    const march = (nowSec * 0.18) % 1;
+    for (let k = 0; k < 4; k++) {
+      const f = ((k / 4) + march) % 1;
+      const mxp = b.mx + (b.ax - b.mx) * f, myp = b.my + (b.ay - b.my) * f;
+      warGfx.circle(mxp, myp - 1, 0.9).fill({ color: 0x35322b, alpha: 0.7 * env });
+    }
+    // The two hosts, jittering as they fight.
+    for (let k = 0; k < 7; k++) {
+      const j = b.seed + k;
+      const wig = Math.sin(nowSec * 9 + j) * 1.3;
+      drawTrooper(warGfx, b.ax + ((k % 3) - 1) * 3 + wig, b.ay + (((k / 3) | 0) - 0.5) * 3, b.aColor);
+      drawTrooper(warGfx, b.dx + ((k % 3) - 1) * 3 - wig, b.dy + (((k / 3) | 0) - 0.5) * 3, b.dColor);
+    }
+    drawBanner(warGfx, b.ax - 6, b.ay, b.aColor, nowSec);
+    drawBanner(warGfx, b.dx + 6, b.dy, b.dColor, nowSec);
+    // Clash sparks along the line where the hosts meet.
+    if (Math.sin(nowSec * 7 + b.seed) > 0.4) {
+      warGfx.circle(b.cx + Math.sin(nowSec * 13) * 3, b.cy - 2, 0.8).fill({ color: 0xffe08a, alpha: 0.8 * env });
+    }
+  }
 }
 
 function checkWarQuiet() {
@@ -4420,6 +4518,7 @@ function resetStorySurfaces() {
   waterRouteCache.clear();
   warHeat.clear();
   conflictFlashes.length = 0;
+  battles.length = 0; warGfx.clear();
   boats.length = 0;
   wrecks.length = 0;
   caravans.length = 0;
@@ -5011,6 +5110,7 @@ app.ticker.add((ticker) => {
   drawPowerLines(dtSec, n);
   drawCables(dtSec, n);
   updateConflictFlashes(dtSec);
+  updateWarfare(nowSec);
   updateWater(dtSec, nowSec, n);
   maybeWhale(dtSec);
   updateHerds(dtSec, nowSec, n);
