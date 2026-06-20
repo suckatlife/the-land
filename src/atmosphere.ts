@@ -728,33 +728,13 @@ export function createAtmosphere(): Atmosphere {
   // Rare celestial events.
   const cometLayer = new Graphics();
   const auroraLayer = new Container();
-  const auroraSprites: Sprite[] = [];
-  {
-    // Ribbon texture: a soft vertical strip.
-    const cv = document.createElement('canvas');
-    cv.width = 96; cv.height = 512;
-    const cx2 = cv.getContext('2d')!;
-    const grad = cx2.createLinearGradient(0, 0, 0, 512);
-    grad.addColorStop(0, 'rgba(255,255,255,0)');
-    grad.addColorStop(0.35, 'rgba(255,255,255,0.5)');
-    grad.addColorStop(0.75, 'rgba(255,255,255,0.15)');
-    grad.addColorStop(1, 'rgba(255,255,255,0)');
-    cx2.fillStyle = grad;
-    cx2.fillRect(0, 0, 96, 512);
-    const ribbonTex = Texture.from(cv);
-    const colors = [0x7fe0c0, 0xa7e8d2, 0xb39fe0];
-    for (let i = 0; i < 3; i++) {
-      const sp = new Sprite(ribbonTex);
-      sp.anchor.set(0.5, 0);
-      sp.tint = colors[i];
-      sp.blendMode = 'add';
-      sp.alpha = 0;
-      auroraLayer.addChild(sp);
-      auroraSprites.push(sp);
-    }
-  }
-  let activeEvent: { kind: 'comet' | 'eclipse' | 'aurora' | 'meteors'; t: number; dur: number; a?: { x: number; y: number }; b?: { x: number; y: number } } | null = null;
-  const meteorStreaks: Array<{ x: number; y: number; vx: number; vy: number; age: number }> = [];
+  // The aurora draws as additive, undulating gradient curtains (see the aurora
+  // branch of updateCelestialEvents) rather than a few static ribbon sprites.
+  const auroraGfx = new Graphics();
+  auroraGfx.blendMode = 'add';
+  auroraLayer.addChild(auroraGfx);
+  let activeEvent: { kind: 'comet' | 'eclipse' | 'aurora' | 'meteors'; t: number; dur: number; a?: { x: number; y: number }; b?: { x: number; y: number }; seed?: number } | null = null;
+  const meteorStreaks: Array<{ x: number; y: number; vx: number; vy: number; age: number; big?: boolean }> = [];
   let eventCooldown = 0;
   let eclipseMult = 1;
   let eventCb: ((kind: string) => void) | null = null;
@@ -773,13 +753,7 @@ export function createAtmosphere(): Atmosphere {
       activeEvent.a = { x: leftToRight ? w * 0.06 : w * 0.94, y: y0 };
       activeEvent.b = { x: leftToRight ? w * 0.94 : w * 0.06, y: y1 };
     }
-    if (kind === 'aurora') {
-      for (let i = 0; i < auroraSprites.length; i++) {
-        auroraSprites[i].position.set(w * (0.25 + 0.25 * i + weatherRand() * 0.08), -10);
-        auroraSprites[i].height = h * 0.42;
-        auroraSprites[i].width = 90 + weatherRand() * 70;
-      }
-    }
+    if (kind === 'aurora') activeEvent.seed = weatherRand() * 1000;
     eventCb?.(kind);
   }
 
@@ -796,13 +770,14 @@ export function createAtmosphere(): Atmosphere {
     }
     eclipseMult = 1;
     cometGfx_clear();
+    if (!activeEvent || activeEvent.kind !== 'aurora') auroraGfx.clear(); // drop a stale curtain
     if (!activeEvent) return;
     activeEvent.t += dt;
     const p = activeEvent.t / activeEvent.dur;
     if (p >= 1) {
       activeEvent = null;
       eventCooldown = ATMOS.events.cooldownSec;
-      for (const sp of auroraSprites) sp.alpha = 0;
+      auroraGfx.clear();
       return;
     }
     const env = Math.sin(Math.PI * p);
@@ -823,24 +798,32 @@ export function createAtmosphere(): Atmosphere {
     } else if (activeEvent.kind === 'meteors') {
       const w = limbLayout?.width ?? 1600;
       const h = limbLayout?.height ?? 900;
-      if (Math.random() < dt / 4) {
-        const ang2 = Math.PI * (0.15 + Math.random() * 0.25);
-        const sp = 260 + Math.random() * 180;
+      // A real shower: several streaks a second, mostly radiating one way with
+      // the odd one against the grain, plus the occasional brighter fireball.
+      // Fast attack so the shower is dense within a few seconds (not a slow ramp).
+      const ramp = Math.max(0, Math.min(1, activeEvent.t / 4, (activeEvent.dur - activeEvent.t) / 12));
+      let expected = dt / 0.08 * ramp;     // ~12 / sec at peak — a busy shower
+      while (expected > 0) {
+        if (expected < 1 && Math.random() > expected) break;
+        expected -= 1;
+        const ang2 = Math.PI * (0.13 + Math.random() * 0.28);
+        const sp = 240 + Math.random() * 260;
+        const dir = Math.random() < 0.82 ? 1 : -1; // most share a radiant
+        const big = Math.random() < 0.12;
         meteorStreaks.push({
-          x: w * (0.1 + Math.random() * 0.8),
-          y: h * (0.02 + Math.random() * 0.18),
-          vx: Math.cos(ang2) * sp * (Math.random() < 0.5 ? 1 : -1),
+          x: w * (-0.05 + Math.random() * 1.1),
+          y: h * (0.01 + Math.random() * 0.26),
+          vx: Math.cos(ang2) * sp * dir,
           vy: Math.sin(ang2) * sp,
           age: 0,
+          big,
         });
       }
     } else if (activeEvent.kind === 'aurora') {
-      for (let i = 0; i < auroraSprites.length; i++) {
-        const sp = auroraSprites[i];
-        sp.alpha = 0.16 * env * L.nightness;
-        sp.skew.x = 0.18 * Math.sin(activeEvent.t * 0.25 + i * 1.7);
-        sp.x += Math.sin(activeEvent.t * 0.11 + i) * 0.08;
-      }
+      // Its own envelope: brighten within a few seconds, hold, then ease away —
+      // rather than the slow sin() ramp that stays dim for most of the event.
+      const aenv = Math.min(1, activeEvent.t / 6, (activeEvent.dur - activeEvent.t) / 16);
+      drawAurora(activeEvent.t, Math.max(0, aenv) * L.nightness, activeEvent.seed ?? 0);
     }
   }
   function cometGfx_clear() { cometLayer.clear(); }
@@ -849,14 +832,80 @@ export function createAtmosphere(): Atmosphere {
     if (meteorStreaks.length === 0) return;
     for (let i = meteorStreaks.length - 1; i >= 0; i--) {
       const m = meteorStreaks[i];
+      const life = m.big ? 1.0 : 0.7;
       m.age += dt;
-      if (m.age > 0.7) { meteorStreaks.splice(i, 1); continue; }
+      if (m.age > life) { meteorStreaks.splice(i, 1); continue; }
       m.x += m.vx * dt;
       m.y += m.vy * dt;
-      const a = (1 - m.age / 0.7) * 0.8 * nightness;
-      cometLayer.moveTo(m.x, m.y)
-        .lineTo(m.x - m.vx * 0.06, m.y - m.vy * 0.06)
-        .stroke({ color: 0xe8eef8, alpha: a, width: 1.1 });
+      const fade = 1 - m.age / life;
+      const a = fade * (m.big ? 0.95 : 0.8) * nightness;
+      const tail = m.big ? 0.10 : 0.06, wid = m.big ? 1.9 : 1.0;
+      // Tapered tail: a couple of stacked strokes, brightest near the head.
+      cometLayer.moveTo(m.x - m.vx * tail, m.y - m.vy * tail).lineTo(m.x, m.y)
+        .stroke({ color: 0x9fb6d6, alpha: a * 0.4, width: wid });
+      cometLayer.moveTo(m.x - m.vx * tail * 0.5, m.y - m.vy * tail * 0.5).lineTo(m.x, m.y)
+        .stroke({ color: 0xe8eef8, alpha: a, width: wid });
+      // A bright little head, larger for fireballs.
+      cometLayer.circle(m.x, m.y, m.big ? 2.2 : 1.1).fill({ color: 0xffffff, alpha: a });
+      if (m.big) cometLayer.circle(m.x, m.y, 5).fill({ color: 0xbfe0ff, alpha: a * 0.3 });
+    }
+  }
+
+  // Aurora: additive, undulating gradient curtains — a green body with a
+  // magenta-violet lower fringe and pale cyan fading top, draped along a
+  // rippling baseline with shimmering vertical ray structure.
+  function drawAurora(t: number, amount: number, seed: number) {
+    auroraGfx.clear();
+    if (amount <= 0.01) return;
+    const w = limbLayout?.width ?? 1600;
+    const h = limbLayout?.height ?? 900;
+    // Hang the curtains in the sky band above the horizon (the globe, behind
+    // which this layer sits, occludes anything that drapes below the limb).
+    const horizon = limbLayout?.apexY ?? h * 0.24;
+    const yTopBase = h * 0.02;            // crowns of the curtains, near the top
+    const yBotBase = horizon - h * 0.01;  // draped hems, just above the horizon
+    const cols = 130;
+    const step = w / cols;
+    // Vertical colour ramp (bottom → top), as [frac, color, alphaMul].
+    const ramp: Array<[number, number, number]> = [
+      [0.00, 0xb84ad0, 0.5],  // magenta-violet lower fringe (an accent, not the body)
+      [0.13, 0x4dffa6, 1.2],  // bright green — the dominant body
+      [0.45, 0x57ecc8, 1.05], // teal
+      [0.74, 0x9af0e4, 0.55], // pale cyan
+      [1.00, 0xbfeafc, 0.0],  // fades out at the crown
+    ];
+    for (let i = 0; i <= cols; i++) {
+      const x = i * step;
+      const ph = x * 0.5 + seed;
+      // The hem ripples and folds (sum of waves); the crown sways more gently.
+      const hem = Math.sin(x * 0.011 + t * 0.55) * 18
+        + Math.sin(x * 0.0047 - t * 0.37) * 22
+        + Math.sin(x * 0.021 + t * 0.9) * 7;
+      const crown = Math.sin(x * 0.006 + t * 0.3 + seed) * 10;
+      const yBot = yBotBase + hem;
+      const yTop = yTopBase + crown + (1 - (0.72 + 0.28 * Math.sin(x * 0.03 + t * 1.1 + seed))) * (yBot - yTopBase) * 0.4;
+      const H = yBot - yTop;
+      if (H < 4) continue;
+      // Per-ray shimmer gives vertical striations that ripple along the curtain.
+      const shim = 0.4 + 0.6 * Math.max(0, Math.sin(ph * 0.16 + t * 2.1 + Math.sin(t * 0.7 + ph * 0.02) * 2.4));
+      const a = amount * shim;
+      if (a < 0.012) continue;
+      // Draw the ray bottom-up as stacked gradient segments.
+      const segs = 8;
+      for (let s = 0; s < segs; s++) {
+        const f0 = s / segs, f1 = (s + 1) / segs; // 0 = hem (bottom), 1 = crown
+        const ya = yBot - H * f0, yb = yBot - H * f1;
+        const fm = (f0 + f1) / 2;
+        let ci = 0;
+        while (ci < ramp.length - 1 && ramp[ci + 1][0] < fm) ci++;
+        const [fa, ca, aa] = ramp[ci], [fb, cb, ab] = ramp[Math.min(ramp.length - 1, ci + 1)];
+        const lt = fb > fa ? (fm - fa) / (fb - fa) : 0;
+        const col = lerpColor(ca, cb, lt);
+        const segA = a * (aa + (ab - aa) * lt);
+        if (segA < 0.01) continue;
+        auroraGfx.rect(x - step * 0.62, yb, step * 1.24, ya - yb)
+          .fill({ color: col, alpha: Math.min(0.6, segA * 0.58) });
+      }
     }
   }
 
