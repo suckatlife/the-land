@@ -2504,10 +2504,22 @@ function rebuildBridges() {
     if (riverTileSet.has(kb) && !seen.has(kb)) { seen.add(kb); riverBridges.push(kb); }
   }
 }
+// A river is worth plying only if its course passes near a settlement — empty
+// wilderness rivers carry no barges.
+function riverNearBuilding(rp: { tiles: Array<{ row: number; col: number }> }): boolean {
+  for (const { row, col } of rp.tiles) {
+    for (let dr = -3; dr <= 3; dr++) for (let dc = -3; dc <= 3; dc++) {
+      const r = row + dr, c = col + dc;
+      if (r < 0 || r >= GRID_SIZE || c < 0 || c >= GRID_SIZE) continue;
+      if (simWorld.tiles[r][c].state === 'built') return true;
+    }
+  }
+  return false;
+}
 function maybeSpawnRiverBoats() {
   if (riverPaths.length === 0 || riverBoats.length >= 8 || Math.random() > 0.35) return;
   const rp = riverPaths[Math.floor(Math.random() * riverPaths.length)];
-  if (rp.screen.length < 8) return;
+  if (rp.screen.length < 8 || !riverNearBuilding(rp)) return; // no barges on uninhabited rivers
   riverBoats.push({ pts: rp.screen, idx: 1 + Math.random() * 2, speed: 5 + Math.random() * 3, fade: 1 });
 }
 function updateRiverCraft(dt: number, night: number) {
