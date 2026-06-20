@@ -4081,7 +4081,7 @@ function maybeSpawnPlanes() {
 }
 
 function maybeSpawnRockets(dt: number) {
-  if (rockets.length >= 3 || Math.random() > dt / 13) return;
+  if (rockets.length >= 3 || Math.random() > dt / 26) return;
   const posts = [...simWorld.civs.values()].filter((c) => c.phase !== 'dead' && ERA_RANK[c.era] >= 4 && c.cities.length);
   if (!posts.length) return;
   const civ = posts[Math.floor(Math.random() * posts.length)];

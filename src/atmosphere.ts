@@ -904,7 +904,7 @@ export function createAtmosphere(): Atmosphere {
         const segA = a * (aa + (ab - aa) * lt);
         if (segA < 0.01) continue;
         auroraGfx.rect(x - step * 0.62, yb, step * 1.24, ya - yb)
-          .fill({ color: col, alpha: Math.min(0.6, segA * 0.58) });
+          .fill({ color: col, alpha: Math.min(0.3, segA * 0.29) });
       }
     }
   }
