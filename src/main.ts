@@ -698,6 +698,8 @@ const lavaGfx = new Graphics();      // molten lava bodies + ash plume (normal b
 const lavaGlowGfx = new Graphics();  // lava heat-glow + vent fountain (additive)
 lavaGlowGfx.blendMode = 'add';
 const plagueGfx = new Graphics();    // a sickly miasma dimming afflicted districts
+const faithGfx = new Graphics();     // a golden tide of shrine-light spreading city to city
+faithGfx.blendMode = 'add';
 const floodGfx = new Graphics();     // river floods sheeting over the lowlands
 const droughtGfx = new Graphics();   // a parched, cracked pall over drought regions
 const energyGfx = new Graphics();    // renewable energy farms (solar arrays, wind turbines)
@@ -773,6 +775,8 @@ world.addChild(lavaGfx);
 world.addChild(lavaGlowGfx);
 // A plague's miasma dims the districts it touches (above the buildings).
 world.addChild(plagueGfx);
+// A faith's golden light kindles over the districts it reaches.
+world.addChild(faithGfx);
 // River floods sheet a film of water over the drowned lowlands.
 world.addChild(floodGfx);
 // Drought parches the land brown and cracked.
@@ -2982,6 +2986,86 @@ function updateDroughts(dt: number, nowSec: number) {
   }
 }
 
+// The spread of a faith: a golden tide kindles in a city and rolls district to
+// district across a civilization — shrine-lights coming alight in its wake,
+// cresting in a glow of festival, then settling into a warm steady devotion.
+// The benevolent twin of the plague: it dims nothing, it only lights.
+interface FaithTile { row: number; col: number; born: number }
+interface Faith { civId: number; oR: number; oC: number; born: number; lastSpread: number; frontier: number[]; touched: Map<number, FaithTile> }
+const faiths: Faith[] = [];
+const FAITH_MEAN = 125;     // avg seconds between awakenings
+const FAITH_SPAN = 30;      // seconds from kindling to settled devotion
+const FAITH_SPREAD = 0.2;   // seconds between waves of conversion
+function faithOwns(f: Faith, r: number, c: number): boolean {
+  if (r < 0 || r >= GRID_SIZE || c < 0 || c >= GRID_SIZE) return false;
+  if (simWorld.tiles[r][c].civId !== f.civId) return false;
+  const st = simWorld.tiles[r][c].state;
+  return st === 'built' || st === 'cleared';
+}
+function maybeAwaken(dt: number, nowSec: number) {
+  if (faiths.length >= 2 || Math.random() >= dt / FAITH_MEAN) return;
+  const eligible = [...simWorld.civs.values()].filter(
+    (c) => c.phase !== 'dead' && ERA_RANK[c.era] >= 1 && (civStats.tileCounts.get(c.id) || 0) >= 14,
+  );
+  if (!eligible.length) return;
+  const civ = eligible[(Math.random() * eligible.length) | 0];
+  const owned = [...(civTiles.get(civ.id) || [])].filter((k) => simWorld.tiles[(k / GRID_SIZE) | 0][k % GRID_SIZE].state === 'built');
+  if (!owned.length) return;
+  const k0 = owned[(Math.random() * owned.length) | 0];
+  const r0 = (k0 / GRID_SIZE) | 0, c0 = k0 % GRID_SIZE;
+  const f: Faith = { civId: civ.id, oR: r0, oC: c0, born: nowSec, lastSpread: nowSec, frontier: [k0], touched: new Map() };
+  f.touched.set(k0, { row: r0, col: c0, born: nowSec });
+  faiths.push(f);
+  triggerPing(r0, c0, 0xffd27a);
+}
+function updateFaiths(nowSec: number, night: number) {
+  faithGfx.clear();
+  const ng = 0.4 + 0.6 * night; // warmest at night, still glows by day
+  for (let fi = faiths.length - 1; fi >= 0; fi--) {
+    const f = faiths[fi];
+    const age = nowSec - f.born;
+    if (age > FAITH_SPAN) { faiths.splice(fi, 1); continue; }
+    if (age < FAITH_SPAN * 0.65 && nowSec - f.lastSpread > FAITH_SPREAD && f.touched.size < 240) {
+      f.lastSpread = nowSec;
+      const next: number[] = [];
+      for (const key of f.frontier) {
+        const r = (key / GRID_SIZE) | 0, c = key % GRID_SIZE;
+        for (const [dr, dc] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
+          const nr = r + dr, nc = c + dc, nk = nr * GRID_SIZE + nc;
+          if (f.touched.has(nk) || !faithOwns(f, nr, nc)) continue;
+          f.touched.set(nk, { row: nr, col: nc, born: nowSec });
+          next.push(nk);
+        }
+      }
+      f.frontier = next;
+    }
+    // Envelope: kindles, crests in a golden age, settles to a steady warmth.
+    const env = age < 3 ? age / 3 : age > FAITH_SPAN - 6 ? 0.5 + 0.5 * Math.max(0, (FAITH_SPAN - age) / 6) : 1;
+    const crest = Math.max(0, 1 - Math.abs(age - FAITH_SPAN * 0.55) / (FAITH_SPAN * 0.2)); // golden-age bloom
+    for (const t of f.touched.values()) {
+      const local = Math.min(1, (nowSec - t.born) / 1.6);
+      const intensity = local * env;
+      if (intensity < 0.03) continue;
+      const built = simWorld.tiles[t.row][t.col].state === 'built';
+      const { x, y } = gridToScreen(t.col, t.row);
+      faithGfx.circle(x, y - 2, (built ? 8 : 5)).fill({ color: 0xffce78, alpha: (built ? 0.13 : 0.07) * intensity * ng });
+      if (built) {
+        // A shrine candle alight in the streets, flickering.
+        const fl = 0.7 + 0.3 * Math.sin(nowSec * 8 + t.row * 3 + t.col * 5);
+        faithGfx.circle(x, y - 3, 1.6 * fl).fill({ color: 0xffe8b0, alpha: 0.5 * intensity });
+        faithGfx.poly([x, y - 5 - fl * 1.5, x - 1, y - 3, x + 1, y - 3]).fill({ color: 0xfff0c4, alpha: 0.7 * intensity });
+      }
+    }
+    // The golden age crests over the holy city — a soft expanding halo.
+    if (crest > 0.02) {
+      const { x, y } = gridToScreen(f.oC, f.oR);
+      const pulse = (nowSec * 0.4) % 1;
+      faithGfx.circle(x, y - 3, 8 + pulse * 26).fill({ color: 0xffd98a, alpha: 0.12 * crest * (1 - pulse) });
+      faithGfx.circle(x, y - 3, 6).fill({ color: 0xfff0c0, alpha: 0.22 * crest });
+    }
+  }
+}
+
 // Megastructures: the most advanced civs raise a landmark over their greatest
 // city — an arcology dome or a space elevator threading toward orbit.
 type MegaKind = 'dome' | 'elevator' | 'megatower' | 'reactor';
@@ -4600,6 +4684,7 @@ function resetStorySurfaces() {
   fires.length = 0; fireGfx.clear();
   volcanoes.length = 0; lavaGfx.clear(); lavaGlowGfx.clear();
   plagues.length = 0; plagueGfx.clear();
+  faiths.length = 0; faithGfx.clear();
   floods.length = 0; floodGfx.clear();
   droughts.length = 0; droughtGfx.clear();
   energyFarms.length = 0; energyGfx.clear();
@@ -5197,6 +5282,8 @@ app.ticker.add((ticker) => {
   updateVolcanoes(dtSec, nowSec, n);
   maybeOutbreak(dtSec, nowSec);
   updatePlagues(nowSec);
+  maybeAwaken(dtSec, nowSec);
+  updateFaiths(nowSec, n);
   maybeFlood(dtSec);
   updateFloods(dtSec, nowSec, n);
   maybeGrowDelta(dtSec);
