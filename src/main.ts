@@ -3077,6 +3077,9 @@ type MegaKind = 'dome' | 'elevator' | 'megatower' | 'reactor';
 const MEGA_KINDS: MegaKind[] = ['elevator', 'megatower', 'dome', 'reactor'];
 interface Mega { row: number; col: number; kind: MegaKind; color: number }
 const megastructures: Mega[] = [];
+// Debug-spawned structures persist independent of the civ-driven rebuild, so the
+// test menu can drop one and watch it. Drawn alongside the real ones.
+const debugMegas: Mega[] = [];
 function rebuildMegastructures() {
   megastructures.length = 0;
   for (const civ of simWorld.civs.values()) {
@@ -3087,9 +3090,9 @@ function rebuildMegastructures() {
 }
 function drawMegastructures(nowSec: number, night: number) {
   megaGfx.clear();
-  if (megastructures.length === 0) return;
+  if (megastructures.length === 0 && debugMegas.length === 0) return;
   const ng = Math.max(0.25, night);
-  for (const m of megastructures) {
+  for (const m of [...megastructures, ...debugMegas]) {
     if (m.kind === 'elevator') {
       // Space elevators draw in screen space so the tether threads all the way
       // up past the horizon, instead of being clipped at the planet's limb.
@@ -3460,6 +3463,8 @@ function updateConflictFlashes(dt: number) {
 const WONDER_BUILD = 15; // seconds to raise a wonder, course by course
 interface WonderState { era: Era; born: number }
 const wonderState = new Map<number, WonderState>();
+// Debug-spawned wonders, independent of any civ — for the test menu.
+const debugWonders: Array<{ row: number; col: number; era: Era; born: number }> = [];
 function drawWonders(nowSec: number, night: number) {
   wonderGfx.clear();
   const live = new Set<number>();
@@ -3473,6 +3478,11 @@ function drawWonders(nowSec: number, night: number) {
     drawOneWonder(wonderGfx, x, y, st.era, prog, civ.phase === 'dead', nowSec, night);
   }
   for (const id of wonderState.keys()) if (!live.has(id)) wonderState.delete(id);
+  for (const w of debugWonders) {
+    const prog = Math.min(1, (nowSec - w.born) / WONDER_BUILD);
+    const { x, y } = gridToScreen(w.col, w.row);
+    drawOneWonder(wonderGfx, x, y, w.era, prog, false, nowSec, night);
+  }
 }
 function drawOneWonder(g: Graphics, x: number, y: number, era: Era, prog: number, dead: boolean, nowSec: number, night: number) {
   const body = dead ? 0x8b8479 : 0xe9e2d2;
@@ -4134,13 +4144,14 @@ function updateSatellites(dt: number, nowSec: number, night: number) {
 // faint tilted ring, a string of space stations drifting along it in formation.
 // Screen-space and brightest at night — the far-future payoff in the sky.
 let ringAlpha = 0;
+let debugRing = false; // test menu can force the orbital ring on
 function postAge(): boolean {
   for (const civ of simWorld.civs.values()) if (civ.phase !== 'dead' && ERA_RANK[civ.era] >= 5) return true;
   return false;
 }
 function updateOrbitalRing(dt: number, nowSec: number, night: number) {
   // Ease the ring in when the post era arrives, out when it passes.
-  const target = postAge() ? 1 : 0;
+  const target = (postAge() || debugRing) ? 1 : 0;
   ringAlpha += (target - ringAlpha) * Math.min(1, dt * 0.4);
   ringGfx.clear();
   ringBackGfx.clear();
@@ -4678,6 +4689,7 @@ function resetStorySurfaces() {
   seaTrail.clear(); landTrail.clear(); airTrail.clear(); redrawTrails();
   satellites.length = 0; satelliteGfx.clear();
   ringAlpha = 0; ringGfx.clear(); ringBackGfx.clear();
+  debugMegas.length = 0; debugWonders.length = 0; debugRing = false;
   causeways.length = 0; causewayGfx.clear();
   waterRouteCache.clear();
   warHeat.clear();
@@ -5558,6 +5570,126 @@ app.ticker.add(() => {
 });
 
 // --- HUD ---
+// --- Debug spawn menu: force any event / structure / wonder, for testing ---
+function fireCatastrophe() {
+  const changes: Array<{ row: number; col: number }> = [];
+  const biomeChanges: BiomeChange[] = [];
+  const events: SimEvent[] = [];
+  applyCatastrophe(simWorld, biomeMap, elevationMap, changes, biomeChanges, events);
+  for (const { row, col } of changes) { noteTileChange(row, col); refreshTileOverlay(row, col); refreshBuildingSprite(row, col); noteFarmTile(row, col); }
+  for (const { row, col } of biomeChanges) { refreshBiomeTile(row, col); }
+  if (biomeChanges.length > 0) { rebuildWaterMask(); (biomeLayer as any).updateCacheTexture?.(); biomeCacheDirty = false; waterMaskDirty = false; }
+  pushLogEvents(events);
+  for (const ev of events) {
+    if (ev.kind === 'catastrophe') {
+      triggerImpact(ev.catastropheType, ev.severity);
+      triggerEpicenter(ev.centerRow, ev.centerCol, ev.catastropheType, ev.severity);
+      atmos.addScar(ev.catastropheType, ev.centerRow, ev.centerCol, ev.radius, ev.severity);
+      audio.impact(ev.severity);
+    }
+  }
+  drawCityMarkers();
+}
+function dbgCenterLand(): { row: number; col: number } {
+  const m = (GRID_SIZE / 2) | 0;
+  for (let rad = 0; rad < GRID_SIZE; rad++) for (let dr = -rad; dr <= rad; dr++) for (let dc = -rad; dc <= rad; dc++) {
+    const r = m + dr, c = m + dc;
+    if (r < 0 || r >= GRID_SIZE || c < 0 || c >= GRID_SIZE) continue;
+    if (biomeMap[r][c] !== 'water' && biomeMap[r][c] !== 'rock') return { row: r, col: c };
+  }
+  return { row: m, col: m };
+}
+function dbgRandomCity(): { row: number; col: number; color: number } {
+  const civs = [...simWorld.civs.values()].filter((c) => c.phase !== 'dead' && c.cities.length);
+  if (!civs.length) { const t = dbgCenterLand(); return { ...t, color: 0x6aa0d0 }; }
+  const civ = civs[(Math.random() * civs.length) | 0];
+  const city = civ.cities[(Math.random() * civ.cities.length) | 0];
+  return { row: city.row, col: city.col, color: civ.color };
+}
+function dbgMega(kind: MegaKind) {
+  const s = dbgRandomCity();
+  if (debugMegas.length >= 4) debugMegas.shift();
+  debugMegas.push({ row: s.row, col: s.col, kind, color: s.color });
+  triggerPing(s.row, s.col, 0xfff0d0);
+}
+function dbgWonder(era: Era) {
+  const s = dbgRandomCity();
+  if (debugWonders.length >= 4) debugWonders.shift();
+  debugWonders.push({ row: s.row, col: s.col, era, born: performance.now() / 1000 });
+  triggerPing(s.row, s.col, 0xfff0d0);
+}
+function dbgWildfire() {
+  const m = (GRID_SIZE / 2) | 0;
+  for (let rad = 0; rad < GRID_SIZE; rad++) for (let dr = -rad; dr <= rad; dr++) for (let dc = -rad; dc <= rad; dc++) {
+    const r = m + dr, c = m + dc;
+    if (r < 0 || r >= GRID_SIZE || c < 0 || c >= GRID_SIZE) continue;
+    if (biomeMap[r][c] === 'forest' && simWorld.tiles[r][c].state === 'wild') { igniteTile(r, c); triggerPing(r, c, 0xff7a30); return; }
+  }
+}
+function dbgBattle() {
+  const civs = [...simWorld.civs.values()].filter((c) => c.phase !== 'dead' && c.cities.length);
+  if (civs.length < 2) return;
+  civs.sort((a, b) => (civStats.tileCounts.get(b.id) || 0) - (civStats.tileCounts.get(a.id) || 0));
+  const atk = civs[0], def = civs[1], city = def.cities[0];
+  noteBattle({ row: city.row, col: city.col, attackerId: atk.id, defenderId: def.id });
+}
+function dbgDelta() {
+  if (!riverPaths.length) return;
+  let rp = riverPaths[0];
+  for (const p of riverPaths) if (p.tiles.length > rp.tiles.length) rp = p;
+  for (let i = 0; i < 30; i++) depositSilt(rp);
+}
+function dbgRocket() {
+  const civs = [...simWorld.civs.values()].filter((c) => c.phase !== 'dead' && c.cities.length);
+  if (!civs.length) return;
+  const civ = civs[(Math.random() * civs.length) | 0];
+  const city = civ.cities[(Math.random() * civ.cities.length) | 0];
+  const s = tileToSky(city.row, city.col);
+  rockets.push({ x: s.x, y0: s.y, t: 0, smoke: [] });
+  triggerPing(city.row, city.col, 0xfff0d0);
+}
+function dbgSatellite() {
+  const W = window.innerWidth, H = window.innerHeight;
+  const ltr = Math.random() < 0.5, sp = 38 + Math.random() * 46;
+  satellites.push({ x: ltr ? -24 : W + 24, y: H * (0.06 + Math.random() * 0.48), vx: (ltr ? 1 : -1) * sp, vy: (Math.random() - 0.5) * 0.5 * sp, blink: Math.random() * 10, trail: [] });
+}
+// label → action; a null action renders as a non-selectable group header.
+const DBG_SPAWNS: Array<[string, (() => void) | null]> = [
+  ['— land & life —', null],
+  ['Volcano (eruption)', () => maybeEruptVolcano(1e6)],
+  ['Plague', () => maybeOutbreak(1e6, performance.now() / 1000)],
+  ['Faith (golden tide)', () => maybeAwaken(1e6, performance.now() / 1000)],
+  ['Flood', () => maybeFlood(1e6)],
+  ['Drought', () => maybeDrought(1e6)],
+  ['River delta growth', dbgDelta],
+  ['Wildfire', dbgWildfire],
+  ['War / battle', dbgBattle],
+  ['Catastrophe (random)', fireCatastrophe],
+  ['— sky —', null],
+  ['Comet', () => atmos.triggerCelestial('comet')],
+  ['Eclipse', () => atmos.triggerCelestial('eclipse')],
+  ['Aurora', () => atmos.triggerCelestial('aurora')],
+  ['Meteor shower', () => atmos.triggerCelestial('meteors')],
+  ['Rocket launch', dbgRocket],
+  ['Satellite', dbgSatellite],
+  ['Orbital ring (toggle)', () => { debugRing = !debugRing; }],
+  ['— megastructures —', null],
+  ['Space elevator', () => dbgMega('elevator')],
+  ['Megatower', () => dbgMega('megatower')],
+  ['Arcology dome', () => dbgMega('dome')],
+  ['Fusion reactor', () => dbgMega('reactor')],
+  ['Energy farms (solar/wind)', () => rebuildEnergyFarms()],
+  ['— wonders —', null],
+  ['Stone circle', () => dbgWonder('neolithic')],
+  ['Pyramid', () => dbgWonder('classical')],
+  ['Cathedral', () => dbgWonder('medieval')],
+  ['Iron tower', () => dbgWonder('industrial')],
+  ['Obelisk', () => dbgWonder('modern')],
+  ['Glass monolith', () => dbgWonder('post')],
+  ['— clear —', null],
+  ['Clear debug spawns', () => { debugMegas.length = 0; debugWonders.length = 0; debugRing = false; }],
+];
+
 const hud = document.createElement('div');
 hud.style.cssText = `
   position: fixed; top: 12px; left: 12px;
@@ -5571,9 +5703,8 @@ hud.innerHTML = `
     <span>seed: <strong id="seed-label"></strong></span>
     <button id="reroll" style="cursor:pointer">reroll</button>
     <button id="reset-sim" style="cursor:pointer">reset sim</button>
-    <button id="pause" style="cursor:pointer">pause</button>
-    <button id="catastrophe" style="cursor:pointer;color:#a03020">catastrophe</button>
     <button id="skip" style="cursor:pointer;color:#607080">skip 5k</button>
+    <select id="dbg-spawn" style="cursor:pointer;color:#3060a0" title="spawn an event / structure / wonder for testing"></select>
     <button id="sound" style="cursor:pointer;color:#888" title="ambient sound">sound: off</button>
     <button id="quality" style="cursor:pointer;color:#607080" title="graphics quality — lower for more FPS">gfx: high</button>
     <button id="toggle-bars" style="cursor:pointer;color:#607080" title="show / hide the living-civilizations panel">civ panel: on</button>
@@ -5589,6 +5720,25 @@ hudToggle.addEventListener('click', () => {
   const collapsed = hudBody.style.display === 'none';
   hudBody.style.display = collapsed ? 'flex' : 'none';
   hudToggle.textContent = collapsed ? '–' : '+';
+});
+
+// Populate the debug spawn dropdown and fire the chosen action on select.
+const dbgSelect = document.getElementById('dbg-spawn') as HTMLSelectElement;
+{
+  const ph = document.createElement('option');
+  ph.value = ''; ph.textContent = 'spawn…'; ph.selected = true;
+  dbgSelect.appendChild(ph);
+  DBG_SPAWNS.forEach(([label, fn], i) => {
+    const o = document.createElement('option');
+    o.value = String(i); o.textContent = label;
+    if (fn === null) o.disabled = true; // group header
+    dbgSelect.appendChild(o);
+  });
+}
+dbgSelect.addEventListener('change', () => {
+  const entry = DBG_SPAWNS[Number(dbgSelect.value)];
+  if (entry && entry[1]) entry[1]();
+  dbgSelect.value = ''; // snap back to the placeholder so the same item can re-fire
 });
 
 // --- Civ bar graph panel (right edge) ---
@@ -5788,30 +5938,6 @@ qualityBtn.addEventListener('click', () => {
   const next = order[(order.indexOf(qualityLevel) + 1) % order.length];
   localStorage.setItem('theLand:quality', next);
   location.reload();
-});
-const pauseBtn = document.getElementById('pause')!;
-pauseBtn.addEventListener('click', () => {
-  running = !running;
-  pauseBtn.textContent = running ? 'pause' : 'resume';
-});
-document.getElementById('catastrophe')!.addEventListener('click', () => {
-  const changes: Array<{ row: number; col: number }> = [];
-  const biomeChanges: BiomeChange[] = [];
-  const events: SimEvent[] = [];
-  applyCatastrophe(simWorld, biomeMap, elevationMap, changes, biomeChanges, events);
-  for (const { row, col } of changes) { noteTileChange(row, col); refreshTileOverlay(row, col); refreshBuildingSprite(row, col); noteFarmTile(row, col); }
-  for (const { row, col } of biomeChanges) { refreshBiomeTile(row, col); }
-  if (biomeChanges.length > 0) { rebuildWaterMask(); (biomeLayer as any).updateCacheTexture?.(); biomeCacheDirty = false; waterMaskDirty = false; }
-  pushLogEvents(events);
-  for (const ev of events) {
-    if (ev.kind === 'catastrophe') {
-      triggerImpact(ev.catastropheType, ev.severity);
-      triggerEpicenter(ev.centerRow, ev.centerCol, ev.catastropheType, ev.severity);
-      atmos.addScar(ev.catastropheType, ev.centerRow, ev.centerCol, ev.radius, ev.severity);
-      audio.impact(ev.severity);
-    }
-  }
-  drawCityMarkers();
 });
 document.getElementById('skip')!.addEventListener('click', () => {
   const wasRunning = running;
