@@ -704,8 +704,10 @@ const floodGfx = new Graphics();     // river floods sheeting over the lowlands
 const droughtGfx = new Graphics();   // a parched, cracked pall over drought regions
 const energyGfx = new Graphics();    // renewable energy farms (solar arrays, wind turbines)
 const megaGfx = new Graphics();      // post-era megastructures (arcologies, space elevators)
-const ringGfx = new Graphics();      // orbital ring + space stations (screen-space, post era)
+const ringGfx = new Graphics();      // orbital ring — NEAR arc, in front of the globe
 ringGfx.eventMode = 'none';
+const ringBackGfx = new Graphics();  // orbital ring — FAR arc, behind the globe (occluded by it)
+ringBackGfx.eventMode = 'none';
 const satelliteGfx = new Graphics(); // satellites crossing the sky (screen-space)
 satelliteGfx.eventMode = 'none';
 // Sky structures — rockets and space elevators — draw in SCREEN space, above
@@ -852,6 +854,9 @@ app.stage.addChild(atmos.skyCloudLayer);
 // Comets and aurora share the night sky and set behind the planet.
 app.stage.addChild(atmos.cometLayer);
 app.stage.addChild(atmos.auroraLayer);
+// The ring's far arc rides behind the globe, so the planet occludes it and it
+// only shows where it climbs above the horizon into the sky.
+app.stage.addChild(ringBackGfx);
 app.stage.addChild(worldPlane);
 // The limb mask clips the plane at the circular horizon; it must live in the
 // tree. The band lays horizon haze along the arc, above the plane.
@@ -4138,41 +4143,45 @@ function updateOrbitalRing(dt: number, nowSec: number, night: number) {
   const target = postAge() ? 1 : 0;
   ringAlpha += (target - ringAlpha) * Math.min(1, dt * 0.4);
   ringGfx.clear();
+  ringBackGfx.clear();
   if (ringAlpha < 0.01) return;
   const W = window.innerWidth, H = window.innerHeight;
-  const cx = W / 2, cy = H * 0.46;
-  const rx = W * 0.43, ry = H * 0.185;       // a shallow, near edge-on ring
+  const cx = W / 2, cy = H * 0.5;
+  const rx = W * 0.46, ry = H * 0.34;        // a ring girdling the globe, seen at a tilt
   const tilt = -0.05, ct = Math.cos(tilt), st = Math.sin(tilt);
   const vis = Math.min(1, 0.2 + night * 1.1); // bright at night, ghostly by day
+  // front = the near half, in front of the globe; back = the far half, which the
+  // planet occludes (it draws on ringBackGfx, behind the world plane).
   const onRing = (th: number) => {
     const ex = Math.cos(th) * rx, ey = Math.sin(th) * ry;
     return { x: cx + ex * ct - ey * st, y: cy + ex * st + ey * ct, front: Math.sin(th) > 0 };
   };
-  // The band itself — the near (lower) arc reads brighter than the far arc.
-  const N = 128;
+  // The band: near arc on the front layer, far arc on the occluded back layer.
+  const N = 160;
   let prev = onRing(0);
   for (let i = 1; i <= N; i++) {
     const p = onRing((i / N) * Math.PI * 2);
-    const a = ringAlpha * vis * (p.front ? 0.5 : 0.34);
-    ringGfx.moveTo(prev.x, prev.y).lineTo(p.x, p.y)
-      .stroke({ color: 0xdcefff, alpha: a, width: p.front ? 2.0 : 1.4, cap: 'round' });
+    const g = p.front ? ringGfx : ringBackGfx;
+    g.moveTo(prev.x, prev.y).lineTo(p.x, p.y)
+      .stroke({ color: 0xdcefff, alpha: ringAlpha * vis * (p.front ? 0.42 : 0.5), width: p.front ? 1.8 : 1.5, cap: 'round' });
     prev = p;
   }
-  // Space stations drift along the ring in formation, glinting as they pass.
-  const M = 5;
+  // Space stations drift along the ring in formation, glinting as they pass —
+  // each drawn on its own half's layer so the globe hides the ones behind it.
+  const M = 6;
   for (let k = 0; k < M; k++) {
     const th = nowSec * 0.06 + (k / M) * Math.PI * 2;
     const p = onRing(th);
-    const fa = ringAlpha * vis * (p.front ? 1 : 0.55);
+    const g = p.front ? ringGfx : ringBackGfx;
+    const fa = ringAlpha * vis * (p.front ? 1 : 0.7);
     if (fa < 0.04) continue;
-    const sz = p.front ? 2.8 : 1.9;
-    ringGfx.circle(p.x, p.y, sz * 2.6).fill({ color: 0x9fd0ff, alpha: fa * 0.22 }); // soft glow
-    // Solar wings + a bright core module.
-    ringGfx.rect(p.x - 5.5, p.y - 0.7, 11, 1.4).fill({ color: 0x7d94b6, alpha: fa * 0.85 });
-    ringGfx.rect(p.x - 1.6, p.y - 1.6, 3.2, 3.2).fill({ color: 0xeef6ff, alpha: fa });
-    ringGfx.circle(p.x, p.y, sz * 0.55).fill({ color: 0xffffff, alpha: fa });
+    const sz = p.front ? 2.8 : 2.0;
+    g.circle(p.x, p.y, sz * 2.6).fill({ color: 0x9fd0ff, alpha: fa * 0.22 });          // soft glow
+    g.rect(p.x - 5.5, p.y - 0.7, 11, 1.4).fill({ color: 0x7d94b6, alpha: fa * 0.85 }); // solar wings
+    g.rect(p.x - 1.6, p.y - 1.6, 3.2, 3.2).fill({ color: 0xeef6ff, alpha: fa });       // core module
+    g.circle(p.x, p.y, sz * 0.55).fill({ color: 0xffffff, alpha: fa });
     const bl = 0.5 + 0.5 * Math.sin(nowSec * 4 + k * 2);
-    ringGfx.circle(p.x + 4, p.y, 0.8).fill({ color: 0xff7a6a, alpha: fa * bl }); // nav beacon
+    g.circle(p.x + 4, p.y, 0.8).fill({ color: 0xff7a6a, alpha: fa * bl });             // nav beacon
   }
 }
 
@@ -4668,7 +4677,7 @@ function resetStorySurfaces() {
   clearFarmland();
   seaTrail.clear(); landTrail.clear(); airTrail.clear(); redrawTrails();
   satellites.length = 0; satelliteGfx.clear();
-  ringAlpha = 0; ringGfx.clear();
+  ringAlpha = 0; ringGfx.clear(); ringBackGfx.clear();
   causeways.length = 0; causewayGfx.clear();
   waterRouteCache.clear();
   warHeat.clear();
