@@ -693,6 +693,9 @@ const cableGfx = new Graphics();     // undersea power/data cables between citie
 const lighthouseGfx = new Graphics(); // coastal lighthouses + sweeping beams at night
 const fireGfx = new Graphics();      // wildfires (additive glow)
 fireGfx.blendMode = 'add';
+const lavaGfx = new Graphics();      // molten lava bodies + ash plume (normal blend)
+const lavaGlowGfx = new Graphics();  // lava heat-glow + vent fountain (additive)
+lavaGlowGfx.blendMode = 'add';
 const energyGfx = new Graphics();    // renewable energy farms (solar arrays, wind turbines)
 const megaGfx = new Graphics();      // post-era megastructures (arcologies, space elevators)
 const satelliteGfx = new Graphics(); // satellites crossing the sky (screen-space)
@@ -757,6 +760,9 @@ world.addChild(boatsGfx);
 world.addChild(lighthouseGfx);
 // Wildfires glow over the burning land.
 world.addChild(fireGfx);
+// Volcanic lava creeps over the land and cools into fresh rock.
+world.addChild(lavaGfx);
+world.addChild(lavaGlowGfx);
 // Renewable farms sit on open land near cities, beneath the megastructures.
 world.addChild(energyGfx);
 // Megastructures tower over their cities.
@@ -2585,6 +2591,118 @@ function updateFires(dt: number, nowSec: number, night: number) {
   }
 }
 
+// Volcanoes: a mountain's vent opens, fountaining fire and ash; lava creeps
+// downhill tile by tile and cools into fresh black rock. Where a flow reaches
+// the sea it solidifies into new land — over deep time, headlands and islands.
+interface LavaTile { row: number; col: number; t: number; spread: boolean; sea: boolean }
+interface Volcano { row: number; col: number; t: number; lava: LavaTile[] }
+const volcanoes: Volcano[] = [];
+const VOLCANO_LIFE = 16;      // seconds the vent fountains
+const VOLCANO_MEAN = 150;     // avg seconds between eruptions
+const LAVA_CAP = 80;          // max molten tiles per volcano
+const LAVA_FLOW = 1.4;        // seconds before a flow creeps to the next tile
+const LAVA_COOL_LAND = 5;     // seconds a land flow glows before hardening
+const LAVA_COOL_SEA = 2.4;    // sea flows quench and harden faster
+function lavaFlowable(r: number, c: number): boolean {
+  if (r < 0 || r >= GRID_SIZE || c < 0 || c >= GRID_SIZE) return false;
+  const st = simWorld.tiles[r][c].state;
+  return st === 'wild' || st === 'ruin'; // through the wilds and (below) the sea — never over towns or fields
+}
+function addLava(v: Volcano, r: number, c: number) {
+  if (v.lava.length >= LAVA_CAP) return;
+  if (v.lava.some((l) => l.row === r && l.col === c)) return;
+  const sea = biomeMap[r][c] === 'water';
+  if (!sea && !lavaFlowable(r, c)) return;
+  v.lava.push({ row: r, col: c, t: 0, spread: false, sea });
+}
+function hardenLava(l: LavaTile) {
+  // Molten rock freezes to fresh dark rock; a sea flow becomes new land.
+  if (l.sea) elevationMap[l.row][l.col] = SEA_LEVEL + 0.22;
+  biomeMap[l.row][l.col] = 'rock';
+  enrollBiomeTrans(l.row, l.col);
+}
+function maybeEruptVolcano(dt: number) {
+  if (volcanoes.length > 0 || Math.random() >= dt / VOLCANO_MEAN) return;
+  // Vents open on high, wild rock — a mountain summit.
+  let best = -1, bestR = 0, bestC = 0;
+  for (let tries = 0; tries < 40; tries++) {
+    const r = (Math.random() * GRID_SIZE) | 0, c = (Math.random() * GRID_SIZE) | 0;
+    if (biomeMap[r][c] !== 'rock' || simWorld.tiles[r][c].state !== 'wild') continue;
+    if (elevationMap[r][c] > best) { best = elevationMap[r][c]; bestR = r; bestC = c; }
+  }
+  if (best < 0) return;
+  volcanoes.push({ row: bestR, col: bestC, t: 0, lava: [] });
+  triggerPing(bestR, bestC, 0xff7a30);
+}
+function updateVolcanoes(dt: number, nowSec: number, night: number) {
+  lavaGfx.clear();
+  lavaGlowGfx.clear();
+  for (let vi = volcanoes.length - 1; vi >= 0; vi--) {
+    const v = volcanoes[vi];
+    v.t += dt;
+    const erupting = v.t < VOLCANO_LIFE;
+    // The vent keeps feeding lava onto its own slope while it's active.
+    if (erupting && Math.random() < dt * 3) addLava(v, v.row, v.col);
+    // Flows creep downhill and cool.
+    for (let i = v.lava.length - 1; i >= 0; i--) {
+      const l = v.lava[i];
+      l.t += dt;
+      if (!l.spread && l.t > LAVA_FLOW) {
+        l.spread = true;
+        // Find the lowest downhill neighbours and send lava that way.
+        const e = elevationMap[l.row][l.col];
+        const opts: Array<{ r: number; c: number; e: number }> = [];
+        for (const [dr, dc] of FIRE_DIRS) {
+          const nr = l.row + dr, nc = l.col + dc;
+          if (nr < 0 || nr >= GRID_SIZE || nc < 0 || nc >= GRID_SIZE) continue;
+          const ne = elevationMap[nr][nc];
+          if (ne > e + 0.01) continue; // lava only runs downhill
+          if (biomeMap[nr][nc] !== 'water' && !lavaFlowable(nr, nc)) continue;
+          opts.push({ r: nr, c: nc, e: ne });
+        }
+        opts.sort((a, b) => a.e - b.e);
+        for (let k = 0; k < Math.min(2, opts.length); k++) addLava(v, opts[k].r, opts[k].c);
+      }
+      const cool = l.sea ? LAVA_COOL_SEA : LAVA_COOL_LAND;
+      if (l.t >= cool) { hardenLava(l); v.lava.splice(i, 1); continue; }
+      // Draw the molten tile: a glowing diamond, dimming as it cools.
+      const heat = 1 - l.t / cool;
+      const { x, y } = gridToScreen(l.col, l.row);
+      const body = lerpColor(0x6a1408, 0xff8a18, heat * heat);
+      lavaGfx.poly([x, y - 8, x + 16, y, x, y + 8, x - 16, y]).fill({ color: body, alpha: 0.6 + 0.38 * heat });
+      const flick = 0.75 + 0.25 * Math.sin(nowSec * 9 + l.row * 3 + l.col * 5);
+      lavaGlowGfx.circle(x, y - 1, (6 + 6 * heat) * flick).fill({ color: 0xff5a14, alpha: (0.12 + 0.22 * night) * heat });
+      if (l.sea && heat > 0.5) { // steam where lava meets the sea
+        lavaGfx.circle(x + Math.sin(nowSec * 2 + l.col) * 2, y - 3 - (nowSec * 6 % 5), 2).fill({ color: 0xe8eef2, alpha: 0.16 });
+      }
+    }
+    // The vent: a fire fountain and a rising ash column while active, then fades.
+    const { x: vx, y: vy } = gridToScreen(v.col, v.row);
+    const ventEnv = erupting ? 1 : Math.max(0, 1 - (v.t - VOLCANO_LIFE) / 3);
+    if (ventEnv > 0) {
+      // Ash plume: a continuous grey column rising and drifting on the wind.
+      for (let k = 0; k < 9; k++) {
+        const up = (k * 7 + (nowSec * 14) % 7);
+        const py = vy - 4 - up;
+        const pr = 2 + k * 0.9;
+        lavaGfx.circle(vx + Math.sin(nowSec + k) * (1 + k * 0.5) + k * 0.6, py, pr)
+          .fill({ color: lerpColor(0x4a4540, 0x2a2622, k / 9), alpha: 0.22 * ventEnv * (1 - k / 11) });
+      }
+      // Fire fountain at the lip.
+      const f = 0.7 + 0.3 * Math.sin(nowSec * 16 + v.col);
+      lavaGlowGfx.circle(vx, vy - 2, 9 * f).fill({ color: 0xff6a18, alpha: 0.3 * ventEnv });
+      for (let k = 0; k < 4; k++) {
+        const a = nowSec * 6 + k * 1.7, sp = (a % 1);
+        lavaGlowGfx.circle(vx + Math.cos(a) * 5 * sp, vy - 4 - sp * 10 * f, 1.4 * (1 - sp))
+          .fill({ color: 0xffd24a, alpha: 0.8 * ventEnv * (1 - sp) });
+      }
+      lavaGlowGfx.poly([vx, vy - 6 * f, vx - 2, vy, vx + 2, vy]).fill({ color: 0xffe879, alpha: 0.7 * ventEnv });
+    }
+    // Eruption over and the last flow hardened — remove the volcano.
+    if (!erupting && v.lava.length === 0 && ventEnv <= 0) volcanoes.splice(vi, 1);
+  }
+}
+
 // Megastructures: the most advanced civs raise a landmark over their greatest
 // city — an arcology dome or a space elevator threading toward orbit.
 type MegaKind = 'dome' | 'elevator' | 'megatower' | 'reactor';
@@ -3959,6 +4077,7 @@ function resetStorySurfaces() {
   cables.length = 0; cableGfx.clear();
   lighthouses.length = 0; lighthouseGfx.clear();
   fires.length = 0; fireGfx.clear();
+  volcanoes.length = 0; lavaGfx.clear(); lavaGlowGfx.clear();
   energyFarms.length = 0; energyGfx.clear();
   megastructures.length = 0; megaGfx.clear();
   riverBoats.length = 0; riverBridges.length = 0; riverCraftGfx.clear();
@@ -4549,6 +4668,8 @@ app.ticker.add((ticker) => {
   drawCauseways();
   drawLighthouses(nowSec, n);
   updateFires(dtSec, nowSec, n);
+  maybeEruptVolcano(dtSec);
+  updateVolcanoes(dtSec, nowSec, n);
   updateRiverCraft(dtSec, n);
   drawEnergyFarms(nowSec, n);
   drawMegastructures(nowSec, n);
