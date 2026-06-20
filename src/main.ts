@@ -699,6 +699,7 @@ const lavaGlowGfx = new Graphics();  // lava heat-glow + vent fountain (additive
 lavaGlowGfx.blendMode = 'add';
 const plagueGfx = new Graphics();    // a sickly miasma dimming afflicted districts
 const floodGfx = new Graphics();     // river floods sheeting over the lowlands
+const droughtGfx = new Graphics();   // a parched, cracked pall over drought regions
 const energyGfx = new Graphics();    // renewable energy farms (solar arrays, wind turbines)
 const megaGfx = new Graphics();      // post-era megastructures (arcologies, space elevators)
 const ringGfx = new Graphics();      // orbital ring + space stations (screen-space, post era)
@@ -774,6 +775,8 @@ world.addChild(lavaGlowGfx);
 world.addChild(plagueGfx);
 // River floods sheet a film of water over the drowned lowlands.
 world.addChild(floodGfx);
+// Drought parches the land brown and cracked.
+world.addChild(droughtGfx);
 // Renewable farms sit on open land near cities, beneath the megastructures.
 world.addChild(energyGfx);
 // Megastructures tower over their cities.
@@ -2913,6 +2916,72 @@ function maybeGrowDelta(dt: number) {
   depositSilt(riverPaths[(Math.random() * riverPaths.length) | 0]);
 }
 
+// Droughts & famine: a parched season creeps across a region — the land browns
+// and cracks from the heart outward, forests wither to scrub, then the rains
+// return and the green creeps back. A slow turn of the land against its people.
+interface DroughtTile { row: number; col: number; dn: number } // dn: 0 at the heart, 1 at the rim
+interface Drought { tiles: DroughtTile[]; t: number; dur: number; cx: number; cy: number }
+const droughts: Drought[] = [];
+const DROUGHT_MEAN = 95;   // avg seconds between droughts
+function maybeDrought(dt: number) {
+  if (droughts.length > 0 || Math.random() >= dt / DROUGHT_MEAN) return;
+  // Centre on a random patch of inhabited-ish land.
+  let cr = -1, cc = -1;
+  for (let tries = 0; tries < 30; tries++) {
+    const r = (Math.random() * GRID_SIZE) | 0, c = (Math.random() * GRID_SIZE) | 0;
+    if (biomeMap[r][c] !== 'water' && biomeMap[r][c] !== 'rock') { cr = r; cc = c; break; }
+  }
+  if (cr < 0) return;
+  const R = 9 + ((Math.random() * 5) | 0);
+  const tiles: DroughtTile[] = [];
+  for (let dr = -R; dr <= R; dr++) for (let dc = -R; dc <= R; dc++) {
+    const r = cr + dr, c = cc + dc, d = Math.hypot(dr, dc);
+    if (d > R || r < 0 || r >= GRID_SIZE || c < 0 || c >= GRID_SIZE) continue;
+    if (biomeMap[r][c] === 'water') continue; // the sea doesn't parch
+    tiles.push({ row: r, col: c, dn: d / R });
+  }
+  const cs = gridToScreen(cc, cr);
+  if (tiles.length >= 20) droughts.push({ tiles, t: 0, dur: 30 + Math.random() * 14, cx: cs.x, cy: cs.y });
+}
+function updateDroughts(dt: number, nowSec: number) {
+  droughtGfx.clear();
+  for (let i = droughts.length - 1; i >= 0; i--) {
+    const dr = droughts[i];
+    dr.t += dt;
+    if (dr.t > dr.dur) { droughts.splice(i, 1); continue; }
+    const ageF = dr.t / dr.dur; // 0..1 over the drought's life
+    for (const t of dr.tiles) {
+      // The parch creeps outward from the heart, holds, then recedes inward.
+      const onset = t.dn * 0.4;
+      const local = Math.min(1, Math.max(0, (ageF - onset) / 0.18));
+      const recede = Math.min(1, Math.max(0, (1 - ageF - onset * 0.5) / 0.18));
+      const dry = Math.min(local, recede) * (1 - t.dn * 0.4); // the heart parches hardest
+      if (dry < 0.04) continue;
+      const { x, y } = gridToScreen(t.col, t.row);
+      // A dry, dusty tan pall settles over the green.
+      droughtGfx.poly([x, y - 8, x + 16, y, x, y + 8, x - 16, y])
+        .fill({ color: lerpColor(0xb39a5e, 0x8a6f3c, t.dn), alpha: 0.5 * dry });
+      // The hardest-hit ground cracks open.
+      if (dry > 0.6) {
+        const s = (t.row * 7 + t.col * 13) % 6;
+        droughtGfx.moveTo(x - 5, y).lineTo(x + 1 + s, y - 1).lineTo(x + 6, y + 1)
+          .stroke({ color: 0x5a4422, alpha: 0.35 * dry, width: 0.5 });
+        droughtGfx.moveTo(x, y - 3).lineTo(x - 2, y + 2).stroke({ color: 0x5a4422, alpha: 0.3 * dry, width: 0.5 });
+      }
+      // At the worst of it, a forest here and there withers to scrub (the
+      // breathing land reforests it once the rains return).
+      if (dry > 0.85 && biomeMap[t.row][t.col] === 'forest' && simWorld.tiles[t.row][t.col].state === 'wild' && Math.random() < dt * 0.04) {
+        biomeMap[t.row][t.col] = 'grass';
+        enrollBiomeTrans(t.row, t.col);
+      }
+    }
+    // A faint heat-shimmer of dust lifting off the parched heart.
+    const env = Math.sin(Math.PI * ageF);
+    droughtGfx.ellipse(dr.cx + Math.sin(nowSec * 0.7) * 8, dr.cy - 6 - (nowSec * 5 % 8), 11, 3)
+      .fill({ color: 0xc8b488, alpha: 0.05 * env });
+  }
+}
+
 // Megastructures: the most advanced civs raise a landmark over their greatest
 // city — an arcology dome or a space elevator threading toward orbit.
 type MegaKind = 'dome' | 'elevator' | 'megatower' | 'reactor';
@@ -4532,6 +4601,7 @@ function resetStorySurfaces() {
   volcanoes.length = 0; lavaGfx.clear(); lavaGlowGfx.clear();
   plagues.length = 0; plagueGfx.clear();
   floods.length = 0; floodGfx.clear();
+  droughts.length = 0; droughtGfx.clear();
   energyFarms.length = 0; energyGfx.clear();
   megastructures.length = 0; megaGfx.clear();
   riverBoats.length = 0; riverBridges.length = 0; riverCraftGfx.clear();
@@ -5130,6 +5200,8 @@ app.ticker.add((ticker) => {
   maybeFlood(dtSec);
   updateFloods(dtSec, nowSec, n);
   maybeGrowDelta(dtSec);
+  maybeDrought(dtSec);
+  updateDroughts(dtSec, nowSec);
   updateRiverCraft(dtSec, n);
   drawEnergyFarms(nowSec, n);
   drawMegastructures(nowSec, n);
