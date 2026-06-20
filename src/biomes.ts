@@ -2,7 +2,7 @@ import { createNoise2D, type NoiseFunction2D } from 'simplex-noise';
 
 // A tiny deterministic PRNG. Takes a string seed, returns a function that
 // produces numbers in [0, 1). Same seed = same sequence.
-function mulberry32(seed: string): () => number {
+export function mulberry32(seed: string): () => number {
   // Hash the seed string to a 32-bit integer.
   let h = 1779033703 ^ seed.length;
   for (let i = 0; i < seed.length; i++) {

@@ -359,6 +359,19 @@ export const CATASTROPHE = {
   earthquakeRadius:            26,     // tile radius of the affected zone
 };
 
+// Standing-volcano eruptions (the natural-wonder volcano, distinct from the
+// roving 'volcano' catastrophe above). Deep-time pacing: long rest, short burst.
+export const VOLCANO = {
+  restTicks:        2400,  // ~80s at 30tps between eruptions
+  restJitterTicks:  1800,  // up to +60s extra, so they don't sync up
+  eruptTicks:        240,  // ~8s eruption
+  initialRestTicks:  900,  // first eruption ~30s in, staggered by position
+  damageRadius:        5,   // tiles scarred around the vent
+  scorchRadius:      1.7,   // within this, tiles are wiped to wild (scorched bare)
+  vitalityHit:      0.12,   // vitality lost by a civ that loses tiles to it
+  severity:         0.35,   // moderate — drives scar size / screen shake
+};
+
 export const CITY = {
   tilesPerCity:             80,    // territory tiles needed per additional city slot
   maxCitiesAmbitionScale:   1.0,   // high-ambition civs earn proportionally more cities
@@ -381,10 +394,36 @@ const CIV_COLORS = [
   0x5a7560, 0xbf8060, 0x6b7a99, 0xa68a5b,
 ];
 
+// A standing volcano (a natural wonder placed by the renderer; its location is
+// handed to the sim via setVolcanoes). The sim owns its eruption cycle so an
+// eruption is a real event that scars the land and hurts nearby civs — not just
+// a visual. The renderer reads `intensity` to animate the cone.
+export interface VolcanoState {
+  row: number;
+  col: number;
+  cooldown: number;   // ticks until the next eruption begins
+  erupting: number;   // ticks remaining in the current eruption (0 = dormant)
+  duration: number;   // total ticks of an eruption (for the intensity curve)
+  intensity: number;  // 0 dormant .. 1 peak — what the renderer animates to
+  didDamage: boolean; // tiles are scarred once, at the eruption's peak
+}
+
+// A wonder's influence on where civs settle: positive `pull` draws settlement
+// (fresh water, sacred landmarks, mineral wealth), negative repels it (the
+// volcano's dangerous slopes). Set by the renderer via setWonderSites.
+export interface WonderSite {
+  row: number;
+  col: number;
+  pull: number;   // +draw / −repel, magnitude at the centre
+  radius: number; // tiles over which the pull fades to zero
+}
+
 export interface SimWorld {
   width: number;
   height: number;
   tiles: SimTile[][];
+  volcanoes: VolcanoState[];
+  wonderSites: WonderSite[];
   civs: Map<number, Civ>;
   nextCivId: number;
   tick: number;
@@ -423,6 +462,8 @@ export function createSimWorld(width: number, height: number): SimWorld {
   }
   return {
     width, height, tiles,
+    volcanoes: [],
+    wonderSites: [],
     civs: new Map(),
     nextCivId: 1,
     tick: 0,
@@ -460,7 +501,7 @@ function pickCivSpawnTile(
   world: SimWorld,
   biomes: Biome[][]
 ): { row: number; col: number } | null {
-  const candidates: Array<{ row: number; col: number; ruinScore: number }> = [];
+  const candidates: Array<{ row: number; col: number; ruinScore: number; influence: number }> = [];
 
   for (let attempt = 0; attempt < 120; attempt++) {
     const row = Math.floor(Math.random() * world.height);
@@ -468,6 +509,13 @@ function pickCivSpawnTile(
     if (biomes[row][col] === 'water' || biomes[row][col] === 'rock') continue; // no founding on sea or peak
     const st = world.tiles[row][col].state;
     if (st !== 'wild' && st !== 'ruin') continue;
+
+    // Never found on the volcano's scorched slopes — its core repels outright.
+    let onVent = false;
+    for (const w of world.wonderSites) {
+      if (w.pull < 0 && distance(row, col, w.row, w.col) < 3) { onVent = true; break; }
+    }
+    if (onVent) continue;
 
     let okay = true;
     for (const civ of world.civs.values()) {
@@ -492,12 +540,14 @@ function pickCivSpawnTile(
         }
       }
     }
-    candidates.push({ row, col, ruinScore });
+    candidates.push({ row, col, ruinScore, influence: wonderInfluenceAt(world, row, col) });
   }
 
   if (candidates.length === 0) return null;
 
-  const weights = candidates.map((c) => 1 + c.ruinScore * 3);
+  // Ruins draw founders (inherited memory); a wonder's pull adds or subtracts on
+  // top — blessed ground attracts, the volcano's reach discourages.
+  const weights = candidates.map((c) => Math.max(0.05, 1 + c.ruinScore * 3 + c.influence));
   const total = weights.reduce((a, b) => a + b, 0);
   let r = Math.random() * total;
   for (let i = 0; i < candidates.length; i++) {
@@ -1061,6 +1111,142 @@ function rollCatastropheType(): CatastropheType {
     : roll < 0.8 ? 'earthquake' : 'volcano';
 }
 
+// Hand the sim the standing-volcano locations the renderer placed. Each gets a
+// position-staggered initial rest so they don't all erupt on the same tick.
+export function setVolcanoes(world: SimWorld, coords: Array<{ row: number; col: number }>) {
+  world.volcanoes = coords.map((p) => ({
+    row: p.row, col: p.col,
+    cooldown: VOLCANO.initialRestTicks + ((p.row * 31 + p.col * 17) % VOLCANO.restJitterTicks),
+    erupting: 0,
+    duration: VOLCANO.eruptTicks,
+    intensity: 0,
+    didDamage: false,
+  }));
+}
+
+// Force every volcano to erupt now (debug / authored triggers).
+export function eruptVolcanoesNow(world: SimWorld) {
+  for (const v of world.volcanoes) { v.erupting = v.duration; v.intensity = 0; v.didDamage = false; }
+}
+
+// Hand the sim the wonders' settlement influence (renderer-placed).
+export function setWonderSites(world: SimWorld, sites: WonderSite[]) {
+  world.wonderSites = sites;
+}
+
+// Signed settlement pull of all wonders at a tile, summed with linear falloff.
+// Positive draws civs in; negative (the volcano) pushes them away.
+function wonderInfluenceAt(world: SimWorld, row: number, col: number): number {
+  let s = 0;
+  for (const w of world.wonderSites) {
+    const d = Math.hypot(row - w.row, col - w.col);
+    if (d >= w.radius) continue;
+    s += w.pull * (1 - d / w.radius);
+  }
+  return s;
+}
+
+// Decay multiplier from feared wonders (the volcano): tiles on the dangerous
+// slopes are abandoned faster, so a thin gap persists around the vent even
+// between eruptions — fear made visible, not just a settling-order tweak.
+function ventFearAt(world: SimWorld, row: number, col: number): number {
+  let amp = 1;
+  for (const w of world.wonderSites) {
+    if (w.pull >= 0) continue;
+    const d = Math.hypot(row - w.row, col - w.col);
+    if (d >= w.radius) continue;
+    amp += -w.pull * 0.15 * (1 - d / w.radius); // pull −4 → up to ~1.6× decay at the vent
+  }
+  return amp;
+}
+
+// Advance every volcano one tick: rest, then play out an eruption, scarring the
+// land at its peak. The renderer reads `intensity` to animate the cone.
+function stepVolcanoes(
+  world: SimWorld,
+  biomes: Biome[][],
+  changed: Array<{ row: number; col: number }>,
+  events: SimEvent[],
+) {
+  for (const v of world.volcanoes) {
+    if (v.erupting > 0) {
+      const progress = (v.duration - v.erupting) / v.duration; // 0 → ~1
+      v.intensity = Math.sin(progress * Math.PI);
+      if (!v.didDamage && progress >= 0.5) {
+        eruptVolcano(world, biomes, v, changed, events);
+        v.didDamage = true;
+      }
+      v.erupting--;
+      if (v.erupting <= 0) {
+        v.erupting = 0; v.intensity = 0; v.didDamage = false;
+        v.cooldown = VOLCANO.restTicks + Math.floor(Math.random() * VOLCANO.restJitterTicks);
+      }
+    } else if (v.cooldown > 0) {
+      v.cooldown--;
+      if (v.cooldown <= 0) { v.erupting = v.duration; v.intensity = 0; v.didDamage = false; }
+    }
+  }
+}
+
+// The eruption's bite: tiles at the vent are scorched to bare wild, the ring
+// around is thrown down to ruin (remembering the era that fell), and civs that
+// lose ground sicken. Fires once per eruption, at the peak, and emits a
+// 'volcano' catastrophe event so the renderer's eruption FX (flash, ash/lava
+// scar, shake, narration) play at the vent.
+function eruptVolcano(
+  world: SimWorld,
+  biomes: Biome[][],
+  v: VolcanoState,
+  changed: Array<{ row: number; col: number }>,
+  events: SimEvent[],
+) {
+  const R = VOLCANO.damageRadius;
+  const civTilesHit = new Map<number, number>();
+  for (let r = Math.max(0, v.row - R); r <= Math.min(world.height - 1, v.row + R); r++) {
+    for (let c = Math.max(0, v.col - R); c <= Math.min(world.width - 1, v.col + R); c++) {
+      const dr = r - v.row, dc = c - v.col;
+      const distSq = dr * dr + dc * dc;
+      if (distSq > R * R) continue;
+      if (biomes[r][c] === 'water') continue;
+      const tile = world.tiles[r][c];
+      const dist = Math.sqrt(distSq);
+      const cid = tile.civId;
+      if (tile.state === 'built' || tile.state === 'cleared') {
+        if (dist <= VOLCANO.scorchRadius) {
+          tile.state = 'wild'; tile.civId = null; tile.ruinEra = null;
+        } else {
+          const owner = cid != null ? world.civs.get(cid) : null;
+          tile.state = 'ruin';
+          tile.ruinEra = owner ? owner.era : tile.ruinEra;
+          tile.civId = null;
+        }
+        tile.lastChangedTick = world.tick;
+        changed.push({ row: r, col: c });
+        if (cid != null) civTilesHit.set(cid, (civTilesHit.get(cid) || 0) + 1);
+      } else if (tile.state === 'ruin' && dist <= VOLCANO.scorchRadius) {
+        tile.state = 'wild'; tile.ruinEra = null; // old ruins at the vent are buried
+        tile.lastChangedTick = world.tick;
+        changed.push({ row: r, col: c });
+      }
+    }
+  }
+  const affectedCivIds: number[] = [];
+  for (const cid of civTilesHit.keys()) {
+    const civ = world.civs.get(cid);
+    if (!civ || civ.phase === 'dead') continue;
+    civ.vitality = Math.max(0.05, civ.vitality - VOLCANO.vitalityHit);
+    if (civ.phase === 'rising' || civ.phase === 'stable') {
+      enterPhase(civ, 'declining');
+      events.push({ kind: 'civ_declining', civId: civ.id });
+    }
+    affectedCivIds.push(cid);
+  }
+  events.push({
+    kind: 'catastrophe', centerRow: v.row, centerCol: v.col,
+    affectedCivIds, severity: VOLCANO.severity, catastropheType: 'volcano', radius: R,
+  });
+}
+
 export function applyCatastrophe(
   world: SimWorld,
   biomes: Biome[][],
@@ -1536,7 +1722,8 @@ export function step(
           const deadDamp = civ.phase === 'dead' ? SIM.deathDecayMultiplier : 1.0;
 
           const decayP = SIM.decayBase * effectiveDecayPressure(civ) * exposureFactor
-            * distanceFactor * isolationFactor * deathPeripheryAmp * deadDamp;
+            * distanceFactor * isolationFactor * deathPeripheryAmp * deadDamp
+            * ventFearAt(world, row, col);
 
           if (Math.random() < decayP) {
             const list = decayCandidates.get(civ.id) || [];
@@ -1558,9 +1745,17 @@ export function step(
             if (biomes[r][c] === 'water') continue;
             const neighborSnap = snapshot[r][c];
             const neighborTile = world.tiles[r][c];
+            // Civs hurry toward a wonder's blessing and shrink from the
+            // volcano's slopes — but the draw/dread is finite, so an ambitious
+            // people still creeps onto the dangerous ground and is periodically
+            // scoured, a deep-time cycle of settling and ruin.
+            const infl = wonderInfluenceAt(world, r, c);
+            const wonderMult = infl >= 0
+              ? Math.min(1.7, 1 + infl * 0.14)
+              : Math.max(0.3, 1 + infl * 0.16);
 
             if (neighborSnap.state === 'wild') {
-              if (Math.random() < spreadP && neighborTile.state === 'wild') {
+              if (Math.random() < spreadP * wonderMult && neighborTile.state === 'wild') {
                 neighborTile.state = 'cleared';
                 neighborTile.civId = civ.id;
                 neighborTile.ruinEra = null;
@@ -1571,7 +1766,7 @@ export function step(
             }
 
             if (neighborSnap.state === 'ruin') {
-              const ruinSpreadP = spreadP * SIM.spreadIntoRuinFactor;
+              const ruinSpreadP = spreadP * SIM.spreadIntoRuinFactor * wonderMult;
               if (Math.random() < ruinSpreadP && neighborTile.state === 'ruin') {
                 neighborTile.state = 'cleared';
                 neighborTile.civId = civ.id;
@@ -1718,6 +1913,10 @@ export function step(
   if (world.catastrophePressure >= CATASTROPHE.pressureFireThreshold) {
     applyCatastrophe(world, biomes, elevation, changed, biomeChanges, events);
   }
+
+  // Standing volcanoes erupt on their own slow cycle, independent of the
+  // pressure-driven roving catastrophe above.
+  stepVolcanoes(world, biomes, changed, events);
 
   // Births arrive as visible migrations: the spawn roll starts a band
   // walking; the civ exists only when it settles.

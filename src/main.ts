@@ -1,7 +1,18 @@
 import { Application, Assets, Container, Graphics, MeshPlane, RenderTexture, Sprite, Text, TextStyle, Texture } from 'pixi.js';
 import { generateBiomeMap, generateRivers, makeTerrainSampler, classify, BIOME_COLORS, SEA_LEVEL, type Biome } from './biomes';
+import { placeNaturalWonders, type NaturalWonder, type NaturalWonderKind } from './naturalWonders';
+
+// How strongly each wonder draws (+) or repels (−) settlement, and over how
+// many tiles that pull fades. The volcano's slopes are feared; fresh water and
+// sacred/mineral landmarks are sought.
+const WONDER_PULL: Record<NaturalWonderKind, number> = {
+  volcano: -4, crater_lake: 3, monolith: 2, rainbow_hills: 1.5, karst_spires: 1.5, salt_flat: 2,
+};
+const WONDER_RADIUS: Record<NaturalWonderKind, number> = {
+  volcano: 5, crater_lake: 8, monolith: 7, rainbow_hills: 6, karst_spires: 6, salt_flat: 6,
+};
 import { drawTile, drawStateOverlayPersistent, redrawOverlay, redrawBiomeTile, lerpColor, gridToScreen, rgbToHsl, hslToRgb } from './iso';
-import { createSimWorld, step, tileOverlayColor, seedInitialCivs, applyCatastrophe, SIM, CATASTROPHE, CITY, nearestCityDist, type SimWorld, type Civ, type CivCity, type SimEvent, type Era, type TileOverlay, type BiomeChange, type CatastropheType } from './sim';
+import { createSimWorld, step, tileOverlayColor, seedInitialCivs, applyCatastrophe, setVolcanoes, eruptVolcanoesNow, setWonderSites, SIM, CATASTROPHE, CITY, nearestCityDist, type SimWorld, type Civ, type CivCity, type SimEvent, type Era, type TileOverlay, type BiomeChange, type CatastropheType } from './sim';
 import * as audio from './audio';
 import { createAtmosphere, ATMOS } from './atmosphere';
 
@@ -697,6 +708,11 @@ fireGfx.blendMode = 'add';
 const lavaGfx = new Graphics();      // molten lava bodies + ash plume (normal blend)
 const lavaGlowGfx = new Graphics();  // lava heat-glow + vent fountain (additive)
 lavaGlowGfx.blendMode = 'add';
+const natWonderWaterGfx = new Graphics();  // natural-wonder open water (crater lake) — sits BELOW the glitter so it catches the sun-band like the ocean
+const natWonderGroundGfx = new Graphics(); // natural-wonder ground features (salt flats, painted hills, aprons)
+const natWonderGfx = new Graphics();       // natural-wonder standing forms (volcano cone, monolith, spires)
+const natWonderGlowGfx = new Graphics();   // natural-wonder light (lava glow, mineral shimmer) — additive
+natWonderGlowGfx.blendMode = 'add';
 const plagueGfx = new Graphics();    // a sickly miasma dimming afflicted districts
 const faithGfx = new Graphics();     // a golden tide of shrine-light spreading city to city
 faithGfx.blendMode = 'add';
@@ -727,10 +743,16 @@ world.addChild(biomeLayer);
 // cached base, until they finish and are folded into the cache.
 const biomeTransLayer = new Container();
 world.addChild(biomeTransLayer);
+// Crater-lake water sits here, under the glitter, so the sun-band sweeps across
+// it exactly as it does the ocean (its tiles are added to the same water mask).
+world.addChild(natWonderWaterGfx);
 // Sun glitter / moon path on the water, masked to water tiles below.
 world.addChild(atmos.glitterLayer);
 // Scenery land sits over the glitter (so the simple water mask suffices).
 world.addChild(sceneryLandGfx);
+// Natural wonders' ground features (caldera water, salt flats, painted bands)
+// lie on the terrain itself, under settlement tints and anything built.
+world.addChild(natWonderGroundGfx);
 // Rivers run over the terrain, under settlement tints.
 world.addChild(riverGfx);
 world.addChild(riverCraftGfx);
@@ -785,6 +807,10 @@ world.addChild(floodGfx);
 world.addChild(droughtGfx);
 // Renewable farms sit on open land near cities, beneath the megastructures.
 world.addChild(energyGfx);
+// Natural wonders' standing forms (volcano cone + plume, monolith, spires)
+// tower over the land like the megastructures, above the buildings around them.
+world.addChild(natWonderGfx);
+world.addChild(natWonderGlowGfx);
 // Megastructures tower over their cities.
 world.addChild(megaGfx);
 // Directional land light sits under the cloud shadows (clouds block sun).
@@ -1351,11 +1377,23 @@ function rebuildWaterMask() {
   g.poly([T.x, y0, x0 + w, y0, x0 + w, R.y, R.x, R.y, T.x, T.y]).fill(0xffffff);
   g.poly([x0 + w, R.y, x0 + w, y0 + h, B.x, y0 + h, B.x, B.y, R.x, R.y]).fill(0xffffff);
   g.poly([B.x, y0 + h, x0, y0 + h, x0, L.y, L.x, L.y, B.x, B.y]).fill(0xffffff);
+  // Crater-lake water tiles count as water for the glitter (and not as land for
+  // the shimmer), so the sun-band glints on the caldera like the open sea.
+  const lakeWater = new Set<number>();
+  for (const wn of naturalWonders) {
+    if (wn.kind !== 'crater_lake') continue;
+    for (let dr = -3; dr <= 3; dr++) for (let dc = -3; dc <= 3; dc++) {
+      const rr = wn.row + dr, cc = wn.col + dc;
+      if (rr < 0 || rr >= GRID_SIZE || cc < 0 || cc >= GRID_SIZE) continue;
+      // Round (screen-space) metric, matching the lake-water footprint.
+      if (Math.hypot(dc - dr, (dc + dr) * 0.5) <= 2.55) lakeWater.add(rr * GRID_SIZE + cc);
+    }
+  }
   // Water tile diamonds, inflated a touch; land diamonds go to the land mask.
   landMaskG.clear();
   for (let row = 0; row < GRID_SIZE; row++) {
     for (let col = 0; col < GRID_SIZE; col++) {
-      const water = biomeMap[row][col] === 'water';
+      const water = biomeMap[row][col] === 'water' || lakeWater.has(row * GRID_SIZE + col);
       const target = water ? g : landMaskG;
       const { x, y } = gridToScreen(col, row);
       target.poly([x, y - 9, x + 17, y, x, y + 9, x - 17, y]).fill(0xffffff);
@@ -2475,7 +2513,20 @@ function rebuildLighthouses() {
     for (const c of civ.cities) if (coastalWaterNear(c) && (!best || c.prominence > best.prominence)) best = c;
     if (!best) continue;
     const w = coastalWaterNear(best)!;
-    lighthouses.push({ row: w.row, col: w.col, phase: (w.row * 7 + w.col * 13) % 100 });
+    // Stand the tower on the headland — the LAND tile at the shore beside that
+    // water, nearest the city — not out on the water itself.
+    let land = { row: best.row, col: best.col };
+    let bestD = Infinity;
+    for (let dr = -1; dr <= 1; dr++) {
+      for (let dc = -1; dc <= 1; dc++) {
+        const r = w.row + dr, c = w.col + dc;
+        if (r < 0 || r >= GRID_SIZE || c < 0 || c >= GRID_SIZE) continue;
+        if (biomeMap[r][c] === 'water') continue;
+        const d = (r - best.row) ** 2 + (c - best.col) ** 2;
+        if (d < bestD) { bestD = d; land = { row: r, col: c }; }
+      }
+    }
+    lighthouses.push({ row: land.row, col: land.col, phase: (land.row * 7 + land.col * 13) % 100 });
   }
 }
 function drawLighthouses(nowSec: number, night: number) {
@@ -2503,6 +2554,339 @@ function drawLighthouses(nowSec: number, night: number) {
     lighthouseGfx.circle(x, y - 7.6 * S, 2.4 * S).fill({ color: 0xfff4c8, alpha: 0.14 * ng * bl2 });
     lighthouseGfx.circle(x, y - 7.6 * S, 1.0 * S).fill({ color: 0xfffae0, alpha: (0.5 + 0.4 * ng) * bl2 });
   }
+}
+
+// --- Natural wonders: permanent, seed-placed land features (see naturalWonders.ts).
+// Drawn as overlays on the terrain, rebuilt on reroll. The volcano is alive —
+// it smokes always and erupts on a slow cycle, reusing the lava visual idiom.
+let naturalWonders: NaturalWonder[] = [];
+function rebuildNaturalWonders() {
+  naturalWonders = placeNaturalWonders(biomeMap, elevationMap, currentSeed);
+}
+// Hand the natural wonders to the sim: volcano locations (the sim owns the
+// eruption cycle — timing, scarring, vitality) and every wonder's settlement
+// pull (civs seek the blessed, flee the volcano). Called after the sim is built.
+function syncSimWonders() {
+  setVolcanoes(simWorld, naturalWonders.filter(w => w.kind === 'volcano').map(w => ({ row: w.row, col: w.col })));
+  setWonderSites(simWorld, naturalWonders.map(w => ({
+    row: w.row, col: w.col, pull: WONDER_PULL[w.kind], radius: WONDER_RADIUS[w.kind],
+  })));
+}
+// Live-watch handle: inspect placements and force every volcano to erupt now.
+(window as any).__wonders = {
+  list: () => naturalWonders,
+  erupt: () => eruptVolcanoesNow(simWorld),
+};
+// The eruption level the cone animates to is the SIM's intensity for the
+// volcano at this tile (0 dormant .. 1 peak) — so the visual and the land-
+// scarring are the same event, not two clocks.
+function eruptionLevel(w: NaturalWonder): number {
+  for (const v of simWorld.volcanoes) if (v.row === w.row && v.col === w.col) return v.intensity;
+  return 0;
+}
+function drawNaturalWonders(nowSec: number, night: number) {
+  natWonderWaterGfx.clear();
+  natWonderGroundGfx.clear();
+  natWonderGfx.clear();
+  natWonderGlowGfx.clear();
+  if (naturalWonders.length === 0) return;
+  const ng = Math.max(0.18, night);
+  for (const w of naturalWonders) {
+    const { x, y } = gridToScreen(w.col, w.row);
+    switch (w.kind) {
+      case 'volcano':        drawVolcano(x, y, w, nowSec, ng, night); break;
+      case 'crater_lake':    drawCraterLake(x, y, w, nowSec, ng); break;
+      case 'monolith':       drawMonolith(x, y, w, ng); break;
+      case 'rainbow_hills':  drawRainbowHills(x, y, w, nowSec, ng); break;
+      case 'karst_spires':   drawKarstSpires(x, y, w, ng); break;
+      case 'salt_flat':      drawSaltFlat(x, y, w, nowSec, ng); break;
+    }
+  }
+}
+// --- Tile-aligned drawing, so wonders are built from the same diamonds as the
+// terrain instead of floating on top as smooth decals. ---
+const NW_TW = 32, NW_TH = 16;
+function nwHash(row: number, col: number, salt: number): number {
+  let h = (row * 73856093) ^ (col * 19349663) ^ (salt * 83492791);
+  h = (h ^ (h >>> 13)) >>> 0;
+  return h / 0xffffffff; // 0..1
+}
+// One terrain tile, split into four triangles from the centre and shaded as if
+// lit from the top-left — so a recoloured patch reads as faceted relief instead
+// of a flat diamond block. `relief` is the light/shadow spread (0 ≈ flat, good
+// for water; higher for rock/hills). `tris` is a 4-bit mask of which facets to
+// draw (1=UL 2=UR 4=LR 8=LL); dropping facets at the rim lets the real terrain
+// below show through, so the boundary interlocks with grass instead of stepping
+// along whole tiles. A tiny per-tile tilt breaks up uniformity.
+function nwTile(g: Graphics, row: number, col: number, color: number, relief = 0.12, alpha = 1, tris = 0b1111) {
+  if (tris === 0) return;
+  const { x, y } = gridToScreen(col, row);
+  const hw = NW_TW / 2, hh = NW_TH / 2;
+  const tilt = (nwHash(row, col, 21) - 0.5) * relief * 0.6; // slight random light lean
+  const r = relief + tilt;
+  const ul = lerpColor(color, 0xffffff, Math.max(0, r));
+  const ur = lerpColor(color, 0xffffff, Math.max(0, r * 0.35));
+  const ll = lerpColor(color, 0x000000, Math.max(0, r * 0.35));
+  const lr = lerpColor(color, 0x000000, Math.max(0, r));
+  if (tris & 1) g.poly([x, y, x - hw, y, x, y - hh]).fill({ color: ul, alpha }); // upper-left
+  if (tris & 2) g.poly([x, y, x, y - hh, x + hw, y]).fill({ color: ur, alpha }); // upper-right
+  if (tris & 4) g.poly([x, y, x + hw, y, x, y + hh]).fill({ color: lr, alpha }); // lower-right
+  if (tris & 8) g.poly([x, y, x, y + hh, x - hw, y]).fill({ color: ll, alpha }); // lower-left
+  if (tris === 0b1111) {
+    g.poly([x, y - hh, x + hw, y, x, y + hh, x - hw, y])
+      .stroke({ color: 0x000000, alpha: 0.05, width: 1 });
+  }
+}
+// Lay a blobby, ragged-edged patch of retinted tiles centred on a wonder. The
+// per-tile callback returns the fill (or null to skip), so each wonder paints
+// its own bands/water. radius is in tiles; the rim is eroded by a hash so the
+// border never reads as a clean ellipse.
+function nwFootprint(
+  g: Graphics, center: NaturalWonder, radius: number,
+  fill: (dr: number, dc: number, dist: number, edge: number) => number | null,
+  relief = 0.12, softEdge = true, round = false,
+) {
+  // `round`: measure distance in SCREEN space so the patch is a true circle on
+  // the isometric grid, not a diamond. (sx,sy) here are the tile's screen offset
+  // in tile-width units — equal weighting → round outline.
+  const R = round ? Math.ceil(radius) + 2 : Math.ceil(radius) + 1;
+  for (let dr = -R; dr <= R; dr++) {
+    for (let dc = -R; dc <= R; dc++) {
+      const rr = center.row + dr, cc = center.col + dc;
+      if (rr < 0 || rr >= GRID_SIZE || cc < 0 || cc >= GRID_SIZE) continue;
+      const dist = round ? Math.hypot(dc - dr, (dc + dr) * 0.5) : Math.hypot(dr, dc);
+      if (dist > radius + 1.1) continue;
+      const c = fill(dr, dc, dist, Math.max(0, (dist - (radius - 1.1)) / 1.7));
+      if (c == null) continue;
+      let tris = 0b1111;
+      if (softEdge) {
+        // Ragged rim at the FACET level: each of the four triangles survives
+        // only if its hash beats the edge factor, so the outline frays into the
+        // surrounding terrain (which shows through the dropped facets).
+        const edge = (dist - (radius - 1.2)) / 1.7; // <=0 core, →~1 at the rim
+        if (edge > 0) {
+          tris = 0;
+          for (let t = 0; t < 4; t++) if (nwHash(rr, cc, 41 + t) > edge * 1.05) tris |= 1 << t;
+        }
+      }
+      nwTile(g, rr, cc, c, relief, 1, tris);
+    }
+  }
+}
+// A soft contact shadow so raised forms sit on the ground instead of floating.
+function nwShadow(g: Graphics, x: number, y: number, rx: number) {
+  g.ellipse(x + rx * 0.18, y + 1.5, rx, rx * 0.42).fill({ color: 0x2a2a22, alpha: 0.16 });
+}
+// A single rocky peak — a ridged triangle, lit on the left, shadowed on the
+// right, with a pale rock cap. Used to build a massif around the volcano so it
+// reads as sitting *in* a mountain range, not alone on a plain.
+function nwPeak(g: Graphics, px: number, py: number, h: number, halfW: number, tint: number) {
+  const base = lerpColor(0x7d756a, tint, 0.35);
+  // Body.
+  g.poly([px - halfW, py, px + halfW, py, px, py - h]).fill({ color: base, alpha: 0.97 });
+  // Shadowed right face.
+  g.poly([px, py - h, px + halfW, py, px + halfW * 0.2, py]).fill({ color: lerpColor(base, 0x000000, 0.28), alpha: 0.9 });
+  // Sunlit left edge + a few rock crags.
+  g.poly([px - halfW, py, px, py - h, px - halfW * 0.35, py]).fill({ color: lerpColor(base, 0xffffff, 0.22), alpha: 0.85 });
+  g.poly([px, py - h, px - halfW * 0.18, py - h * 0.45, px + halfW * 0.16, py - h * 0.5]).fill({ color: lerpColor(base, 0xffffff, 0.32), alpha: 0.7 }); // cap
+}
+
+// A dark basalt cone with a crater. Always wisps smoke and glows faintly at
+// night; on the eruption cycle it throws a lava fountain, a thick ash plume,
+// ember sparks, and a strong heat-glow.
+function drawVolcano(x: number, y: number, w: NaturalWonder, nowSec: number, ng: number, night: number) {
+  const S = 1.9;
+  const H = 15 * S, rimW = 6.5 * S, baseW = 12 * S;
+  const erupt = eruptionLevel(w);
+  const craterY = y - H;
+  // Tiled base: a patch of scorched dark rock the cone rises from, so it reads
+  // as part of the mountain rather than a shape pasted on the grass.
+  nwFootprint(natWonderGroundGfx, w, 3.1, (_dr, _dc, dist) => {
+    const t = dist / 3.3;
+    return lerpColor(0x4a4038, 0x6a5e52, t * 0.8 + nwHash(w.row + _dr, w.col + _dc, 4) * 0.2);
+  }, 0.18, true, true);
+  nwShadow(natWonderGfx, x, y, baseW);
+  // Back peaks: a couple of rock summits set behind the cone, so the volcano
+  // rises from within a ridge. Drawn first → the cone overlaps and sits among them.
+  const ph = w.phase;
+  nwPeak(natWonderGfx, x - baseW * 1.05, y - 6, H * (0.62 + 0.08 * Math.sin(ph)), baseW * 0.55, 0x6a6258);
+  nwPeak(natWonderGfx, x + baseW * 0.95, y - 9, H * (0.7 + 0.08 * Math.cos(ph)), baseW * 0.5, 0x756c60);
+  nwPeak(natWonderGfx, x + baseW * 0.2, y - 13, H * 0.5, baseW * 0.4, 0x70685c);
+  // Body: a trapezoid cone, dark basalt with a sunlit left flank.
+  natWonderGfx.poly([x - baseW, y, x + baseW, y, x + rimW, craterY, x - rimW, craterY])
+    .fill({ color: 0x4a4038, alpha: 0.97 });
+  natWonderGfx.poly([x - baseW, y, x - rimW, craterY, x - rimW * 0.4, craterY, x - baseW * 0.45, y])
+    .fill({ color: 0x5c5046, alpha: 0.6 }); // sunlit flank
+  // A few ridges down the flanks break up the flat fill.
+  for (const rx of [-0.55, -0.15, 0.3, 0.65]) {
+    natWonderGfx.poly([x + rx * baseW, y, x + rx * baseW * 0.55, craterY, x + (rx * baseW * 0.55 + 1.5), craterY, x + rx * baseW + 2, y])
+      .fill({ color: 0x3c332c, alpha: 0.3 });
+  }
+  // Crater lip.
+  natWonderGfx.ellipse(x, craterY, rimW, rimW * 0.34).fill({ color: 0x352c26, alpha: 0.95 });
+  natWonderGfx.ellipse(x, craterY, rimW * 0.7, rimW * 0.24).fill({ color: 0x241c18, alpha: 0.9 });
+  // Resting glow in the crater, brighter at night and during eruption.
+  const restGlow = 0.10 + 0.06 * Math.sin(nowSec * 1.3 + w.phase);
+  natWonderGlowGfx.ellipse(x, craterY, rimW * 0.6, rimW * 0.2)
+    .fill({ color: 0xff5a22, alpha: (restGlow * ng + erupt * 0.7) });
+  // Smoke / ash plume — always a thin wisp, thick and dark during eruption.
+  const plumeCount = 5 + Math.floor(erupt * 7);
+  for (let i = 0; i < plumeCount; i++) {
+    const t = ((nowSec * (0.22 + 0.04 * erupt) + i / plumeCount + w.phase) % 1);
+    const rise = t * (38 + 46 * erupt) * S * 0.5;
+    const drift = Math.sin(nowSec * 0.5 + i * 1.7 + w.phase) * (5 + 8 * t) * S * 0.4;
+    const pr = (2.2 + t * 6 + erupt * 4) * S * 0.5;
+    const pa = (1 - t) * (0.18 + 0.32 * erupt);
+    const col = lerpColor(0x6b6258, 0x2a2420, erupt); // pale rest smoke → dark ash
+    natWonderGfx.circle(x + drift, craterY - rise, pr).fill({ color: col, alpha: pa });
+  }
+  // Eruption: a bright lava fountain and ember sparks bursting from the crater.
+  if (erupt > 0.02) {
+    natWonderGlowGfx.ellipse(x, craterY, rimW * 1.3, rimW * 0.5)
+      .fill({ color: 0xff7a30, alpha: 0.35 * erupt });
+    const sparks = Math.floor(erupt * 14);
+    for (let i = 0; i < sparks; i++) {
+      const a = (i / sparks) * Math.PI - Math.PI / 2 + Math.sin(nowSec * 2 + i) * 0.2;
+      const sp = ((nowSec * 1.6 + i * 0.37) % 1);
+      const dist = sp * (20 + 14 * erupt) * S * 0.4;
+      const ex = x + Math.cos(a) * dist * 0.7;
+      const ey = craterY - Math.abs(Math.sin(a)) * dist - sp * 4 * S + sp * sp * 9 * S; // arc up then fall
+      natWonderGlowGfx.circle(ex, ey, (1 - sp) * 1.6 * S * 0.6 + 0.5)
+        .fill({ color: lerpColor(0xffd060, 0xff4010, sp), alpha: (1 - sp) * 0.9 * erupt });
+    }
+    // Lava tongues creeping down the flanks at peak.
+    if (erupt > 0.4) {
+      for (const side of [-1, 1]) {
+        const lx = x + side * rimW * 0.5;
+        natWonderGfx.poly([lx, craterY + 2, lx + side * 2, y - 2, lx + side * 4, y, lx - side, craterY + 4])
+          .fill({ color: lerpColor(0xff5a18, 0x7a1c08, 0.3), alpha: 0.7 * erupt });
+        natWonderGlowGfx.poly([lx, craterY + 2, lx + side * 2, y - 2, lx + side * 4, y, lx - side, craterY + 4])
+          .fill({ color: 0xff8030, alpha: 0.4 * erupt });
+      }
+    }
+  }
+  // Front peaks: lower on screen (nearer the viewer), drawn last so they
+  // occlude the cone's base — the volcano nestles between foreground ridges.
+  nwPeak(natWonderGfx, x - baseW * 0.72, y + 5, H * (0.5 + 0.07 * Math.cos(ph * 1.3)), baseW * 0.6, 0x827a6c);
+  nwPeak(natWonderGfx, x + baseW * 0.82, y + 7, H * (0.56 + 0.07 * Math.sin(ph * 1.1)), baseW * 0.62, 0x8a8274);
+  void night;
+}
+// A round caldera lake: deep blue water on the ground, ringed by a pale rock rim
+// that stands a little above it.
+function drawCraterLake(x: number, y: number, w: NaturalWonder, nowSec: number, ng: number) {
+  // Rock rim: a ring of pale-stone tiles that frays into the surrounding ground
+  // (soft facet edge), giving the caldera an irregular outline.
+  nwFootprint(natWonderGroundGfx, w, 3.9, (dr, dc, dist) => {
+    if (dist < 2.3) return null; // hollow centre — the water fills it below
+    return lerpColor(0x9c9286, 0xbfb8ae, nwHash(w.row + dr, w.col + dc, 6));
+  }, 0.2, true, true);
+  // Water: flat (un-faceted) lake tiles on the sub-glitter layer, so the sun
+  // glitter band sweeps across it like the open sea. Deep centre → lighter rim,
+  // matching the ocean's shore-to-deep gradient but a touch darker.
+  nwFootprint(natWonderWaterGfx, w, 2.55, (_dr, _dc, dist) =>
+    lerpColor(0x4f93ad, 0x7fb2c8, Math.min(1, dist / 2.6)), 0, false, true);
+  void x; void y; void nowSec; void ng;
+}
+// A lone red sandstone monolith — a long, rounded block sitting on arid flats.
+function drawMonolith(x: number, y: number, w: NaturalWonder, ng: number) {
+  const S = 1.8;
+  const wdt = 9 * S, hgt = 6.5 * S;
+  // Tiled apron of rust-red dirt the rock rises from, so its colour belongs to
+  // the ground around it rather than appearing from nowhere.
+  nwFootprint(natWonderGroundGfx, w, 2.2, (dr, dc, dist) =>
+    lerpColor(0xc69a72, 0xb08258, dist / 2.4 + nwHash(w.row + dr, w.col + dc, 8) * 0.25), 0.16, true, true);
+  nwShadow(natWonderGfx, x, y, wdt);
+  // Muted terracotta mass (toward the sandy palette, not a fire-engine red).
+  const body = 0xab6a44, top = 0xc08a5e, dark = 0x83492c;
+  natWonderGfx.poly([
+    x - wdt, y, x - wdt, y - hgt * 0.5, x - wdt * 0.7, y - hgt,
+    x + wdt * 0.7, y - hgt, x + wdt, y - hgt * 0.5, x + wdt, y,
+  ]).fill({ color: body, alpha: 0.98 });
+  // Sunlit top facet and a shaded right face for volume.
+  natWonderGfx.poly([x - wdt * 0.7, y - hgt, x + wdt * 0.7, y - hgt, x + wdt, y - hgt * 0.5, x - wdt, y - hgt * 0.5])
+    .fill({ color: top, alpha: 0.6 });
+  natWonderGfx.poly([x + wdt * 0.7, y - hgt, x + wdt, y - hgt * 0.5, x + wdt, y, x + wdt * 0.6, y])
+    .fill({ color: dark, alpha: 0.55 });
+  // Vertical weathering grooves.
+  for (const gx of [-0.5, 0.1, 0.55]) {
+    natWonderGfx.rect(x + gx * wdt, y - hgt * 0.85, 0.6 * S, hgt * 0.8).fill({ color: dark, alpha: 0.32 });
+  }
+  void ng;
+}
+// Banded mineral hills: low rounded hills striped in dusty mineral colours,
+// raised off the ground so they read as relief, not a flat orange patch.
+const RH_BANDS = [0xb87a5a, 0xcf9468, 0xddb37e, 0xe6cf9e, 0xd8b488];
+function rhBand(dr: number, dc: number): number {
+  // Wide (~2-tile) diagonal bands instead of a 1-tile checker.
+  const i = ((Math.floor((dc - dr + 40) / 2)) % RH_BANDS.length + RH_BANDS.length) % RH_BANDS.length;
+  return RH_BANDS[i];
+}
+function drawRainbowHills(x: number, y: number, w: NaturalWonder, nowSec: number, ng: number) {
+  // Faceted, banded ground (higher relief so the stripes catch the light).
+  nwFootprint(natWonderGroundGfx, w, 3.9, (dr, dc) => {
+    const v = nwHash(w.row + dr, w.col + dc, 9) * 0.10 - 0.05;
+    return lerpColor(rhBand(dr, dc), 0xffffff, Math.max(0, v));
+  }, 0.16, true, true);
+  // A scatter of low rounded hills rising from the bands, each coloured by the
+  // band it sits on, shaded top-lit, sorted back-to-front so they overlap.
+  const mounds: Array<{ mx: number; my: number; r: number; h: number; col: number }> = [];
+  for (let dr = -2; dr <= 2; dr++) {
+    for (let dc = -2; dc <= 2; dc++) {
+      if (nwHash(w.row + dr * 3, w.col + dc * 3, 31) > 0.45) continue; // sparse
+      const s = gridToScreen(w.col + dc, w.row + dr);
+      const r = 6 + nwHash(w.row + dr, w.col + dc, 32) * 5;
+      const h = 4 + nwHash(w.row + dr, w.col + dc, 33) * 5;
+      mounds.push({ mx: s.x, my: s.y, r, h, col: rhBand(dr, dc) });
+    }
+  }
+  mounds.sort((a, b) => a.my - b.my);
+  for (const m of mounds) {
+    natWonderGfx.ellipse(m.mx + 1, m.my + 1, m.r, m.r * 0.4).fill({ color: 0x000000, alpha: 0.08 }); // contact
+    const N = 12, pts: number[] = [];
+    for (let i = 0; i <= N; i++) { const a = Math.PI * (i / N); pts.push(m.mx - Math.cos(a) * m.r, m.my - Math.sin(a) * m.h); }
+    pts.push(m.mx + m.r, m.my, m.mx - m.r, m.my);
+    natWonderGfx.poly(pts).fill({ color: lerpColor(m.col, 0x000000, 0.06), alpha: 0.97 }); // body
+    // Sunlit top-left cap.
+    natWonderGfx.ellipse(m.mx - m.r * 0.3, m.my - m.h * 0.62, m.r * 0.5, m.h * 0.45)
+      .fill({ color: lerpColor(m.col, 0xffffff, 0.22), alpha: 0.8 });
+  }
+  void nowSec; void x; void y; void ng;
+}
+// Vertical limestone towers rising from coastal water — a stone fleet.
+function drawKarstSpires(x: number, y: number, w: NaturalWonder, ng: number) {
+  const S = 2.0;
+  // A few towers of varying height and offset, deterministic from phase.
+  const spires = [
+    [-7, 0, 13], [-2, 2, 18], [3, -1, 15], [7, 1, 11], [0, 3, 9],
+  ];
+  for (let i = 0; i < spires.length; i++) {
+    const [dx, dy, h0] = spires[i];
+    const sx = x + dx * S, sy = y + dy * S * 0.5;
+    const h = h0 * S * (0.9 + 0.2 * Math.sin(w.phase + i));
+    const halfW = 2.0 * S;
+    // Tower: slightly bulging column, rounded top.
+    natWonderGfx.poly([sx - halfW, sy, sx + halfW, sy, sx + halfW * 0.7, sy - h * 0.8, sx - halfW * 0.7, sy - h * 0.8])
+      .fill({ color: 0x6f7a66, alpha: 0.95 });
+    natWonderGfx.ellipse(sx, sy - h * 0.8, halfW * 0.7, halfW * 0.5).fill({ color: 0x7d886f, alpha: 0.95 });
+    // Sunlit left edge + a darker waterline.
+    natWonderGfx.poly([sx - halfW, sy, sx - halfW * 0.7, sy - h * 0.8, sx - halfW * 0.3, sy - h * 0.8, sx - halfW * 0.5, sy])
+      .fill({ color: 0x90997f, alpha: 0.5 });
+    natWonderGfx.ellipse(sx, sy, halfW, halfW * 0.4).fill({ color: 0x33403a, alpha: 0.35 });
+  }
+  void ng;
+}
+// A flat mineral lake — pale rose crust with a faint shimmer.
+function drawSaltFlat(x: number, y: number, w: NaturalWonder, nowSec: number, ng: number) {
+  // A small, round, dusty mineral pan — a whisper of rose over cream, not hot
+  // pink, so it reads as a drying salt basin rather than a sticker.
+  nwFootprint(natWonderGroundGfx, w, 2.3, (dr, dc, dist) => {
+    const t = Math.min(1, dist / 2.3);
+    // Faint pink core fading to a salt-white crust at the rim.
+    const base = lerpColor(0xe7cdc9, 0xf2e6df, t);
+    const v = nwHash(w.row + dr, w.col + dc, 7) * 0.10 - 0.05;
+    return lerpColor(base, 0xffffff, Math.max(0, v));
+  }, 0.05, true, true);
+  void nowSec; void w; void x; void y; void ng;
 }
 
 // Rivers come alive: little barges drift downstream to the sea, and bridges
@@ -3175,25 +3559,60 @@ function drawOneMega(megaGfx: Graphics, x: number, y: number, kind: MegaKind, co
 type EnergyKind = 'solar' | 'wind';
 interface EnergyFarm { row: number; col: number; kind: EnergyKind; n: number }
 const energyFarms: EnergyFarm[] = [];
+// Live-watch handle: snapshot current farm tiles (to check they hold still).
+(window as any).__energy = () => energyFarms.map(f => `${f.row},${f.col},${f.kind}`);
+// Energy farms PERSIST across rebuilds — otherwise reselecting tiles every
+// founding pass made them flicker and jump around the map. Each farm stays put
+// while its tile is still open farmland owned by a developed civ; we only drop
+// the ones whose ground went bad and top each civ up to its quota on stable,
+// spread-out tiles.
+const ENERGY_QUOTA = 5, ENERGY_MIN_GAP = 4;
+function energyTileValid(row: number, col: number): boolean {
+  if (biomeMap[row][col] === 'water') return false;
+  const t = simWorld.tiles[row][col];
+  // Keep a farm while the land stays developed and owned by a modern civ —
+  // crucially INCLUDING 'built', since cleared tiles build up over time. Tying
+  // validity to 'cleared' only made farms chase the shrinking farmland and pop
+  // in and out. Only losing the tile (→ wild/ruin) or the civ removes it.
+  if (t.civId == null || (t.state !== 'cleared' && t.state !== 'built')) return false;
+  const civ = simWorld.civs.get(t.civId);
+  return !!civ && civ.phase !== 'dead' && ERA_RANK[civ.era] >= 4;
+}
 function rebuildEnergyFarms() {
-  energyFarms.length = 0;
+  // Keep valid farms exactly where they are.
+  for (let i = energyFarms.length - 1; i >= 0; i--) {
+    if (!energyTileValid(energyFarms[i].row, energyFarms[i].col)) energyFarms.splice(i, 1);
+  }
+  // Group surviving farms by their current owner so we know who still needs more.
+  const perCiv = new Map<number, Array<{ row: number; col: number }>>();
+  for (const f of energyFarms) {
+    const id = simWorld.tiles[f.row][f.col].civId!;
+    let arr = perCiv.get(id);
+    if (!arr) { arr = []; perCiv.set(id, arr); }
+    arr.push(f);
+  }
   for (const civ of simWorld.civs.values()) {
     if (civ.phase === 'dead' || ERA_RANK[civ.era] < 4) continue;
     const owned = civTiles.get(civ.id);
     if (!owned || owned.size === 0) continue;
-    // Solar arrays and wind farms sit on the civ's open farmland (its 'cleared'
-    // tiles) — abundant on any developed civ, unlike the vanishing wild frontier.
+    const mine = perCiv.get(civ.id) ?? [];
+    if (mine.length >= ENERGY_QUOTA) continue;
+    // Candidate cleared tiles, sorted by position so the choice is deterministic
+    // regardless of the owned-Set's iteration order.
     const cands: Array<{ r: number; c: number }> = [];
     for (const key of owned) {
       const r = (key / GRID_SIZE) | 0, c = key % GRID_SIZE;
       if (simWorld.tiles[r][c].state === 'cleared' && biomeMap[r][c] !== 'water') cands.push({ r, c });
     }
-    // Spread a handful evenly through the fields rather than clumping.
-    const take = Math.min(5, cands.length);
-    for (let i = 0; i < take; i++) {
-      const t = cands[Math.floor((i * cands.length) / take)];
+    cands.sort((a, b) => (a.r - b.r) || (a.c - b.c));
+    for (const t of cands) {
+      if (mine.length >= ENERGY_QUOTA) break;
+      // Spread them out and never double up on a tile.
+      if (mine.some(f => Math.abs(f.row - t.r) + Math.abs(f.col - t.c) < ENERGY_MIN_GAP)) continue;
       const kind: EnergyKind = (t.r + t.c) % 2 === 0 ? 'solar' : 'wind';
-      energyFarms.push({ row: t.r, col: t.c, kind, n: energyFarms.length });
+      const farm = { row: t.r, col: t.c, kind, n: energyFarms.length };
+      energyFarms.push(farm);
+      mine.push(farm);
     }
   }
 }
@@ -5163,8 +5582,10 @@ function resetWorld(newSeed: string) {
   currentSeed = newSeed;
   saveSeed(newSeed);
   ({ biomes: biomeMap, elevation: elevationMap } = generateBiomeMap(GRID_SIZE, GRID_SIZE, newSeed));
+  rebuildNaturalWonders();
   simWorld = createSimWorld(GRID_SIZE, GRID_SIZE);
   seedInitialCivs(simWorld, biomeMap, 1);
+  syncSimWonders();
   (window as any).__sim = simWorld;
   fadedDeadCivs.clear();
   civCurSatMult.clear();
@@ -5215,6 +5636,8 @@ function resetSimOnly() {
   rebuildCivIndex();
 }
 
+rebuildNaturalWonders(); // before drawBiomes so its water mask includes the crater lake
+syncSimWonders();
 drawBiomes();
 // Render the initial seeded civs
 for (let row = 0; row < GRID_SIZE; row++) {
@@ -5415,6 +5838,7 @@ app.ticker.add((ticker) => {
   updateRiverCraft(dtSec, n);
   drawEnergyFarms(nowSec, n);
   drawMegastructures(nowSec, n);
+  drawNaturalWonders(nowSec, n);
   drawWonders(nowSec, n);
   updateBirdFlocks(dtSec, nowSec, n);
   maybeGhost(dtSec, n);
