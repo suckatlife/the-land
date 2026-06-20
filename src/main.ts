@@ -4157,9 +4157,22 @@ function updateOrbitalRing(dt: number, nowSec: number, night: number) {
   ringBackGfx.clear();
   if (ringAlpha < 0.01) return;
   const W = window.innerWidth, H = window.innerHeight;
-  const cx = W / 2, cy = H * 0.5;
-  const rx = W * 0.46, ry = H * 0.34;        // a ring girdling the globe, seen at a tilt
-  const tilt = -0.05, ct = Math.cos(tilt), st = Math.sin(tilt);
+  // Anchor the ring to the actual planet silhouette so it reads as a hoop
+  // girdling the globe: a wide, gently-curved arc that peaks just above the
+  // horizon and meets the limb at the screen edges (where it dips behind the
+  // planet). Because we see only the globe's huge top cap, the ring is a large
+  // circle a fraction of the limb radius, centred well below the screen.
+  const limb = atmos.limbGeometry();
+  const R = limb ? limb.R : H * 1.9;
+  const apexY = limb ? limb.apexY : H * 0.22;
+  const cx = limb ? limb.cx : W / 2;
+  // Ring radius a touch under the limb's, so its arc rides just above the
+  // horizon across the whole width and only dips behind the planet beyond the
+  // screen edges — a broad, gentle hoop, not a tight disk on the surface.
+  const Rc = R * 0.9;
+  const cy = apexY + Rc - H * 0.07;                       // lift the arc clear of the horizon
+  const rx = Rc, ry = Rc;                                 // a true circle reads as the cleanest hoop
+  const tilt = -0.025, ct = Math.cos(tilt), st = Math.sin(tilt);
   const vis = Math.min(1, 0.2 + night * 1.1); // bright at night, ghostly by day
   // front = the near half, in front of the globe; back = the far half, which the
   // planet occludes (it draws on ringBackGfx, behind the world plane).
@@ -4174,7 +4187,7 @@ function updateOrbitalRing(dt: number, nowSec: number, night: number) {
     const p = onRing((i / N) * Math.PI * 2);
     const g = p.front ? ringGfx : ringBackGfx;
     g.moveTo(prev.x, prev.y).lineTo(p.x, p.y)
-      .stroke({ color: 0xdcefff, alpha: ringAlpha * vis * (p.front ? 0.42 : 0.5), width: p.front ? 1.8 : 1.5, cap: 'round' });
+      .stroke({ color: 0xe6f3ff, alpha: ringAlpha * vis * (p.front ? 0.5 : 0.72), width: p.front ? 1.8 : 2.0, cap: 'round' });
     prev = p;
   }
   // Space stations drift along the ring in formation, glinting as they pass —

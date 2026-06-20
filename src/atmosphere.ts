@@ -435,6 +435,9 @@ export interface Atmosphere {
   limbBand: Container;
   // Seat the limb (call on resize; scrubs re-use the last layout).
   layoutLimb(args: { width: number; height: number; apexX: number; apexY: number }): void;
+  // The screen-space horizon circle (planet silhouette): centre (cx, cy), radius
+  // R, and apexY (the topmost point). null when the world is flat (curvature 0).
+  limbGeometry(): { cx: number; cy: number; R: number; apexY: number } | null;
   // Celestial light surfaces. glitterLayer, landLightLayer, shimmerLayer and
   // birdLayer are world-space; starLayer, cometLayer and auroraLayer are
   // screen-space behind the world plane.
@@ -1465,6 +1468,15 @@ export function createAtmosphere(): Atmosphere {
     limbMask: limbMaskG,
     limbBand,
     layoutLimb,
+    limbGeometry: () => {
+      if (!limbLayout) return null;
+      const c = ATMOS.curve;
+      const sag = curCurvature * c.limbSagMax * (limbLayout.width / 2);
+      if (sag < 2) return null; // flat world, no horizon circle
+      const halfW = limbLayout.width / 2 + 80;
+      const R = (halfW * halfW + sag * sag) / (2 * sag);
+      return { cx: limbLayout.apexX, cy: limbLayout.apexY + R, R, apexY: limbLayout.apexY };
+    },
     glitterLayer,
     landLightLayer: landLightSprite,
     starLayer,
