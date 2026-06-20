@@ -5277,8 +5277,8 @@ const clockDate = document.getElementById('clock-date')!;
 const clockAge = document.getElementById('clock-age')!;
 let lastClockNight = -1; // drives the day/night recolour of the clock text
 const ERA_NAMES: Record<Era, string> = {
-  neolithic: 'Stone Age', classical: 'Classical Age', medieval: 'Medieval Age',
-  industrial: 'Industrial Age', modern: 'Modern Age', post: 'Age to Come',
+  neolithic: 'The Beginning', classical: 'The Ancient World', medieval: 'The Middle Ages',
+  industrial: 'The Age of Industry', modern: 'The Modern Age', post: 'The Future',
 };
 function updateClock() {
   const now = new Date();
