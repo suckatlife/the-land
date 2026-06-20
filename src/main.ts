@@ -2481,26 +2481,27 @@ function rebuildLighthouses() {
 function drawLighthouses(nowSec: number, night: number) {
   lighthouseGfx.clear();
   if (lighthouses.length === 0) return;
+  const S = 1.5; // unique landmark structures drawn 50% larger so they don't get lost
   for (const lh of lighthouses) {
     const { x, y } = gridToScreen(lh.col, lh.row);
     // A lamp beam sweeping the sea, at night — an iso-flattened cone.
     if (night > 0.08) {
       const ang = nowSec * 0.6 + lh.phase;
       const dx = Math.cos(ang), dy = Math.sin(ang) * 0.5;
-      const lx = x, ly = y - 7, bl = 46, hw = 6;
+      const lx = x, ly = y - 7 * S, bl = 52, hw = 6 * S;
       const ex = lx + dx * bl, ey = ly + dy * bl, px = -dy * hw, py = dx * hw;
       lighthouseGfx.poly([lx, ly, ex + px, ey + py, ex - px, ey - py]).fill({ color: 0xfff0c0, alpha: 0.13 * night });
     }
     // The tower: white with red bands and a dark lantern room.
-    lighthouseGfx.poly([x - 1.6, y, x + 1.6, y, x + 1.1, y - 7, x - 1.1, y - 7]).fill({ color: 0xeef0f2, alpha: 0.95 });
-    lighthouseGfx.rect(x - 1.4, y - 2.6, 2.8, 1.3).fill({ color: 0xc83828, alpha: 0.9 });
-    lighthouseGfx.rect(x - 1.2, y - 5.4, 2.4, 1.1).fill({ color: 0xc83828, alpha: 0.9 });
-    lighthouseGfx.rect(x - 1.1, y - 8.4, 2.2, 1.6).fill({ color: 0x3a3f48, alpha: 0.95 }); // lantern room
+    lighthouseGfx.poly([x - 1.6 * S, y, x + 1.6 * S, y, x + 1.1 * S, y - 7 * S, x - 1.1 * S, y - 7 * S]).fill({ color: 0xeef0f2, alpha: 0.95 });
+    lighthouseGfx.rect(x - 1.4 * S, y - 2.6 * S, 2.8 * S, 1.3 * S).fill({ color: 0xc83828, alpha: 0.9 });
+    lighthouseGfx.rect(x - 1.2 * S, y - 5.4 * S, 2.4 * S, 1.1 * S).fill({ color: 0xc83828, alpha: 0.9 });
+    lighthouseGfx.rect(x - 1.1 * S, y - 8.4 * S, 2.2 * S, 1.6 * S).fill({ color: 0x3a3f48, alpha: 0.95 }); // lantern room
     // The lamp, blinking and brighter after dark.
     const bl2 = 0.5 + 0.5 * Math.sin(nowSec * 2.5 + lh.phase);
     const ng = Math.max(0.2, night);
-    lighthouseGfx.circle(x, y - 7.6, 2.4).fill({ color: 0xfff4c8, alpha: 0.14 * ng * bl2 });
-    lighthouseGfx.circle(x, y - 7.6, 1.0).fill({ color: 0xfffae0, alpha: (0.5 + 0.4 * ng) * bl2 });
+    lighthouseGfx.circle(x, y - 7.6 * S, 2.4 * S).fill({ color: 0xfff4c8, alpha: 0.14 * ng * bl2 });
+    lighthouseGfx.circle(x, y - 7.6 * S, 1.0 * S).fill({ color: 0xfffae0, alpha: (0.5 + 0.4 * ng) * bl2 });
   }
 }
 
@@ -3205,32 +3206,35 @@ function drawEnergyFarms(nowSec: number, night: number) {
     else drawWindFarm(energyGfx, x, y, nowSec, f.n, night);
   }
 }
+const ENERGY_S = 1.5; // match the lighthouse: 50% larger so the farms read clearly
 function drawSolarFarm(g: Graphics, x: number, y: number, night: number) {
+  const S = ENERGY_S;
   const glint = Math.max(0, 1 - night * 1.4); // panels catch the sun by day
   for (let row = 0; row < 2; row++) for (let col = 0; col < 3; col++) {
-    const px = x + (col - 1) * 7 - row * 3.5, py = y + row * 4 - 1;
-    const panel = [px - 4, py, px + 2, py - 2.4, px + 5, py + 0.5, px - 1, py + 2.9];
+    const px = x + ((col - 1) * 7 - row * 3.5) * S, py = y + (row * 4 - 1) * S;
+    const panel = [px - 4 * S, py, px + 2 * S, py - 2.4 * S, px + 5 * S, py + 0.5 * S, px - 1 * S, py + 2.9 * S];
     g.poly(panel).fill({ color: 0x223a66, alpha: 0.92 });
     g.poly(panel).stroke({ color: 0x4a6aa0, alpha: 0.5, width: 0.4 });
-    g.poly([px - 1, py + 0.3, px + 2, py - 1, px + 2.6, py - 0.4, px - 0.4, py + 0.9])
+    g.poly([px - 1 * S, py + 0.3 * S, px + 2 * S, py - 1 * S, px + 2.6 * S, py - 0.4 * S, px - 0.4 * S, py + 0.9 * S])
       .fill({ color: 0xbfe0ff, alpha: 0.4 * glint });
   }
 }
 function drawWindFarm(g: Graphics, x: number, y: number, nowSec: number, n: number, night: number) {
+  const S = ENERGY_S;
   const blade = night > 0.4 ? 0xd6dac8 : 0xf4f6f0;
   const positions = [[-7, 1], [4, -2], [-1, 4]];
   for (let i = 0; i < positions.length; i++) {
-    const bx = x + positions[i][0], by = y + positions[i][1];
-    const H = 13 + (i % 2) * 3, hx = bx, hy = by - H;
-    g.poly([bx - 0.7, by, bx + 0.7, by, hx + 0.5, hy, hx - 0.5, hy]).fill({ color: 0xe6ead0, alpha: 0.9 });
-    const spin = nowSec * 1.6 + n * 1.3 + i;
+    const bx = x + positions[i][0] * S, by = y + positions[i][1] * S;
+    const H = (13 + (i % 2) * 3) * S, hx = bx, hy = by - H;
+    g.poly([bx - 0.7 * S, by, bx + 0.7 * S, by, hx + 0.5 * S, hy, hx - 0.5 * S, hy]).fill({ color: 0xe6ead0, alpha: 0.9 });
+    const spin = nowSec * 1.6 + n * 1.3 + i, R = 6.5 * S;
     for (let b = 0; b < 3; b++) {
       const a = spin + b * (Math.PI * 2 / 3);
-      const tx = hx + Math.cos(a) * 6.5, ty = hy + Math.sin(a) * 6.5 * 0.7;
-      g.poly([hx, hy, tx, ty, hx + Math.cos(a + 0.3) * 2, hy + Math.sin(a + 0.3) * 2 * 0.7])
+      const tx = hx + Math.cos(a) * R, ty = hy + Math.sin(a) * R * 0.7;
+      g.poly([hx, hy, tx, ty, hx + Math.cos(a + 0.3) * 2 * S, hy + Math.sin(a + 0.3) * 2 * S * 0.7])
         .fill({ color: blade, alpha: 0.9 });
     }
-    g.circle(hx, hy, 0.9).fill({ color: 0xcfd4c0, alpha: 0.95 });
+    g.circle(hx, hy, 0.9 * S).fill({ color: 0xcfd4c0, alpha: 0.95 });
   }
 }
 
