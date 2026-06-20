@@ -697,6 +697,7 @@ const lavaGfx = new Graphics();      // molten lava bodies + ash plume (normal b
 const lavaGlowGfx = new Graphics();  // lava heat-glow + vent fountain (additive)
 lavaGlowGfx.blendMode = 'add';
 const plagueGfx = new Graphics();    // a sickly miasma dimming afflicted districts
+const floodGfx = new Graphics();     // river floods sheeting over the lowlands
 const energyGfx = new Graphics();    // renewable energy farms (solar arrays, wind turbines)
 const megaGfx = new Graphics();      // post-era megastructures (arcologies, space elevators)
 const satelliteGfx = new Graphics(); // satellites crossing the sky (screen-space)
@@ -766,6 +767,8 @@ world.addChild(lavaGfx);
 world.addChild(lavaGlowGfx);
 // A plague's miasma dims the districts it touches (above the buildings).
 world.addChild(plagueGfx);
+// River floods sheet a film of water over the drowned lowlands.
+world.addChild(floodGfx);
 // Renewable farms sit on open land near cities, beneath the megastructures.
 world.addChild(energyGfx);
 // Megastructures tower over their cities.
@@ -2804,6 +2807,93 @@ function updatePlagues(nowSec: number) {
   }
 }
 
+// Floods & deltas: rivers swell over their banks now and then, drowning the
+// lowlands in a sheet of water that soon recedes; and where a river meets the
+// sea, silt slowly builds new delta land — coastlines that grow, not breathe.
+interface FloodTile { row: number; col: number; rise: number } // rise: fraction of the crest this tile reaches
+interface Flood { tiles: FloodTile[]; t: number }
+const floods: Flood[] = [];
+const FLOOD_MEAN = 64;   // avg seconds between floods (modulated by season)
+const FLOOD_DUR = 15;    // seconds: rise, crest, recede
+const DELTA_MEAN = 20;   // avg seconds between silt deposits — slow seaward growth
+function floodable(r: number, c: number): boolean {
+  if (r < 0 || r >= GRID_SIZE || c < 0 || c >= GRID_SIZE) return false;
+  if (biomeMap[r][c] === 'water' || biomeMap[r][c] === 'rock') return false;
+  return simWorld.tiles[r][c].state !== 'built'; // water pools in fields and wilds, not through a city's streets
+}
+function maybeFlood(dt: number) {
+  if (floods.length > 0 || riverPaths.length === 0) return;
+  // Snowmelt swells the rivers in spring — floods come more often then.
+  const spring = atmos.seasonOfYear() < 0.3 ? 1.7 : 1;
+  if (Math.random() >= (dt / FLOOD_MEAN) * spring) return;
+  const rp = riverPaths[(Math.random() * riverPaths.length) | 0];
+  const tiles: FloodTile[] = [];
+  const seen = new Set<number>();
+  // The lower reaches overflow: river-bank tiles and the low ground beside them.
+  for (let i = (rp.tiles.length * 0.35) | 0; i < rp.tiles.length; i++) {
+    const { row, col } = rp.tiles[i];
+    if (biomeMap[row]?.[col] === 'water') continue; // the sea mouth itself
+    const downstream = i / rp.tiles.length;
+    for (const [dr, dc] of [[0, 0], [-1, 0], [1, 0], [0, -1], [0, 1]]) {
+      const nr = row + dr, nc = col + dc, nk = nr * GRID_SIZE + nc;
+      if (seen.has(nk) || !floodable(nr, nc)) continue;
+      // Only the low ground drowns; the channel itself goes deepest.
+      if (dr === 0 && dc === 0) { seen.add(nk); tiles.push({ row: nr, col: nc, rise: 0.6 + 0.4 * downstream }); }
+      else if (elevationMap[nr][nc] < elevationMap[row][col] + 0.04) { seen.add(nk); tiles.push({ row: nr, col: nc, rise: (0.35 + 0.35 * downstream) }); }
+    }
+  }
+  if (tiles.length >= 6) floods.push({ tiles, t: 0 });
+}
+function updateFloods(dt: number, nowSec: number, night: number) {
+  floodGfx.clear();
+  for (let i = floods.length - 1; i >= 0; i--) {
+    const fl = floods[i];
+    fl.t += dt;
+    if (fl.t > FLOOD_DUR) { floods.splice(i, 1); continue; }
+    // Envelope: waters rise over 4s, crest, then recede over the last 6s.
+    const env = fl.t < 4 ? fl.t / 4 : fl.t > FLOOD_DUR - 6 ? Math.max(0, (FLOOD_DUR - fl.t) / 6) : 1;
+    for (const t of fl.tiles) {
+      const a = env * t.rise;
+      if (a < 0.03) continue;
+      const { x, y } = gridToScreen(t.col, t.row);
+      const ripple = 0.85 + 0.15 * Math.sin(nowSec * 2 + t.row * 0.6 + t.col * 0.4);
+      floodGfx.poly([x, y - 8, x + 16, y, x, y + 8, x - 16, y])
+        .fill({ color: lerpColor(0x5f93b8, 0x335a7a, night), alpha: 0.5 * a * ripple });
+      // A glint of sky on the floodwater.
+      floodGfx.poly([x, y - 4, x + 7, y, x, y + 1, x - 7, y]).fill({ color: 0xbcd8ea, alpha: 0.12 * a });
+    }
+  }
+}
+function depositSilt(rp: { tiles: Array<{ row: number; col: number }> }): boolean {
+  // Lay one grain of delta: the shallow sea tile nearest the river mouth that
+  // still hugs the shore. As silt builds, the shoreline frontier marches out,
+  // so the delta keeps fanning seaward over deep time (bounded by the radius).
+  const mouth = rp.tiles[rp.tiles.length - 1];
+  let bestR = -1, bestC = -1, bestD = 1e9;
+  for (let dr = -4; dr <= 4; dr++) for (let dc = -4; dc <= 4; dc++) {
+    const nr = mouth.row + dr, nc = mouth.col + dc;
+    if (nr < 0 || nr >= GRID_SIZE || nc < 0 || nc >= GRID_SIZE) continue;
+    if (biomeMap[nr][nc] !== 'water' || elevationMap[nr][nc] < SEA_LEVEL - 0.12) continue; // shallows only
+    let land = false;
+    for (const [er, ec] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
+      const ar = nr + er, ac = nc + ec;
+      if (ar >= 0 && ar < GRID_SIZE && ac >= 0 && ac < GRID_SIZE && biomeMap[ar][ac] !== 'water') { land = true; break; }
+    }
+    if (!land) continue;
+    const d = dr * dr + dc * dc;
+    if (d < bestD) { bestD = d; bestR = nr; bestC = nc; }
+  }
+  if (bestR < 0) return false;
+  biomeMap[bestR][bestC] = 'sand';
+  elevationMap[bestR][bestC] = SEA_LEVEL + 0.06;
+  enrollBiomeTrans(bestR, bestC);
+  return true;
+}
+function maybeGrowDelta(dt: number) {
+  if (riverPaths.length === 0 || Math.random() >= dt / DELTA_MEAN) return;
+  depositSilt(riverPaths[(Math.random() * riverPaths.length) | 0]);
+}
+
 // Megastructures: the most advanced civs raise a landmark over their greatest
 // city — an arcology dome or a space elevator threading toward orbit.
 type MegaKind = 'dome' | 'elevator' | 'megatower' | 'reactor';
@@ -4180,6 +4270,7 @@ function resetStorySurfaces() {
   fires.length = 0; fireGfx.clear();
   volcanoes.length = 0; lavaGfx.clear(); lavaGlowGfx.clear();
   plagues.length = 0; plagueGfx.clear();
+  floods.length = 0; floodGfx.clear();
   energyFarms.length = 0; energyGfx.clear();
   megastructures.length = 0; megaGfx.clear();
   riverBoats.length = 0; riverBridges.length = 0; riverCraftGfx.clear();
@@ -4774,6 +4865,9 @@ app.ticker.add((ticker) => {
   updateVolcanoes(dtSec, nowSec, n);
   maybeOutbreak(dtSec, nowSec);
   updatePlagues(nowSec);
+  maybeFlood(dtSec);
+  updateFloods(dtSec, nowSec, n);
+  maybeGrowDelta(dtSec);
   updateRiverCraft(dtSec, n);
   drawEnergyFarms(nowSec, n);
   drawMegastructures(nowSec, n);
