@@ -3339,7 +3339,9 @@ function noteBattle(ev: { row: number; col: number; attackerId: number; defender
   for (const b of battles) {
     if (Math.abs(b.row - ev.row) <= 3 && Math.abs(b.col - ev.col) <= 3) { b.lastHit = performance.now() / 1000; return; }
   }
-  if (battles.length >= 10) return;
+  // Only some fronts flare into a visible battle, so wars read as an occasional
+  // beat rather than a constant churn. (Existing battles still sustain above.)
+  if (battles.length >= 6 || Math.random() < 0.5) return;
   const atk = simWorld.civs.get(ev.attackerId), def = simWorld.civs.get(ev.defenderId);
   const { x: cx, y: cy } = gridToScreen(ev.col, ev.row);
   // Attacker advances from its nearest city; the clusters face off across the tile.
