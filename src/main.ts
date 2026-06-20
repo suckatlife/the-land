@@ -3195,18 +3195,112 @@ function updateConflictFlashes(dt: number) {
   }
 }
 
-// Wonders: drawn as small spires; dead civs' wonders dim to ruin tone.
-function rebuildWonders() {
+// Wonders: each great civ raises a monument in the age it flourished — a stone
+// circle, a pyramid, a cathedral, an iron tower — that rises stone by stone
+// over time, spans several tiles, and weathers into an evocative ruin when its
+// builders are gone. The land remembers them long after the civ is weather.
+const WONDER_BUILD = 15; // seconds to raise a wonder, course by course
+interface WonderState { era: Era; born: number }
+const wonderState = new Map<number, WonderState>();
+function drawWonders(nowSec: number, night: number) {
   wonderGfx.clear();
+  const live = new Set<number>();
   for (const civ of simWorld.civs.values()) {
     if (!civ.wonder) continue;
+    live.add(civ.id);
+    let st = wonderState.get(civ.id);
+    if (!st) { st = { era: civ.era, born: nowSec }; wonderState.set(civ.id, st); } // monument keeps the age it was raised in
+    const prog = Math.min(1, (nowSec - st.born) / WONDER_BUILD);
     const { x, y } = gridToScreen(civ.wonder.col, civ.wonder.row);
-    const alive = civ.phase !== 'dead';
-    const body = alive ? 0xe9e2d2 : 0x6f695f;
-    const edge = alive ? 0x9a9282 : 0x55504a;
-    wonderGfx.poly([x - 3, y, x + 3, y, x + 1, y - 24, x - 1, y - 24]).fill({ color: body, alpha: 0.95 });
-    wonderGfx.poly([x - 1, y - 24, x + 1, y - 24, x, y - 30]).fill({ color: edge, alpha: 0.95 });
-    wonderGfx.ellipse(x, y + 1, 5, 2.2).fill({ color: edge, alpha: 0.5 });
+    drawOneWonder(wonderGfx, x, y, st.era, prog, civ.phase === 'dead', nowSec, night);
+  }
+  for (const id of wonderState.keys()) if (!live.has(id)) wonderState.delete(id);
+}
+function drawOneWonder(g: Graphics, x: number, y: number, era: Era, prog: number, dead: boolean, nowSec: number, night: number) {
+  const body = dead ? 0x8b8479 : 0xe9e2d2;
+  const edge = dead ? 0x5f594f : 0x9a9282;
+  const dark = dead ? 0x49453d : 0x756e5e;
+  // A broad ground platform — every wonder spans several tiles, not one.
+  g.ellipse(x, y + 2, 30, 13).fill({ color: edge, alpha: 0.26 });
+  if (era === 'neolithic') {
+    // Stone circle: a ring of megaliths raised one at a time, lintels last.
+    const N = 9, rx = 26, ry = 11;
+    for (let i = 0; i < N; i++) {
+      if (i / N > prog) continue;
+      const a = (i / N) * Math.PI * 2 - Math.PI / 2;
+      const sx = x + Math.cos(a) * rx, sy = y + Math.sin(a) * ry;
+      const back = sy < y;
+      if (dead && i % 3 === 0) { g.poly([sx - 2, sy, sx + 6, sy - 2, sx + 7, sy + 1, sx - 1, sy + 2]).fill({ color: edge, alpha: 0.9 }); continue; } // toppled
+      const h = 9 + (i % 2) * 3;
+      g.rect(sx - 2.2, sy - h, 4.4, h).fill({ color: back ? dark : body, alpha: 0.96 });
+      g.rect(sx - 2.2, sy - h, 4.4, 1.6).fill({ color: edge, alpha: 0.9 });
+    }
+    if (prog > 0.9 && !dead) for (const a of [0.5, 1.5]) { // a couple of capstone lintels
+      const sx = x + Math.cos(a) * rx, sy = y + Math.sin(a) * ry;
+      g.rect(sx - 5, sy - 13, 10, 2.4).fill({ color: body, alpha: 0.95 });
+    }
+  } else if (era === 'classical') {
+    // Stepped pyramid, raised course by course from a wide base.
+    const courses = 7, baseW = 27, H = 27, ch = H / courses;
+    for (let c = 0; c < courses; c++) {
+      if (c / courses > prog + 0.001) break;
+      const w0 = baseW * (1 - c / courses), w1 = baseW * (1 - (c + 1) / courses);
+      const yy = y - c * ch;
+      g.poly([x - w0, yy, x + w0, yy, x + w1, yy - ch, x - w1, yy - ch])
+        .fill({ color: c % 2 ? body : lerpColor(body, edge, 0.22), alpha: 0.97 });
+      g.poly([x + w0, yy, x + w1, yy - ch, x + w1 + 4, yy - ch + 1, x + w0 + 4, yy + 1]).fill({ color: dark, alpha: 0.5 }); // shaded east face
+    }
+    if (dead) g.ellipse(x - 12, y, 7, 3).fill({ color: edge, alpha: 0.6 }); // fallen rubble
+  } else if (era === 'medieval') {
+    // A great cathedral: nave, twin west towers, and a central spire.
+    const w = 13, naveH = 13;
+    if (prog > 0.05) { // nave body
+      const nh = naveH * Math.min(1, prog / 0.6);
+      g.poly([x - w, y, x + w, y, x + w, y - nh, x - w, y - nh]).fill({ color: body, alpha: 0.96 });
+      g.poly([x + w, y, x + w, y - nh, x + w + 5, y - nh - 2, x + w + 5, y - 2]).fill({ color: dark, alpha: 0.55 }); // roof slope
+    }
+    if (prog > 0.55 && !dead) for (const tx of [-w + 3, w - 3]) { // twin towers
+      const th = 22 * Math.min(1, (prog - 0.55) / 0.3);
+      g.rect(x + tx - 2.5, y - th, 5, th).fill({ color: body, alpha: 0.96 });
+      if (th > 18) g.poly([x + tx - 2.5, y - th, x + tx + 2.5, y - th, x + tx, y - th - 4]).fill({ color: edge, alpha: 0.95 });
+    }
+    if (prog > 0.8) { // central spire
+      const sh = 30 * Math.min(1, (prog - 0.8) / 0.2);
+      g.poly([x - 2, y - naveH, x + 2, y - naveH, x, y - naveH - sh]).fill({ color: dead ? edge : body, alpha: 0.95 });
+    }
+    if (dead) g.rect(x - w, y - 4, w * 2, 4).fill({ color: dark, alpha: 0.4 }); // roofless gloom
+  } else if (era === 'industrial') {
+    // An iron lattice tower flaring to four legs, a beacon at its peak.
+    const H = 40 * (dead ? 0.7 : 1), legW = 16;
+    const ironC = dead ? 0x4a4742 : 0x6a5a4a;
+    const top = y - H * Math.min(1, prog / 0.92);
+    // outline legs
+    g.poly([x - legW, y, x - 1.5, top, x + 1.5, top, x + legW, y, x + legW - 3, y, x + 1, top + 2, x - 1, top + 2, x - legW + 3, y]).fill({ color: ironC, alpha: 0.95 });
+    // cross-bracing
+    for (let k = 1; k <= 4; k++) {
+      const f = k / 5; const yy = y - (y - top) * f;
+      const lw = legW * (1 - f * 0.85);
+      g.moveTo(x - lw, yy).lineTo(x + lw, yy).stroke({ color: ironC, alpha: 0.7, width: 0.8 });
+      if (yy < y - 4) { g.moveTo(x - lw, yy).lineTo(x + lw * 0.4, yy + (y - top) * 0.18).stroke({ color: ironC, alpha: 0.45, width: 0.5 }); }
+    }
+    if (prog > 0.92 && !dead) g.circle(x, top - 1, 1.4).fill({ color: 0xff7a4a, alpha: 0.5 + 0.4 * Math.sin(nowSec * 3) }); // beacon
+  } else if (era === 'modern') {
+    // A soaring monument obelisk on a plaza, lit at its crown.
+    const H = 36 * (dead ? 0.75 : 1) * Math.min(1, prog / 0.9);
+    g.rect(x - 9, y - 3, 18, 3).fill({ color: edge, alpha: 0.8 }); // plaza
+    g.poly([x - 3.2, y - 2, x + 3.2, y - 2, x + 1.6, y - H, x - 1.6, y - H]).fill({ color: dead ? edge : 0xeef1f6, alpha: 0.97 });
+    g.poly([x + 0.4, y - 2, x + 3.2, y - 2, x + 1.6, y - H, x + 0.4, y - H]).fill({ color: dark, alpha: 0.4 }); // shaded side
+    if (prog > 0.9 && !dead) g.circle(x, y - H, 1.6).fill({ color: 0xfff0b0, alpha: 0.5 + 0.4 * night });
+  } else { // post
+    // A monolith of dark glass haloed in light — the last age's wonder.
+    const H = 30 * Math.min(1, prog / 0.9);
+    g.rect(x - 5, y - H, 10, H).fill({ color: dead ? 0x3a3a42 : 0x1f2330, alpha: 0.9 });
+    g.rect(x - 5, y - H, 3, H).fill({ color: dead ? 0x4a4a52 : 0x3a4458, alpha: 0.8 });
+    if (!dead) {
+      const pulse = 0.5 + 0.5 * Math.sin(nowSec * 1.5);
+      g.rect(x - 5, y - H, 10, H).stroke({ color: 0x8fd8ff, alpha: 0.3 + 0.3 * pulse, width: 1 });
+      g.circle(x, y - H * 0.5, 7).fill({ color: 0x7fc8ff, alpha: 0.06 + 0.06 * pulse });
+    }
   }
 }
 
@@ -4360,7 +4454,7 @@ function resetStorySurfaces() {
   constellationEraDone.clear();
   atmos.clearConstellations();
   rebuildRoads();
-  rebuildWonders();
+  wonderState.clear();
   rebuildFishSpots();
 }
 
@@ -4857,7 +4951,6 @@ app.ticker.add((ticker) => {
     } else if (ev.kind === 'conquest') {
       noteConquest(ev);
     } else if (ev.kind === 'wonder_built') {
-      rebuildWonders();
       triggerPing(ev.row, ev.col, 0xfff0d0);
     } else if (ev.kind === 'island_rising' || ev.kind === 'island_born'
         || ev.kind === 'land_bridge' || ev.kind === 'rift_opened') {
@@ -4940,6 +5033,7 @@ app.ticker.add((ticker) => {
   updateRiverCraft(dtSec, n);
   drawEnergyFarms(nowSec, n);
   drawMegastructures(nowSec, n);
+  drawWonders(nowSec, n);
   updateBirdFlocks(dtSec, nowSec, n);
   maybeGhost(dtSec, n);
   updateFestival(n);
@@ -4981,7 +5075,6 @@ app.ticker.add((ticker) => {
     rebuildBridges();
     maybeSpawnRiverBoats();
     if (simWorld.tick - lastFarmReconcile >= 45) { lastFarmReconcile = simWorld.tick; reconcileFarmland(); }
-    rebuildWonders();
     rebuildFishSpots();
     maybeSpawnBoats();
     maybeSpawnCaravans();
