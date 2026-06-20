@@ -2530,7 +2530,7 @@ function maybeSpawnRiverBoats() {
   if (riverPaths.length === 0 || riverBoats.length >= 8 || Math.random() > 0.35) return;
   const rp = riverPaths[Math.floor(Math.random() * riverPaths.length)];
   if (rp.screen.length < 8 || !riverNearBuilding(rp)) return; // no barges on uninhabited rivers
-  riverBoats.push({ pts: rp.screen, idx: 1 + Math.random() * 2, speed: 5 + Math.random() * 3, fade: 1 });
+  riverBoats.push({ pts: rp.screen, idx: 1 + Math.random() * 2, speed: 2.5 + Math.random() * 1.5, fade: 1 });
 }
 function updateRiverCraft(dt: number, night: number) {
   riverCraftGfx.clear();
