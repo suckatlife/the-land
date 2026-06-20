@@ -466,6 +466,10 @@ export interface Atmosphere {
   setPerspective(v: number): void; // 0..1, live scrub
   curvature(): number;
   perspective(): number;
+  // Map a plane-texture point (world coords already scaled into the capture
+  // texture) to its screen position on the curved globe — for screen-space
+  // overlays (rockets, space elevators) that must reach past the horizon.
+  project(texX: number, texY: number): { x: number; y: number };
   update(deltaMS: number, dread: number, dreadSkyColor: number | null, dominantEra: Era): void;
   addScar(type: CatastropheType, row: number, col: number, radiusTiles: number, severity: number): void;
   clearScars(): void;
@@ -1008,12 +1012,11 @@ export function createAtmosphere(): Atmosphere {
   //    highest point is the apex).
   // 2. Rows bow parallel to the limb circle as they approach it.
   // 3. A horizontal pinch of the far field.
-  function applyCurve() {
-    if (!attachedPlane || !planeBasePositions || !planeGeom) return;
-    const geo = attachedPlane.geometry;
-    const texH = (geo as any).height as number;
-    const base = planeBasePositions;
-    const out = new Float32Array(base.length);
+  // Bend a single plane-texture point (x, y) the same way applyCurve bends the
+  // mesh vertices. Shared by the mesh remap and the public project() helper, so
+  // screen-space overlays can sit exactly where a world tile lands on the globe.
+  function curvePoint(x: number, y: number, texH: number): [number, number] {
+    if (!planeGeom) return [x, y];
     const { apex, front } = planeGeom;
     const c = ATMOS.curve;
     const span = front.y - apex.y;
@@ -1026,28 +1029,36 @@ export function createAtmosphere(): Atmosphere {
         limbR = (halfW * halfW + sag * sag) / (2 * sag);
       }
     }
+    let ny: number;
+    let tRaw: number; // 0 at the apex row (infinite distance), 1 at the front
+    if (y <= apex.y) {
+      ny = y;
+      tRaw = 0;
+    } else if (y < front.y) {
+      tRaw = (y - apex.y) / span;
+      ny = apex.y + Math.pow(tRaw, e) * span;
+    } else {
+      ny = y;
+      tRaw = 1;
+    }
+    // Bow rows parallel to the limb circle as they near the horizon.
+    if (limbR > 0 && tRaw < 1) {
+      const dxp = Math.min(limbR, Math.abs(x - apex.x));
+      const drop = limbR - Math.sqrt(limbR * limbR - dxp * dxp);
+      ny += drop * c.limbBowMix * curCurvature * Math.pow(1 - tRaw, c.limbBowPower);
+    }
+    // Perspective also pinches the far field narrower.
+    const nx = apex.x + (x - apex.x) * (1 - curPerspective * c.pinchMaxFrac * Math.max(0, 1 - y / texH));
+    return [nx, ny];
+  }
+  function applyCurve() {
+    if (!attachedPlane || !planeBasePositions || !planeGeom) return;
+    const geo = attachedPlane.geometry;
+    const texH = (geo as any).height as number;
+    const base = planeBasePositions;
+    const out = new Float32Array(base.length);
     for (let i = 0; i < base.length; i += 2) {
-      const x = base[i], y = base[i + 1];
-      let ny: number;
-      let tRaw: number; // 0 at the apex row (infinite distance), 1 at the front
-      if (y <= apex.y) {
-        ny = y;
-        tRaw = 0;
-      } else if (y < front.y) {
-        tRaw = (y - apex.y) / span;
-        ny = apex.y + Math.pow(tRaw, e) * span;
-      } else {
-        ny = y;
-        tRaw = 1;
-      }
-      // Bow rows parallel to the limb circle as they near the horizon.
-      if (limbR > 0 && tRaw < 1) {
-        const dxp = Math.min(limbR, Math.abs(x - apex.x));
-        const drop = limbR - Math.sqrt(limbR * limbR - dxp * dxp);
-        ny += drop * c.limbBowMix * curCurvature * Math.pow(1 - tRaw, c.limbBowPower);
-      }
-      // Perspective also pinches the far field narrower.
-      const nx = apex.x + (x - apex.x) * (1 - curPerspective * c.pinchMaxFrac * Math.max(0, 1 - y / texH));
+      const [nx, ny] = curvePoint(base[i], base[i + 1], texH);
       out[i] = nx;
       out[i + 1] = ny;
     }
@@ -1482,6 +1493,12 @@ export function createAtmosphere(): Atmosphere {
     setPerspective: (v: number) => { curPerspective = Math.max(0, Math.min(1, v)); applyCurve(); },
     curvature: () => curCurvature,
     perspective: () => curPerspective,
+    project: (texX: number, texY: number) => {
+      if (!attachedPlane) return { x: texX, y: texY };
+      const texH = (attachedPlane.geometry as any).height as number;
+      const [nx, ny] = curvePoint(texX, texY, texH);
+      return { x: attachedPlane.x + nx, y: attachedPlane.y + ny };
+    },
     update, addScar, clearScars, layout,
     timeOfDay: () => dayT,
     setTimeOfDay: (t: number) => { dayT = ((t % 1) + 1) % 1; },

@@ -697,6 +697,11 @@ const energyGfx = new Graphics();    // renewable energy farms (solar arrays, wi
 const megaGfx = new Graphics();      // post-era megastructures (arcologies, space elevators)
 const satelliteGfx = new Graphics(); // satellites crossing the sky (screen-space)
 satelliteGfx.eventMode = 'none';
+// Sky structures — rockets and space elevators — draw in SCREEN space, above
+// the limb mask, so they thread past the horizon to the top of the frame
+// instead of being clipped at the planet's edge like everything in `world`.
+const skyStructGfx = new Graphics();
+skyStructGfx.eventMode = 'none';
 const buildingLayer = new Container();
 const scaffoldGfx = new Graphics();   // construction frames over buildings going up
 buildingLayer.sortableChildren = true;
@@ -833,6 +838,8 @@ app.stage.addChild(atmos.glazeLayer);
 app.stage.addChild(atmos.rainbowLayer);
 // Satellites cross the sky over the planet (screen-space, in front of the limb).
 app.stage.addChild(satelliteGfx);
+// Rockets & space elevators rise past the horizon (screen-space, unclipped).
+app.stage.addChild(skyStructGfx);
 // The silhouette remap needs the diamond's corners in texture pixels.
 const toTex = (wx: number, wy: number) => ({
   x: (wx - WORLD_CAPTURE.x0) * captureScale,
@@ -845,6 +852,14 @@ atmos.attachPlane(worldPlane, {
   front: toTex(0, 1536),
 });
 atmos.layout(window.innerWidth, window.innerHeight);
+// Where a world tile's base lands on screen over the curved globe — for sky
+// structures (rockets, space elevators) drawn in screen space, unclipped by
+// the limb. Shares the exact mesh-bend math via atmos.project.
+function tileToSky(row: number, col: number): { x: number; y: number } {
+  const { x, y } = gridToScreen(col, row);
+  const t = toTex(x, y);
+  return atmos.project(t.x, t.y);
+}
 (window as any).__layers = { world, cityMarkersContainer, labelLayer, biomeLayer, buildingLayer, simLayer };
 (window as any).__anim = () => ({ tiles: animatingTiles.size, buildings: animatingBuildingTiles.size, biome: animatingBiomeTiles.size });
 (window as any).__rt = () => ({ res: worldRT.source.resolution, w: worldRT.source.pixelWidth, h: worldRT.source.pixelHeight, bound: worldPlane.texture === worldRT, tickerFPS: Math.round(app.ticker.FPS) });
@@ -2589,26 +2604,46 @@ function drawMegastructures(nowSec: number, night: number) {
   if (megastructures.length === 0) return;
   const ng = Math.max(0.25, night);
   for (const m of megastructures) {
-    const { x, y } = gridToScreen(m.col, m.row);
-    drawOneMega(megaGfx, x, y, m.kind, m.color, nowSec, ng, night);
+    if (m.kind === 'elevator') {
+      // Space elevators draw in screen space so the tether threads all the way
+      // up past the horizon, instead of being clipped at the planet's limb.
+      const s = tileToSky(m.row, m.col);
+      drawSkyElevator(skyStructGfx, s.x, s.y, m.color, nowSec, ng);
+    } else {
+      const { x, y } = gridToScreen(m.col, m.row);
+      drawOneMega(megaGfx, x, y, m.kind, m.color, nowSec, ng, night);
+    }
   }
 }
+// A space elevator climbing from its city base all the way to the top of the
+// screen, the tether thinning and dissolving into the sky, with way-stations,
+// a climber sliding up, and a high beacon.
+function drawSkyElevator(g: Graphics, x: number, baseY: number, color: number, nowSec: number, ng: number) {
+  const topY = 6;
+  const H = Math.max(120, baseY - topY); // reach the top of the frame
+  const segs = 26;
+  const tether = lerpColor(color, 0xc2cdd8, 0.7);
+  for (let s = 0; s < segs; s++) {
+    const t0 = s / segs, t1 = (s + 1) / segs;
+    const w0 = 2.4 * (1 - t0 * 0.65), w1 = 2.4 * (1 - t1 * 0.65);
+    const a = 0.85 * (1 - t0 * t0 * t0); // stays solid most of the way, dissolves near the top
+    g.poly([x - w0, baseY - H * t0, x + w0, baseY - H * t0, x + w1, baseY - H * t1, x - w1, baseY - H * t1])
+      .fill({ color: tether, alpha: a });
+    // A brighter inner cable keeps the line readable against the sky.
+    g.rect(x - 0.5, baseY - H * t1, 1, H * (t1 - t0) + 0.5).fill({ color: lerpColor(tether, 0xffffff, 0.5), alpha: a * 0.7 });
+  }
+  for (const sf of [0.2, 0.42, 0.64, 0.84]) {
+    const sy = baseY - H * sf;
+    g.rect(x - 4.5, sy - 1.8, 9, 3.6).fill({ color: lerpColor(color, 0xe8eef4, 0.6), alpha: 0.85 * (1 - sf * 0.6) });
+  }
+  const climb = (nowSec * 0.05) % 1;
+  g.circle(x, baseY - H * climb, 1.8).fill({ color: 0xfff0a0, alpha: 0.85 * (1 - climb * 0.5) }); // climber
+  g.circle(x, baseY - H * 0.55, 1.5).fill({ color: 0xff8a6a, alpha: (0.3 + 0.4 * Math.sin(nowSec * 3)) * ng * 0.7 }); // beacon
+  // Ground anchor wedge at the base.
+  g.poly([x - 5, baseY, x + 5, baseY, x + 3, baseY - 9, x - 3, baseY - 9]).fill({ color: lerpColor(color, 0x70808f, 0.4), alpha: 0.95 });
+}
 function drawOneMega(megaGfx: Graphics, x: number, y: number, kind: MegaKind, color: number, nowSec: number, ng: number, night: number) {
-  if (kind === 'elevator') {
-    // Space elevator: a tether climbing high and fading into the sky, with
-    // way-stations and a climber sliding up it.
-    const H = 150, segs = 16;
-    for (let s = 0; s < segs; s++) {
-      const t0 = s / segs, t1 = (s + 1) / segs;
-      const w0 = 1.4 * (1 - t0 * 0.7), w1 = 1.4 * (1 - t1 * 0.7);
-      const a = 0.78 * (1 - t0) * (1 - t0); // dissolves toward the top
-      megaGfx.poly([x - w0, y - H * t0, x + w0, y - H * t0, x + w1, y - H * t1, x - w1, y - H * t1]).fill({ color: 0xc2cdd8, alpha: a });
-    }
-    for (const sf of [0.32, 0.62]) { const sy = y - H * sf; megaGfx.rect(x - 3, sy - 1.4, 6, 2.8).fill({ color: lerpColor(color, 0xe8eef4, 0.6), alpha: 0.85 * (1 - sf * 0.4) }); }
-    const climb = (nowSec * 0.1) % 1;
-    megaGfx.circle(x, y - H * climb, 1.1).fill({ color: 0xfff0a0, alpha: 0.85 * (1 - climb * 0.7) }); // climber
-    megaGfx.circle(x, y - H * 0.8, 1.3).fill({ color: 0xff8a6a, alpha: (0.3 + 0.4 * Math.sin(nowSec * 3)) * ng * 0.7 }); // high beacon
-  } else if (kind === 'megatower') {
+  if (kind === 'megatower') {
     // A supertall tower stepping up to a spire, lit floor by floor at night.
     const H = 84;
     const steps = [[0, 5], [0.42, 3.6], [0.72, 2.2], [1, 1.2]];
@@ -3364,8 +3399,8 @@ function maybeSpawnRockets(dt: number) {
   if (!posts.length) return;
   const civ = posts[Math.floor(Math.random() * posts.length)];
   const city = civ.cities[Math.floor(Math.random() * civ.cities.length)];
-  const { x, y } = gridToScreen(city.col, city.row);
-  rockets.push({ x, y0: y, t: 0, smoke: [] });
+  const s = tileToSky(city.row, city.col); // screen-space base so it can rise past the horizon
+  rockets.push({ x: s.x, y0: s.y, t: 0, smoke: [] });
   triggerPing(city.row, city.col, 0xfff0d0);
 }
 
@@ -3488,6 +3523,9 @@ function maybeSpawnCausewayTrains() {
 }
 
 function updateAir(dt: number, night: number) {
+  // Sky structures redraw every frame: rockets here, space elevators appended
+  // by drawMegastructures (which runs later in the loop). Clear unconditionally.
+  skyStructGfx.clear();
   if (planes.length === 0 && rockets.length === 0) { airGfx.clear(); return; }
   airGfx.clear();
   for (let i = planes.length - 1; i >= 0; i--) {
@@ -3523,21 +3561,21 @@ function updateAir(dt: number, night: number) {
       if (p.t > 2.6) { rk.smoke.splice(s, 1); continue; }
       const pa = Math.max(0, 1 - p.t / 2.6);
       p.r += dt * 6;
-      airGfx.circle(p.x, p.y - p.t * 4, p.r)
+      skyStructGfx.circle(p.x, p.y - p.t * 4, p.r)
         .fill({ color: 0xe8eef2, alpha: pa * 0.5 });
     }
     if (!aloft) continue; // rocket itself is gone; just let the trail dissipate
     // Bright exhaust flame beneath the rocket.
     for (let f = 0; f < 7; f++) {
-      airGfx.circle(rk.x + (Math.random() - 0.5) * 2.5, ry + 6 + f * 3.5, 3.6 - f * 0.4)
+      skyStructGfx.circle(rk.x + (Math.random() - 0.5) * 2.5, ry + 6 + f * 3.5, 3.6 - f * 0.4)
         .fill({ color: f < 2 ? 0xfff0c0 : 0xff7a30, alpha: (1 - f / 7) * 0.8 });
     }
     // Rocket body: a little white capsule with a nose cone.
-    airGfx.roundRect(rk.x - 1.6, ry - 4, 3.2, 9, 1.4).fill({ color: 0xf4f6f8 });
-    airGfx.poly([rk.x - 1.6, ry - 4, rk.x + 1.6, ry - 4, rk.x, ry - 8]).fill({ color: 0xd84a3a });
+    skyStructGfx.roundRect(rk.x - 1.6, ry - 4, 3.2, 9, 1.4).fill({ color: 0xf4f6f8 });
+    skyStructGfx.poly([rk.x - 1.6, ry - 4, rk.x + 1.6, ry - 4, rk.x, ry - 8]).fill({ color: 0xd84a3a });
     // Launch glow at the base early in the climb.
     if (rk.t < 1.2) {
-      airGfx.circle(rk.x, rk.y0, 14 * (1 - rk.t / 1.2)).fill({ color: 0xffd070, alpha: 0.25 * (1 - rk.t / 1.2) });
+      skyStructGfx.circle(rk.x, rk.y0, 14 * (1 - rk.t / 1.2)).fill({ color: 0xffd070, alpha: 0.25 * (1 - rk.t / 1.2) });
     }
   }
 }
