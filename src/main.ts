@@ -696,6 +696,7 @@ fireGfx.blendMode = 'add';
 const lavaGfx = new Graphics();      // molten lava bodies + ash plume (normal blend)
 const lavaGlowGfx = new Graphics();  // lava heat-glow + vent fountain (additive)
 lavaGlowGfx.blendMode = 'add';
+const plagueGfx = new Graphics();    // a sickly miasma dimming afflicted districts
 const energyGfx = new Graphics();    // renewable energy farms (solar arrays, wind turbines)
 const megaGfx = new Graphics();      // post-era megastructures (arcologies, space elevators)
 const satelliteGfx = new Graphics(); // satellites crossing the sky (screen-space)
@@ -763,6 +764,8 @@ world.addChild(fireGfx);
 // Volcanic lava creeps over the land and cools into fresh rock.
 world.addChild(lavaGfx);
 world.addChild(lavaGlowGfx);
+// A plague's miasma dims the districts it touches (above the buildings).
+world.addChild(plagueGfx);
 // Renewable farms sit on open land near cities, beneath the megastructures.
 world.addChild(energyGfx);
 // Megastructures tower over their cities.
@@ -2703,6 +2706,104 @@ function updateVolcanoes(dt: number, nowSec: number, night: number) {
   }
 }
 
+// Plagues: a sickness breaks out in a city and a miasma spreads district to
+// district across the civ, dimming the streets it touches. Most quarters pull
+// through and brighten again; the worst-hit collapse, building by building,
+// into ruin. Civilizations as weather — a fever that passes over the land.
+interface PlagueTile { row: number; col: number; born: number; fate: 'recover' | 'ruin'; ruined: boolean }
+interface Plague { civId: number; era: Era; capR: number; capC: number; born: number; lastSpread: number; frontier: number[]; afflicted: Map<number, PlagueTile>; ruinsLeft: number }
+const plagues: Plague[] = [];
+const PLAGUE_MEAN = 135;     // avg seconds between outbreaks
+const PLAGUE_SPAN = 28;      // seconds from outbreak until the fever has passed
+const PLAGUE_SPREAD = 0.22;  // seconds between contagion rings
+const PLAGUE_FADE = 1.6;     // seconds a district takes to darken / recover
+function plagueOwns(p: Plague, r: number, c: number): boolean {
+  if (r < 0 || r >= GRID_SIZE || c < 0 || c >= GRID_SIZE) return false;
+  if (simWorld.tiles[r][c].civId !== p.civId) return false;
+  const st = simWorld.tiles[r][c].state;
+  return st === 'built' || st === 'cleared';
+}
+function maybeOutbreak(dt: number, nowSec: number) {
+  if (plagues.length >= 2 || Math.random() >= dt / PLAGUE_MEAN) return;
+  const eligible = [...simWorld.civs.values()].filter(
+    (c) => c.phase !== 'dead' && ERA_RANK[c.era] >= 1 && (civStats.tileCounts.get(c.id) || 0) >= 14,
+  );
+  if (!eligible.length) return;
+  const civ = eligible[(Math.random() * eligible.length) | 0];
+  // Outbreak seeds in an owned built tile.
+  const owned = [...(civTiles.get(civ.id) || [])].filter((k) => simWorld.tiles[(k / GRID_SIZE) | 0][k % GRID_SIZE].state === 'built');
+  if (!owned.length) return;
+  const k0 = owned[(Math.random() * owned.length) | 0];
+  const r0 = (k0 / GRID_SIZE) | 0, c0 = k0 % GRID_SIZE;
+  const p: Plague = {
+    civId: civ.id, era: civ.era, capR: civ.originRow, capC: civ.originCol,
+    born: nowSec, lastSpread: nowSec, frontier: [k0],
+    afflicted: new Map(), ruinsLeft: Math.min(22, Math.floor((civStats.tileCounts.get(civ.id) || 0) * 0.16)),
+  };
+  p.afflicted.set(k0, { row: r0, col: c0, born: nowSec, fate: 'recover', ruined: false });
+  plagues.push(p);
+  triggerPing(r0, c0, 0x9fae74);
+}
+function plagueRuin(p: Plague, r: number, c: number) {
+  const tile = simWorld.tiles[r][c];
+  if (tile.state !== 'built' || tile.civId !== p.civId) return; // already changed hands
+  if (r === p.capR && c === p.capC) return;                     // the capital is never abandoned
+  if ((civStats.tileCounts.get(p.civId) || 0) <= 6) return;     // never wipe a civ out
+  tile.state = 'ruin';
+  tile.ruinEra = p.era;
+  tile.civId = null;
+  tile.lastChangedTick = simWorld.tick;
+  noteTileChange(r, c);
+  refreshTileOverlay(r, c);
+  refreshBuildingSprite(r, c);
+}
+function updatePlagues(nowSec: number) {
+  plagueGfx.clear();
+  for (let pi = plagues.length - 1; pi >= 0; pi--) {
+    const p = plagues[pi];
+    const age = nowSec - p.born;
+    if (age > PLAGUE_SPAN) { plagues.splice(pi, 1); continue; }
+    // Contagion spreads through the first ~60% of the fever, then it recedes.
+    if (age < PLAGUE_SPAN * 0.6 && nowSec - p.lastSpread > PLAGUE_SPREAD && p.afflicted.size < 220) {
+      p.lastSpread = nowSec;
+      const next: number[] = [];
+      for (const key of p.frontier) {
+        const r = (key / GRID_SIZE) | 0, c = key % GRID_SIZE;
+        for (const [dr, dc] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
+          const nr = r + dr, nc = c + dc, nk = nr * GRID_SIZE + nc;
+          if (p.afflicted.has(nk) || !plagueOwns(p, nr, nc)) continue;
+          const built = simWorld.tiles[nr][nc].state === 'built';
+          const fate: 'recover' | 'ruin' = built && p.ruinsLeft > 0 && Math.random() < 0.22 ? 'ruin' : 'recover';
+          if (fate === 'ruin') p.ruinsLeft--;
+          p.afflicted.set(nk, { row: nr, col: nc, born: nowSec, fate, ruined: false });
+          next.push(nk);
+        }
+      }
+      p.frontier = next;
+    }
+    // Envelope: the fever rises, holds, and lifts.
+    const env = age < 3 ? age / 3 : age > PLAGUE_SPAN - 5 ? Math.max(0, (PLAGUE_SPAN - age) / 5) : 1;
+    for (const a of p.afflicted.values()) {
+      const local = Math.min(1, (nowSec - a.born) / PLAGUE_FADE);
+      // Doomed quarters fall to ruin a beat after the miasma reaches them.
+      if (a.fate === 'ruin' && !a.ruined && nowSec - a.born > 2.4) { a.ruined = true; plagueRuin(p, a.row, a.col); }
+      const built = simWorld.tiles[a.row][a.col].state === 'built';
+      const intensity = local * env * (a.ruined ? 0.5 : 1) * (built ? 1.15 : 0.85);
+      if (intensity < 0.02) continue;
+      const { x, y } = gridToScreen(a.col, a.row);
+      // A sickly pall darkens the streets — dim and abandoned-looking.
+      plagueGfx.poly([x, y - 8, x + 16, y, x, y + 8, x - 16, y])
+        .fill({ color: 0x33371f, alpha: 0.62 * intensity });
+      // A few miasma motes hang above the worst tiles.
+      if (intensity > 0.45) {
+        const m = (nowSec * 0.6 + a.row * 0.7 + a.col) % 1;
+        plagueGfx.circle(x + Math.sin(nowSec + a.col) * 4, y - 4 - m * 11, 1.5 * (1 - m))
+          .fill({ color: 0x9aa863, alpha: 0.4 * intensity * (1 - m) });
+      }
+    }
+  }
+}
+
 // Megastructures: the most advanced civs raise a landmark over their greatest
 // city — an arcology dome or a space elevator threading toward orbit.
 type MegaKind = 'dome' | 'elevator' | 'megatower' | 'reactor';
@@ -4078,6 +4179,7 @@ function resetStorySurfaces() {
   lighthouses.length = 0; lighthouseGfx.clear();
   fires.length = 0; fireGfx.clear();
   volcanoes.length = 0; lavaGfx.clear(); lavaGlowGfx.clear();
+  plagues.length = 0; plagueGfx.clear();
   energyFarms.length = 0; energyGfx.clear();
   megastructures.length = 0; megaGfx.clear();
   riverBoats.length = 0; riverBridges.length = 0; riverCraftGfx.clear();
@@ -4670,6 +4772,8 @@ app.ticker.add((ticker) => {
   updateFires(dtSec, nowSec, n);
   maybeEruptVolcano(dtSec);
   updateVolcanoes(dtSec, nowSec, n);
+  maybeOutbreak(dtSec, nowSec);
+  updatePlagues(nowSec);
   updateRiverCraft(dtSec, n);
   drawEnergyFarms(nowSec, n);
   drawMegastructures(nowSec, n);
