@@ -3333,6 +3333,7 @@ interface Battle {
   ax: number; ay: number; dx: number; dy: number;   // attacker / defender cluster centres
   mx: number; my: number;                            // march origin (attacker city)
   aColor: number; dColor: number; siege: boolean; seed: number;
+  era: number;                                       // attacker's ERA_RANK — sets the war style
 }
 const battles: Battle[] = [];
 const BATTLE_LIFE = 9;   // seconds a front stays hot after the last clash
@@ -3366,7 +3367,7 @@ function noteBattle(ev: { row: number; col: number; attackerId: number; defender
     row: ev.row, col: ev.col, cx, cy, born: performance.now() / 1000, lastHit: performance.now() / 1000,
     ax: cx + vx * 7, ay: cy + vy * 7, dx: cx - vx * 7, dy: cy - vy * 7,
     mx: cs.x, my: cs.y, aColor: atk?.color ?? 0xcc5544, dColor: def?.color ?? 0x4466cc,
-    siege, seed: (ev.row * 13 + ev.col * 7) % 100,
+    siege, seed: (ev.row * 13 + ev.col * 7) % 100, era: atk ? ERA_RANK[atk.era] : 1,
   });
 }
 function drawTrooper(g: Graphics, x: number, y: number, color: number) {
@@ -3379,43 +3380,125 @@ function drawBanner(g: Graphics, x: number, y: number, color: number, nowSec: nu
   const w = 5.5 + Math.sin(nowSec * 4 + x) * 1.2;
   g.poly([x + 0.5, y - 12, x + 0.5 + w, y - 10.6, x + 0.5, y - 8.4]).fill({ color, alpha: 0.92 });
 }
+// An armoured vehicle, hull oriented along (hx,hy), gun pointed at the foe.
+function drawTank(g: Graphics, x: number, y: number, hx: number, hy: number, color: number, fire: boolean) {
+  const px = -hy, py = hx, L = 3.2, W = 1.9;
+  g.poly([
+    x + hx * L + px * W, y + hy * L + py * W, x + hx * L - px * W, y + hy * L - py * W,
+    x - hx * L - px * W, y - hy * L - py * W, x - hx * L + px * W, y - hy * L + py * W,
+  ]).fill({ color: 0x3b3f3a, alpha: 0.96 });                                   // hull
+  g.rect(x - 1.1, y - 1.1, 2.2, 2.2).fill({ color: lerpColor(color, 0x2a2a2a, 0.45), alpha: 0.95 }); // turret w/ civ tint
+  g.moveTo(x, y).lineTo(x + hx * 5.5, y + hy * 5.5).stroke({ color: 0x23241f, width: 1, cap: 'round' }); // barrel
+  if (fire) {
+    g.circle(x + hx * 6, y + hy * 6, 1.7).fill({ color: 0xffd060, alpha: 0.9 });
+    g.circle(x + hx * 6, y + hy * 6, 3.2).fill({ color: 0xff9a30, alpha: 0.3 });
+  }
+}
+// A hovering gunship, floating above its shadow, an energy core glowing.
+function drawGunship(g: Graphics, x: number, y: number, hx: number, hy: number, glow: number, nowSec: number, idx: number) {
+  const px = -hy;
+  const bob = Math.sin(nowSec * 3 + idx * 1.7) * 0.7;
+  const yy = y - 3.5 + bob;
+  g.ellipse(x, y + 1, 3, 1).fill({ color: 0x000000, alpha: 0.16 });            // hover shadow
+  g.poly([
+    x + hx * 3.4, yy, x - hx * 2.2 + px * 2.4, yy + 0.9, x - hx * 2.2 - px * 2.4, yy + 0.9,
+  ]).fill({ color: 0x2c3138, alpha: 0.96 });                                   // angular hull
+  g.poly([x - hx * 2.2 + px * 2.4, yy + 0.9, x - hx * 2.2 - px * 2.4, yy + 0.9, x - hx * 3.4, yy - 0.4])
+    .fill({ color: 0x444b54, alpha: 0.9 });                                    // tail fin
+  g.circle(x + hx * 0.4, yy, 1).fill({ color: glow, alpha: 0.95 });           // energy core
+  g.circle(x + hx * 0.4, yy, 2.1).fill({ color: glow, alpha: 0.22 });
+}
 function updateWarfare(nowSec: number) {
   warGfx.clear();
   for (let i = battles.length - 1; i >= 0; i--) {
     const b = battles[i];
     const cold = nowSec - b.lastHit;
     if (cold > BATTLE_LIFE) { battles.splice(i, 1); continue; }
+    drawOneBattle(warGfx, b, nowSec);
+  }
+}
+function drawOneBattle(warGfx: Graphics, b: Battle, nowSec: number) {
+  {
+    const cold = nowSec - b.lastHit;
     const env = Math.min(1, (nowSec - b.born) / 1) * Math.min(1, (BATTLE_LIFE - cold) / 2);
-    if (env < 0.02) continue;
-    // Dust haze rolling over the melee.
-    for (let k = 0; k < 3; k++) {
-      const px = b.cx + Math.sin(nowSec * 1.3 + k * 2 + b.seed) * 6, py = b.cy - 1 - ((nowSec * 4 + k * 5) % 7);
-      warGfx.ellipse(px, py, 6 - k, 2.6 - k * 0.4).fill({ color: 0xb6a890, alpha: 0.13 * env * (1 - k / 3) });
+    if (env < 0.02) return;
+    // Heading from the attacker cluster toward the defender.
+    let hx = b.dx - b.ax, hy = b.dy - b.ay; const hl = Math.hypot(hx, hy) || 1; hx /= hl; hy /= hl;
+    const style = b.era >= 5 ? 'energy' : b.era >= 3 ? 'mech' : 'melee';
+
+    if (style === 'energy') {
+      // --- Future war: hover-gunships, energy beams, a defender shield dome ---
+      if (b.siege) { // shield dome over the besieged city, flickering as it's struck
+        const hit = 0.5 + 0.5 * Math.sin(nowSec * 7 + b.seed);
+        for (const rr of [10, 7]) warGfx.moveTo(b.dx - rr, b.dy + 2).arc(b.dx, b.dy + 2, rr, Math.PI, 0).stroke({ color: 0x7fe8ff, alpha: (0.12 + 0.18 * hit) * env, width: 1.2 });
+      }
+      const aGlow = lerpColor(b.aColor, 0x9ffcff, 0.6), dGlow = lerpColor(b.dColor, 0xff9af0, 0.55);
+      for (let k = 0; k < 3; k++) {
+        drawGunship(warGfx, b.ax + ((k % 2) - 0.5) * 4, b.ay + (k - 1) * 3.2, hx, hy, aGlow, nowSec, k);
+        drawGunship(warGfx, b.dx + ((k % 2) - 0.5) * 4, b.dy + (k - 1) * 3.2, -hx, -hy, dGlow, nowSec, k + 5);
+      }
+      // Beam weapons lancing across the gap, flickering on and off.
+      for (let k = 0; k < 3; k++) {
+        const on = Math.sin(nowSec * 6 + k * 2.1 + b.seed) > 0.2;
+        if (!on) continue;
+        const fromA = (k % 2) === 0;
+        const sx = (fromA ? b.ax : b.dx) + (Math.random() - 0.5) * 5, sy = (fromA ? b.ay : b.dy) - 1 + (Math.random() - 0.5) * 4;
+        const ex = (fromA ? b.dx : b.ax) + (Math.random() - 0.5) * 4, ey = (fromA ? b.dy : b.ay) - 1 + (Math.random() - 0.5) * 3;
+        const col = fromA ? aGlow : dGlow;
+        warGfx.moveTo(sx, sy).lineTo(ex, ey).stroke({ color: col, alpha: 0.18 * env, width: 2.4, cap: 'round' });
+        warGfx.moveTo(sx, sy).lineTo(ex, ey).stroke({ color: 0xffffff, alpha: 0.7 * env, width: 0.7, cap: 'round' });
+        warGfx.circle(ex, ey, 1.8).fill({ color: col, alpha: 0.7 * env }); // impact flare
+      }
+    } else if (style === 'mech') {
+      // --- Industrial war: tanks and artillery, tracers, drifting smoke ---
+      for (let k = 0; k < 3; k++) { // smoke from the shelling
+        const sx = b.cx + Math.sin(nowSec * 1.1 + k * 2 + b.seed) * 7, sy = b.cy - 2 - ((nowSec * 5 + k * 6) % 10);
+        warGfx.ellipse(sx, sy, 5 - k * 0.8, 3 - k * 0.5).fill({ color: 0x6b6358, alpha: 0.16 * env * (1 - k / 3) });
+      }
+      const aFire = Math.sin(nowSec * 5 + b.seed) > 0.45, dFire = Math.sin(nowSec * 5 + b.seed + 2.5) > 0.45;
+      for (let k = 0; k < 3; k++) {
+        drawTank(warGfx, b.ax + ((k % 2) - 0.5) * 4.5, b.ay + (k - 1) * 3.4, hx, hy, b.aColor, aFire && k === 1);
+        drawTank(warGfx, b.dx + ((k % 2) - 0.5) * 4.5, b.dy + (k - 1) * 3.4, -hx, -hy, b.dColor, dFire && k === 1);
+      }
+      // Shell tracers arcing across the gap.
+      for (let k = 0; k < 2; k++) {
+        const f = (nowSec * 0.9 + k * 0.5) % 1, fromA = k % 2 === 0;
+        const x0 = fromA ? b.ax : b.dx, y0 = fromA ? b.ay : b.dy, x1 = fromA ? b.dx : b.ax, y1 = fromA ? b.dy : b.ay;
+        const tx = x0 + (x1 - x0) * f, ty = y0 + (y1 - y0) * f - Math.sin(Math.PI * f) * 6; // arc
+        warGfx.circle(tx, ty, 0.7).fill({ color: 0xffe08a, alpha: 0.85 * env });
+      }
+      if (b.siege) for (let k = 0; k < 3; k++) { // sandbag/bunker emplacements
+        const tx = b.ax + (k - 1) * 5, ty = b.ay + 2.5;
+        warGfx.rect(tx - 2.4, ty - 1.4, 4.8, 1.8).fill({ color: 0x6f6450, alpha: 0.85 * env });
+      }
+    } else {
+      // --- Ancient war: infantry with shields and banners, dust, tents ---
+      for (let k = 0; k < 3; k++) {
+        const px = b.cx + Math.sin(nowSec * 1.3 + k * 2 + b.seed) * 6, py = b.cy - 1 - ((nowSec * 4 + k * 5) % 7);
+        warGfx.ellipse(px, py, 6 - k, 2.6 - k * 0.4).fill({ color: 0xb6a890, alpha: 0.13 * env * (1 - k / 3) });
+      }
+      if (b.siege) for (let k = 0; k < 3; k++) {
+        const tx = b.ax + (k - 1) * 5, ty = b.ay + 2;
+        warGfx.poly([tx, ty - 4, tx - 3, ty, tx + 3, ty]).fill({ color: 0xb8a079, alpha: 0.85 * env });
+      }
+      for (let k = 0; k < 7; k++) {
+        const j = b.seed + k, wig = Math.sin(nowSec * 9 + j) * 1.3;
+        drawTrooper(warGfx, b.ax + ((k % 3) - 1) * 3 + wig, b.ay + (((k / 3) | 0) - 0.5) * 3, b.aColor);
+        drawTrooper(warGfx, b.dx + ((k % 3) - 1) * 3 - wig, b.dy + (((k / 3) | 0) - 0.5) * 3, b.dColor);
+      }
+      drawBanner(warGfx, b.ax - 6, b.ay, b.aColor, nowSec);
+      drawBanner(warGfx, b.dx + 6, b.dy, b.dColor, nowSec);
+      if (Math.sin(nowSec * 7 + b.seed) > 0.4) {
+        warGfx.circle(b.cx + Math.sin(nowSec * 13) * 3, b.cy - 2, 0.8).fill({ color: 0xffe08a, alpha: 0.8 * env });
+      }
     }
-    // Siege tents pitched on the attacker's side.
-    if (b.siege) for (let k = 0; k < 3; k++) {
-      const tx = b.ax + (k - 1) * 5, ty = b.ay + 2;
-      warGfx.poly([tx, ty - 4, tx - 3, ty, tx + 3, ty]).fill({ color: 0xb8a079, alpha: 0.85 * env });
-    }
-    // Reinforcements marching up the road from the attacker's city.
+
+    // Reinforcements stream up the road from the attacker's city (all eras).
     const march = (nowSec * 0.18) % 1;
     for (let k = 0; k < 4; k++) {
       const f = ((k / 4) + march) % 1;
       const mxp = b.mx + (b.ax - b.mx) * f, myp = b.my + (b.ay - b.my) * f;
-      warGfx.circle(mxp, myp - 1, 0.9).fill({ color: 0x35322b, alpha: 0.7 * env });
-    }
-    // The two hosts, jittering as they fight.
-    for (let k = 0; k < 7; k++) {
-      const j = b.seed + k;
-      const wig = Math.sin(nowSec * 9 + j) * 1.3;
-      drawTrooper(warGfx, b.ax + ((k % 3) - 1) * 3 + wig, b.ay + (((k / 3) | 0) - 0.5) * 3, b.aColor);
-      drawTrooper(warGfx, b.dx + ((k % 3) - 1) * 3 - wig, b.dy + (((k / 3) | 0) - 0.5) * 3, b.dColor);
-    }
-    drawBanner(warGfx, b.ax - 6, b.ay, b.aColor, nowSec);
-    drawBanner(warGfx, b.dx + 6, b.dy, b.dColor, nowSec);
-    // Clash sparks along the line where the hosts meet.
-    if (Math.sin(nowSec * 7 + b.seed) > 0.4) {
-      warGfx.circle(b.cx + Math.sin(nowSec * 13) * 3, b.cy - 2, 0.8).fill({ color: 0xffe08a, alpha: 0.8 * env });
+      warGfx.circle(mxp, myp - 1, 0.9).fill({ color: 0x35322b, alpha: 0.6 * env });
     }
   }
 }
