@@ -3857,6 +3857,37 @@ function drawGunship(g: Graphics, x: number, y: number, hx: number, hy: number, 
   g.circle(x + hx * 0.4, yy, 1).fill({ color: glow, alpha: 0.95 });           // energy core
   g.circle(x + hx * 0.4, yy, 2.1).fill({ color: glow, alpha: 0.22 });
 }
+// An industrial-era tethered observation balloon, floating behind the lines and
+// bobbing on the wind — the period's eye over the battlefield.
+function drawObservationBalloon(g: Graphics, x: number, groundY: number, nowSec: number, seed: number, env: number) {
+  const by = groundY - 27 + Math.sin(nowSec * 1.1 + seed) * 1.6;
+  g.moveTo(x, groundY).lineTo(x, by + 6).stroke({ color: 0x6b6358, alpha: 0.4 * env, width: 0.5 }); // tether
+  g.poly([x - 4.4, by + 3.5, x - 7.2, by + 1.5, x - 7.2, by + 5.8]).fill({ color: 0xb6a276, alpha: 0.8 * env }); // tail fin
+  g.ellipse(x, by, 4.6, 6.2).fill({ color: 0xc7b485, alpha: 0.92 * env });        // envelope
+  g.ellipse(x - 1.5, by - 1.6, 1.4, 3).fill({ color: 0xe6dab9, alpha: 0.5 * env }); // sun highlight
+  g.rect(x - 1.2, by + 6, 2.4, 1.8).fill({ color: 0x4a3b2a, alpha: 0.9 * env });   // basket
+}
+// A rare post-era Giant Death Robot, towering over the gunships — bipedal, a
+// glowing core, a sensor eye, arm cannons trained on the foe.
+function drawDeathRobot(g: Graphics, x: number, groundY: number, hx: number, nowSec: number, color: number, env: number) {
+  const stride = Math.sin(nowSec * 2.0 + x), hipY = groundY - 13;
+  const metal = 0x474e57, dark = 0x333941, lit = 0x5c636d;
+  for (const s of [-1, 1]) { // striding legs
+    const phase = s * stride, kneeX = x + s * 3 + phase * 1.5, footX = x + s * 4 + phase * 3;
+    g.moveTo(x + s * 1.8, hipY + 3).lineTo(kneeX, hipY + 8).stroke({ color: dark, width: 2.2, cap: 'round', alpha: env });
+    g.moveTo(kneeX, hipY + 8).lineTo(footX, groundY).stroke({ color: metal, width: 2.0, cap: 'round', alpha: env });
+  }
+  g.rect(x - 4, hipY - 4, 8, 8).fill({ color: metal, alpha: 0.97 * env });          // torso
+  g.rect(x - 4, hipY - 4, 8, 1.6).fill({ color: lit, alpha: 0.9 * env });
+  g.rect(x - 4, hipY - 4, 2.4, 8).fill({ color: dark, alpha: 0.5 * env });          // shaded side
+  g.rect(x - 2.2, hipY - 7.5, 4.4, 3.5).fill({ color: dark, alpha: 0.95 * env });   // sensor head
+  g.circle(x, hipY - 5.6, 1).fill({ color: 0xff5a3c, alpha: (0.5 + 0.5 * Math.sin(nowSec * 6 + x)) * env }); // eye
+  g.rect(x + hx * 6 - 1, hipY - 1, 5, 2).fill({ color: dark, alpha: 0.95 * env });  // arm cannon
+  const core = lerpColor(color, 0x9ffcff, 0.6);
+  g.circle(x, hipY + 1, 1.6).fill({ color: core, alpha: 0.9 * env });
+  g.circle(x, hipY + 1, 3).fill({ color: core, alpha: 0.25 * env });
+  if (Math.sin(nowSec * 4 + x) > 0.6) g.circle(x + hx * 11, hipY, 1.7).fill({ color: 0xeaffff, alpha: 0.85 * env }); // muzzle flash
+}
 function updateWarfare(nowSec: number) {
   warGfx.clear();
   for (let i = battles.length - 1; i >= 0; i--) {
@@ -3898,6 +3929,8 @@ function drawOneBattle(warGfx: Graphics, b: Battle, nowSec: number) {
         warGfx.moveTo(sx, sy).lineTo(ex, ey).stroke({ color: 0xffffff, alpha: 0.7 * env, width: 0.7, cap: 'round' });
         warGfx.circle(ex, ey, 1.8).fill({ color: col, alpha: 0.7 * env }); // impact flare
       }
+      // Rarely, a Giant Death Robot strides in on the attacker's side.
+      if (b.seed % 4 === 0) drawDeathRobot(warGfx, b.ax - hx * 6, b.ay + 2, hx, nowSec, b.aColor, env);
     } else if (style === 'mech') {
       // --- Industrial war: tanks and artillery, tracers, drifting smoke ---
       for (let k = 0; k < 3; k++) { // smoke from the shelling
@@ -3920,6 +3953,8 @@ function drawOneBattle(warGfx: Graphics, b: Battle, nowSec: number) {
         const tx = b.ax + (k - 1) * 5, ty = b.ay + 2.5;
         warGfx.rect(tx - 2.4, ty - 1.4, 4.8, 1.8).fill({ color: 0x6f6450, alpha: 0.85 * env });
       }
+      // The industrial era floats an observation balloon behind its lines.
+      if (b.era === 3) drawObservationBalloon(warGfx, b.ax - hx * 7, b.ay, nowSec, b.seed, env);
     } else {
       // --- Ancient war: infantry with shields and banners, dust, tents ---
       for (let k = 0; k < 3; k++) {
