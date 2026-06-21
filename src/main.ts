@@ -679,6 +679,7 @@ const roadsGfx = new Graphics();        // paths between cities, era-styled
 const conflictGfx = new Graphics();     // war flickers at contested tiles
 const warGfx = new Graphics();          // armies, banners, siege camps at the fronts
 const wonderGfx = new Graphics();       // monuments (persist as ruins)
+const skylineGfx = new Graphics();      // era settlement tells: walls, smokestacks, antenna masts
 const boatsGfx = new Graphics();        // sea craft, fishing dots, whales
 const nomadGfx = new Graphics();        // migrating bands, caravans, trains
 const wildlifeGfx = new Graphics();     // wandering animal herds on wild land
@@ -779,6 +780,8 @@ world.addChild(conflictGfx);
 // Armies clash at the war fronts, above the conflict glow.
 world.addChild(warGfx);
 world.addChild(wonderGfx);
+// Era settlement tells stand among the city's buildings, with the monuments.
+world.addChild(skylineGfx);
 world.addChild(expeditionLayer);
 // Undersea cables lie on the seabed, beneath everything that floats.
 world.addChild(cableGfx);
@@ -4013,6 +4016,79 @@ function drawWonders(nowSec: number, night: number) {
     drawOneWonder(wonderGfx, x, y, w.era, prog, false, nowSec, night);
   }
 }
+
+// Era settlement tells: a glance at a civ's foremost city should read its age.
+// We mark only the most prominent city per civ (one tell, not clutter) and only
+// the eras with a distinctive silhouette: medieval walls, industrial smokestacks,
+// modern broadcast mast. Neolithic/classical are pre-skyline; post is owned by
+// the megastructures. Each tell eases in/out (last position cached) so a civ
+// changing era, losing prominence, or dying never makes the tell pop.
+const SKYLINE_MIN_PROM = 0.5;
+const SKYLINE_FADE = 0.05;
+interface SkylineState { a: number; x: number; y: number; era: Era; color: number }
+const skylineState = new Map<number, SkylineState>();
+// Debug: where each tell is drawn (tile + screen + era + eased alpha).
+(window as any).__skylines = () => [...skylineState.entries()].map(([id, s]) => ({ id, era: s.era, a: +s.a.toFixed(2), x: Math.round(s.x), y: Math.round(s.y) }));
+function drawEraSkylines(nowSec: number, night: number) {
+  skylineGfx.clear();
+  const seen = new Set<number>();
+  for (const civ of simWorld.civs.values()) {
+    if (civ.phase === 'dead' || !civ.cities.length) continue;
+    const rank = ERA_RANK[civ.era];
+    if (rank < 2 || rank > 4) continue; // medieval / industrial / modern only
+    const hub = civ.cities.reduce((b, c) => (c.prominence > b.prominence ? c : b), civ.cities[0]);
+    if (hub.prominence < SKYLINE_MIN_PROM) continue;
+    seen.add(civ.id);
+    const { x, y } = gridToScreen(hub.col, hub.row);
+    const st = skylineState.get(civ.id) ?? { a: 0, x, y, era: civ.era, color: civ.color };
+    st.a += (1 - st.a) * SKYLINE_FADE; st.x = x; st.y = y; st.era = civ.era; st.color = civ.color;
+    skylineState.set(civ.id, st);
+    drawEraTell(skylineGfx, x, y, civ.era, st.a, nowSec, night, civ.color);
+  }
+  // Fade out any tell whose civ no longer qualifies, at its last-known spot.
+  for (const [id, st] of skylineState) {
+    if (seen.has(id)) continue;
+    st.a -= st.a * SKYLINE_FADE + 0.004;
+    if (st.a <= 0.01) { skylineState.delete(id); continue; }
+    drawEraTell(skylineGfx, st.x, st.y, st.era, st.a, nowSec, night, st.color);
+  }
+}
+function drawEraTell(g: Graphics, x: number, y: number, era: Era, a: number, nowSec: number, night: number, civColor: number) {
+  if (a < 0.02) return;
+  if (era === 'medieval') {
+    // A walled keep: crenellated curtain wall flanking a square central tower.
+    const body = 0xb9b0a0, dark = 0x8a8273, lit = 0xd8cfbd;
+    g.rect(x - 20, y - 7, 40, 7).fill({ color: body, alpha: 0.9 * a });
+    g.rect(x - 20, y - 7, 40, 1.5).fill({ color: lit, alpha: 0.8 * a });
+    for (let i = -19; i <= 15; i += 8) g.rect(x + i, y - 10, 4, 3).fill({ color: body, alpha: 0.9 * a }); // merlons
+    g.rect(x - 6, y - 24, 12, 18).fill({ color: body, alpha: 0.93 * a }); // keep
+    g.rect(x - 6, y - 24, 4, 18).fill({ color: dark, alpha: 0.5 * a });   // shaded face
+    g.rect(x - 6, y - 24, 12, 1.6).fill({ color: lit, alpha: 0.8 * a });
+    for (let i = -6; i <= 2; i += 4) g.rect(x + i, y - 27, 3, 3).fill({ color: body, alpha: 0.9 * a }); // keep merlons
+    g.poly([x + 6, y - 26, x + 6, y - 32, x + 13, y - 30]).fill({ color: civColor, alpha: 0.85 * a }); // pennant
+  } else if (era === 'industrial') {
+    // Brick smokestacks over a long shed; the era's dark smoke already rises here.
+    const brick = 0x6e5648, cap = 0x4a3a30, shade = lerpColor(0x6e5648, 0x000000, 0.28);
+    g.rect(x - 13, y - 8, 26, 8).fill({ color: 0x5a4b40, alpha: 0.9 * a }); // factory shed
+    for (const [dx, h] of [[-8, 23], [2, 30], [10, 19]] as Array<[number, number]>) {
+      g.rect(x + dx - 2, y - h, 4, h).fill({ color: brick, alpha: 0.93 * a });
+      g.rect(x + dx - 2, y - h, 1.5, h).fill({ color: shade, alpha: 0.5 * a });
+      g.rect(x + dx - 2.7, y - h, 5.4, 2).fill({ color: cap, alpha: 0.9 * a }); // crown
+    }
+  } else { // modern
+    // A guyed broadcast mast with a red aviation light that blinks at night.
+    const steel = 0x9aa0a6, guy = 0x5f656b, H = 40, top = y - H;
+    g.rect(x - 1, top, 2, H).fill({ color: steel, alpha: 0.9 * a });
+    for (let k = 1; k <= 4; k++) {
+      const yy = y - H * k / 5, spread = 11 - k * 1.5;
+      g.moveTo(x, yy).lineTo(x - spread, y).stroke({ color: guy, alpha: 0.3 * a, width: 0.6 });
+      g.moveTo(x, yy).lineTo(x + spread, y).stroke({ color: guy, alpha: 0.3 * a, width: 0.6 });
+    }
+    g.rect(x - 4, top + 7, 8, 2).fill({ color: steel, alpha: 0.85 * a }); // platform
+    const blink = 0.5 + 0.5 * Math.sin(nowSec * 3);
+    g.circle(x, top - 1, 1.7).fill({ color: 0xff3326, alpha: (0.22 + 0.7 * night * blink) * a });
+  }
+}
 function drawOneWonder(g: Graphics, x: number, y: number, era: Era, prog: number, dead: boolean, nowSec: number, night: number) {
   const body = dead ? 0x8b8479 : 0xe9e2d2;
   const edge = dead ? 0x5f594f : 0x9a9282;
@@ -5863,6 +5939,7 @@ app.ticker.add((ticker) => {
   drawMegastructures(nowSec, n);
   drawNaturalWonders(nowSec, n);
   drawWonders(nowSec, n);
+  drawEraSkylines(nowSec, n);
   updateBirdFlocks(dtSec, nowSec, n);
   maybeGhost(dtSec, n);
   updateFestival(n);
