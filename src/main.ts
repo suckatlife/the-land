@@ -3557,10 +3557,10 @@ function drawOneMega(megaGfx: Graphics, x: number, y: number, kind: MegaKind, co
 // Renewable energy farms: once a civ reaches the modern era it plants solar
 // arrays and wind turbines on the open land around its cities.
 type EnergyKind = 'solar' | 'wind';
-interface EnergyFarm { row: number; col: number; kind: EnergyKind; n: number }
+interface EnergyFarm { row: number; col: number; kind: EnergyKind; n: number; a: number; dying?: boolean }
 const energyFarms: EnergyFarm[] = [];
 // Live-watch handle: snapshot current farm tiles (to check they hold still).
-(window as any).__energy = () => energyFarms.map(f => `${f.row},${f.col},${f.kind}`);
+(window as any).__energy = () => energyFarms.map(f => `${f.row},${f.col},${f.kind},a=${f.a.toFixed(2)}${f.dying ? ',dying' : ''}`);
 // Energy farms PERSIST across rebuilds — otherwise reselecting tiles every
 // founding pass made them flicker and jump around the map. Each farm stays put
 // while its tile is still open farmland owned by a developed civ; we only drop
@@ -3570,22 +3570,29 @@ const ENERGY_QUOTA = 5, ENERGY_MIN_GAP = 4;
 function energyTileValid(row: number, col: number): boolean {
   if (biomeMap[row][col] === 'water') return false;
   const t = simWorld.tiles[row][col];
-  // Keep a farm while the land stays developed and owned by a modern civ —
-  // crucially INCLUDING 'built', since cleared tiles build up over time. Tying
-  // validity to 'cleared' only made farms chase the shrinking farmland and pop
-  // in and out. Only losing the tile (→ wild/ruin) or the civ removes it.
+  // A farm is durable INFRASTRUCTURE — modern civs build them (see the era gate
+  // in rebuildEnergyFarms), but once built they outlive that civ like a ruin.
+  // Validity is deliberately era-AGNOSTIC: the only churn the farms ever showed
+  // came from an earlier-era civ conquering the land and instantly invalidating
+  // every farm on it (that's the pop-in/out + drift the world-cycle produced).
+  // So we keep a farm while its land merely stays developed and owned by ANY
+  // living civ; it fades only when the land truly reverts (→ wild/ruin) or goes
+  // unowned — which is the clean mass fade at a world's collapse.
   if (t.civId == null || (t.state !== 'cleared' && t.state !== 'built')) return false;
   const civ = simWorld.civs.get(t.civId);
-  return !!civ && civ.phase !== 'dead' && ERA_RANK[civ.era] >= 4;
+  return !!civ && civ.phase !== 'dead';
 }
 function rebuildEnergyFarms() {
-  // Keep valid farms exactly where they are.
-  for (let i = energyFarms.length - 1; i >= 0; i--) {
-    if (!energyTileValid(energyFarms[i].row, energyFarms[i].col)) energyFarms.splice(i, 1);
-  }
-  // Group surviving farms by their current owner so we know who still needs more.
+  // Keep valid farms exactly where they are. Invalid ones don't vanish on the
+  // spot — they're flagged dying and fade out in the draw loop (everything else
+  // in this world eases; a farm popping out of existence read as a glitch). A
+  // farm whose land comes back simply un-dies and fades back in.
+  for (const f of energyFarms) f.dying = !energyTileValid(f.row, f.col);
+  // Group living farms by their current owner so we know who still needs more.
+  // Dying farms are leaving, so they don't count toward quota or block reuse.
   const perCiv = new Map<number, Array<{ row: number; col: number }>>();
   for (const f of energyFarms) {
+    if (f.dying) continue;
     const id = simWorld.tiles[f.row][f.col].civId!;
     let arr = perCiv.get(id);
     if (!arr) { arr = []; perCiv.set(id, arr); }
@@ -3597,63 +3604,79 @@ function rebuildEnergyFarms() {
     if (!owned || owned.size === 0) continue;
     const mine = perCiv.get(civ.id) ?? [];
     if (mine.length >= ENERGY_QUOTA) continue;
-    // Candidate cleared tiles, sorted by position so the choice is deterministic
-    // regardless of the owned-Set's iteration order.
-    const cands: Array<{ r: number; c: number }> = [];
+    // Candidate cleared tiles. Prefer ones NEAREST a city: the core is
+    // decay-protected and rarely changes hands, so farms settle on stable land
+    // around the cities (as intended) instead of chasing volatile frontier
+    // tiles — which is what made them teleport when a contested tile was lost.
+    // Position breaks ties so the choice stays deterministic.
+    const cores = civ.cities.length ? civ.cities : [{ row: civ.originRow, col: civ.originCol }];
+    const cityDist = (r: number, c: number) => {
+      let m = Infinity;
+      for (const ct of cores) { const d = Math.abs(ct.row - r) + Math.abs(ct.col - c); if (d < m) m = d; }
+      return m;
+    };
+    const cands: Array<{ r: number; c: number; d: number }> = [];
     for (const key of owned) {
       const r = (key / GRID_SIZE) | 0, c = key % GRID_SIZE;
-      if (simWorld.tiles[r][c].state === 'cleared' && biomeMap[r][c] !== 'water') cands.push({ r, c });
+      if (simWorld.tiles[r][c].state === 'cleared' && biomeMap[r][c] !== 'water') cands.push({ r, c, d: cityDist(r, c) });
     }
-    cands.sort((a, b) => (a.r - b.r) || (a.c - b.c));
+    cands.sort((a, b) => (a.d - b.d) || (a.r - b.r) || (a.c - b.c));
     for (const t of cands) {
       if (mine.length >= ENERGY_QUOTA) break;
       // Spread them out and never double up on a tile.
       if (mine.some(f => Math.abs(f.row - t.r) + Math.abs(f.col - t.c) < ENERGY_MIN_GAP)) continue;
       const kind: EnergyKind = (t.r + t.c) % 2 === 0 ? 'solar' : 'wind';
-      const farm = { row: t.r, col: t.c, kind, n: energyFarms.length };
+      const farm: EnergyFarm = { row: t.r, col: t.c, kind, n: energyFarms.length, a: 0 };
       energyFarms.push(farm);
       mine.push(farm);
     }
   }
 }
+const ENERGY_FADE = 0.06; // per-frame ease for farms appearing/vanishing (~0.5s)
 function drawEnergyFarms(nowSec: number, night: number) {
   energyGfx.clear();
   if (energyFarms.length === 0) return;
-  for (const f of energyFarms) {
+  // Ease every farm toward full (alive) or zero (dying); cull once invisible.
+  for (let i = energyFarms.length - 1; i >= 0; i--) {
+    const f = energyFarms[i];
+    const target = f.dying ? 0 : 1;
+    f.a += (target - f.a) * ENERGY_FADE;
+    if (f.dying && f.a < 0.02) { energyFarms.splice(i, 1); continue; }
+    if (f.a < 0.01) continue;
     const { x, y } = gridToScreen(f.col, f.row);
-    if (f.kind === 'solar') drawSolarFarm(energyGfx, x, y, night);
-    else drawWindFarm(energyGfx, x, y, nowSec, f.n, night);
+    if (f.kind === 'solar') drawSolarFarm(energyGfx, x, y, night, f.a);
+    else drawWindFarm(energyGfx, x, y, nowSec, f.n, night, f.a);
   }
 }
 const ENERGY_S = 1.5; // match the lighthouse: 50% larger so the farms read clearly
-function drawSolarFarm(g: Graphics, x: number, y: number, night: number) {
+function drawSolarFarm(g: Graphics, x: number, y: number, night: number, fa: number) {
   const S = ENERGY_S;
   const glint = Math.max(0, 1 - night * 1.4); // panels catch the sun by day
   for (let row = 0; row < 2; row++) for (let col = 0; col < 3; col++) {
     const px = x + ((col - 1) * 7 - row * 3.5) * S, py = y + (row * 4 - 1) * S;
     const panel = [px - 4 * S, py, px + 2 * S, py - 2.4 * S, px + 5 * S, py + 0.5 * S, px - 1 * S, py + 2.9 * S];
-    g.poly(panel).fill({ color: 0x223a66, alpha: 0.92 });
-    g.poly(panel).stroke({ color: 0x4a6aa0, alpha: 0.5, width: 0.4 });
+    g.poly(panel).fill({ color: 0x223a66, alpha: 0.92 * fa });
+    g.poly(panel).stroke({ color: 0x4a6aa0, alpha: 0.5 * fa, width: 0.4 });
     g.poly([px - 1 * S, py + 0.3 * S, px + 2 * S, py - 1 * S, px + 2.6 * S, py - 0.4 * S, px - 0.4 * S, py + 0.9 * S])
-      .fill({ color: 0xbfe0ff, alpha: 0.4 * glint });
+      .fill({ color: 0xbfe0ff, alpha: 0.4 * glint * fa });
   }
 }
-function drawWindFarm(g: Graphics, x: number, y: number, nowSec: number, n: number, night: number) {
+function drawWindFarm(g: Graphics, x: number, y: number, nowSec: number, n: number, night: number, fa: number) {
   const S = ENERGY_S;
   const blade = night > 0.4 ? 0xd6dac8 : 0xf4f6f0;
   const positions = [[-7, 1], [4, -2], [-1, 4]];
   for (let i = 0; i < positions.length; i++) {
     const bx = x + positions[i][0] * S, by = y + positions[i][1] * S;
     const H = (13 + (i % 2) * 3) * S, hx = bx, hy = by - H;
-    g.poly([bx - 0.7 * S, by, bx + 0.7 * S, by, hx + 0.5 * S, hy, hx - 0.5 * S, hy]).fill({ color: 0xe6ead0, alpha: 0.9 });
+    g.poly([bx - 0.7 * S, by, bx + 0.7 * S, by, hx + 0.5 * S, hy, hx - 0.5 * S, hy]).fill({ color: 0xe6ead0, alpha: 0.9 * fa });
     const spin = nowSec * 1.6 + n * 1.3 + i, R = 6.5 * S;
     for (let b = 0; b < 3; b++) {
       const a = spin + b * (Math.PI * 2 / 3);
       const tx = hx + Math.cos(a) * R, ty = hy + Math.sin(a) * R * 0.7;
       g.poly([hx, hy, tx, ty, hx + Math.cos(a + 0.3) * 2 * S, hy + Math.sin(a + 0.3) * 2 * S * 0.7])
-        .fill({ color: blade, alpha: 0.9 });
+        .fill({ color: blade, alpha: 0.9 * fa });
     }
-    g.circle(hx, hy, 0.9 * S).fill({ color: 0xcfd4c0, alpha: 0.95 });
+    g.circle(hx, hy, 0.9 * S).fill({ color: 0xcfd4c0, alpha: 0.95 * fa });
   }
 }
 
