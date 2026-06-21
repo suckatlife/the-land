@@ -6452,14 +6452,26 @@ const ERA_NAMES: Record<Era, string> = {
   neolithic: 'The Beginning', classical: 'The Ancient World', medieval: 'The Middle Ages',
   industrial: 'The Age of Industry', modern: 'The Modern Age', post: 'The Future',
 };
+// Deep-time calendar: the era clock (eraProgress, 0→5) mapped to a real calendar
+// year, so the number always sits in its era's true historical window — no more
+// "The Ancient World, year 44,000". Breakpoints are the calendar year at each
+// integer eraProgress; the last extrapolates the future past the post-era.
+const ERA_YEAR_BREAKS = [-10000, -3000, 500, 1500, 1900, 2100, 2300];
+function deepTimeYear(world: SimWorld): string {
+  // Anchor the year inside the DISPLAYED era's band so name and year never
+  // contradict, using eraProgress for the smooth position within that band.
+  const dom = ERA_RANK[dominantEra(world)];
+  const p = Math.max(dom, Math.min(dom + 1, Math.max(0, world.eraProgress)));
+  const i = Math.min(ERA_YEAR_BREAKS.length - 2, Math.floor(p));
+  const y = ERA_YEAR_BREAKS[i] + (ERA_YEAR_BREAKS[i + 1] - ERA_YEAR_BREAKS[i]) * (p - i);
+  const yr = Math.round(y / 10) * 10;
+  return yr < 0 ? `${(-yr).toLocaleString('en-US')} BCE` : `${yr.toLocaleString('en-US')} CE`;
+}
 function updateClock() {
   const now = new Date();
   clockTime.textContent = now.toLocaleTimeString('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' });
   clockDate.textContent = now.toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', weekday: 'long', month: 'long', day: 'numeric' });
-  // Deep time: the world's leading era and its age, in years (this epoch resets
-  // when the cataclysm rolls a fresh world).
-  const year = Math.floor(simWorld.tick * 3).toLocaleString('en-US');
-  clockAge.textContent = `${ERA_NAMES[dominantEra(simWorld)]} · year ${year}`;
+  clockAge.textContent = `${ERA_NAMES[dominantEra(simWorld)]} · ${deepTimeYear(simWorld)}`;
 }
 updateClock();
 setInterval(updateClock, 1000);
