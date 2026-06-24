@@ -5571,6 +5571,11 @@ function drawFarmTile(g: Graphics, row: number, col: number, alphaMult: number) 
 // each bake, and on some drivers (Mesa/SteamOS) a newly-allocated framebuffer
 // shows uninitialised garbage for one frame: the flashing white polygons.
 let farmCacheEnabled = false;
+// Tile-tint layer cache: simLayer holds thousands of persistent per-tile overlay
+// diamonds but only changes on state/owner events — measured at ~half the world
+// re-bake. Cache it like the biome (enable once, refresh in place while tiles
+// ease; never toggle off/on — that reallocates and flashes on Mesa).
+let simCacheEnabled = false;
 function bakeFarmCache() {
   farmGfx.clear();
   for (const key of matureFarm) drawFarmTile(farmGfx, (key / GRID_SIZE) | 0, key % GRID_SIZE, 1);
@@ -6073,6 +6078,14 @@ app.ticker.add((ticker) => {
     if (++animWork >= ANIM_BUDGET) break; // overflow waits for a later frame
   }
   for (const key of done) animatingTiles.delete(key);
+  // Tile-tint cache (see simCacheEnabled): enable once tiles exist, then refresh
+  // only while tiles are easing. In steady state the cached quad stands in for
+  // thousands of overlay draws every frame.
+  if (!simCacheEnabled && simLayer.children.length > 0) {
+    simLayer.cacheAsTexture?.(true); simCacheEnabled = true;
+  } else if (simCacheEnabled && (animatingTiles.size > 0 || done.length > 0)) {
+    (simLayer as any).updateCacheTexture?.();
+  }
 
   // Animate biome tile color transitions (flood, future terrain mutations).
   const BIOME_EASE = 0.06;
