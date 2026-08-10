@@ -463,6 +463,9 @@ export interface SimWorld {
   // where the moraine and the pale ground stay after the thaw.
   iceExtent: number;
   iceMax: number;
+  // The world's temperament and life arc, rolled from its seed at creation.
+  // Read it through characterOf(world), which bends it by the world's age.
+  character: WorldCharacter;
   // Settlements on their way to existing — visible nomad bands.
   pendingSettlements: Array<{ row: number; col: number; ticksLeft: number }>;
   // Progressive terrain change (rifts tearing, islands rising, bridges
@@ -478,7 +481,7 @@ export interface SimWorld {
   } | null;
 }
 
-export function createSimWorld(width: number, height: number): SimWorld {
+export function createSimWorld(width: number, height: number, seed?: string): SimWorld {
   const tiles: SimTile[][] = [];
   for (let row = 0; row < height; row++) {
     tiles[row] = [];
@@ -502,9 +505,99 @@ export function createSimWorld(width: number, height: number): SimWorld {
     eraProgress: 0,
     iceExtent: 0,
     iceMax: 0,
+    character: rollCharacter(seed ?? 'default'),
     pendingSettlements: [],
     terraform: null,
   };
+}
+
+// --- Planetary biography ----------------------------------------------------
+// Every world gets a temperament and a slow life arc, rolled from its seed.
+// They don't add systems — they turn the knobs on the systems already here, so
+// one world becomes a story of narrowing refuges and another of river kingdoms
+// and repeated floods.
+//
+// The values are deliberately LOUD. A screensaver has no replay loop: the
+// viewer's only comparison is a world they half-watched twenty minutes ago, so
+// cross-world variance is nearly invisible unless it's extreme. The goal isn't
+// "this world is subtly drier" — it's that one world is legibly a particular
+// place inside its own seventeen minutes.
+export type Temperament = 'cold' | 'wet' | 'dry' | 'volcanic' | 'fertile' | 'restless' | 'placid';
+export type LifeArc = 'warming' | 'cooling' | 'drying' | 'greening' | 'destabilizing' | 'settling';
+
+export interface WorldCharacter {
+  temperament: Temperament;
+  arc: LifeArc;
+  ice: number;          // multiplier on glacial extent
+  storm: number;        // storm frequency
+  fire: number;         // wildfire ignition
+  drought: number;      // drought onset
+  flood: number;        // river flooding
+  volcano: number;      // eruption frequency
+  fertility: number;    // vegetation lushness and how readily land is settled
+  pressure: number;     // catastrophe pressure accumulation
+  moistureBias: number; // terrain generation: green continents vs. tan ones
+}
+
+const TEMPERAMENTS: Record<Temperament, Omit<WorldCharacter, 'temperament' | 'arc'>> = {
+  //            ice   storm  fire  drought flood  volcano fertility pressure moisture
+  cold:     { ice: 2.1, storm: 1.3, fire: 0.4, drought: 0.5, flood: 0.8, volcano: 0.7, fertility: 0.7, pressure: 1.0, moistureBias:  0.02 },
+  wet:      { ice: 1.0, storm: 2.2, fire: 0.25, drought: 0.2, flood: 2.6, volcano: 0.8, fertility: 1.2, pressure: 1.0, moistureBias:  0.12 },
+  dry:      { ice: 0.5, storm: 0.4, fire: 2.4, drought: 3.0, flood: 0.25, volcano: 1.0, fertility: 0.6, pressure: 1.0, moistureBias: -0.13 },
+  volcanic: { ice: 0.6, storm: 1.1, fire: 1.8, drought: 0.9, flood: 0.9, volcano: 3.0, fertility: 1.1, pressure: 1.4, moistureBias: -0.02 },
+  fertile:  { ice: 0.7, storm: 1.0, fire: 0.7, drought: 0.5, flood: 1.2, volcano: 0.8, fertility: 1.6, pressure: 0.8, moistureBias:  0.09 },
+  restless: { ice: 1.2, storm: 1.6, fire: 1.4, drought: 1.3, flood: 1.4, volcano: 1.8, fertility: 0.9, pressure: 1.9, moistureBias:  0.00 },
+  placid:   { ice: 0.6, storm: 0.6, fire: 0.6, drought: 0.6, flood: 0.7, volcano: 0.5, fertility: 1.2, pressure: 0.45, moistureBias: 0.04 },
+};
+
+// Which arcs make sense after which temperament — a world that starts cold
+// warms or stays cold; it does not start cold and become volcanic.
+const ARCS_FOR: Record<Temperament, LifeArc[]> = {
+  cold:     ['warming', 'cooling', 'settling'],
+  wet:      ['drying', 'greening', 'destabilizing'],
+  dry:      ['greening', 'drying', 'warming'],
+  volcanic: ['settling', 'destabilizing', 'cooling'],
+  fertile:  ['drying', 'greening', 'settling'],
+  restless: ['settling', 'destabilizing', 'cooling'],
+  placid:   ['destabilizing', 'greening', 'warming'],
+};
+
+function hashSeed(s: string): number {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+  return h >>> 0;
+}
+
+export function rollCharacter(seed: string): WorldCharacter {
+  const h = hashSeed(seed + ':character');
+  const kinds = Object.keys(TEMPERAMENTS) as Temperament[];
+  const temperament = kinds[h % kinds.length];
+  const arcs = ARCS_FOR[temperament];
+  const arc = arcs[(h >>> 8) % arcs.length];
+  return { temperament, arc, ...TEMPERAMENTS[temperament] };
+}
+
+// The arc bends the temperament across the world's life: a drying world is wet
+// in youth and parched in old age. Returns the character as it stands NOW.
+// `t` is world-life fraction, 0..1.
+export function characterNow(base: WorldCharacter, t: number): WorldCharacter {
+  const swing = (t - 0.5) * 2;         // -1 young … +1 old
+  const c = { ...base };
+  const bend = (v: number, amount: number) => Math.max(0.1, v * (1 + swing * amount));
+  switch (base.arc) {
+    case 'warming':       c.ice = bend(c.ice, -0.75); c.drought = bend(c.drought, 0.6); c.fire = bend(c.fire, 0.5); break;
+    case 'cooling':       c.ice = bend(c.ice, 0.9); c.fertility = bend(c.fertility, -0.35); break;
+    case 'drying':        c.drought = bend(c.drought, 1.1); c.fire = bend(c.fire, 0.8); c.flood = bend(c.flood, -0.6); c.fertility = bend(c.fertility, -0.4); break;
+    case 'greening':      c.fertility = bend(c.fertility, 0.55); c.drought = bend(c.drought, -0.7); c.flood = bend(c.flood, 0.4); break;
+    case 'destabilizing': c.pressure = bend(c.pressure, 1.0); c.volcano = bend(c.volcano, 0.9); c.storm = bend(c.storm, 0.7); break;
+    case 'settling':      c.pressure = bend(c.pressure, -0.6); c.volcano = bend(c.volcano, -0.6); c.storm = bend(c.storm, -0.4); break;
+  }
+  return c;
+}
+
+// The character as of this tick — what every consumer should read.
+export function characterOf(world: SimWorld): WorldCharacter {
+  return characterNow(world.character, (world.tick % SIM.worldCycleTicks) / SIM.worldCycleTicks);
 }
 
 // --- Ice ages ---------------------------------------------------------------
@@ -513,7 +606,7 @@ export function createSimWorld(width: number, height: number): SimWorld {
 // lifetime, so every world gets exactly one advance and one retreat, and the
 // thaw always lands before the cataclysm. 0 = ice-free, 1 = the front has
 // reached the equator (it never does; refugeBuffer holds a warm belt open).
-export function iceExtentFor(tick: number): number {
+export function iceExtentFor(tick: number, iceMult = 1): number {
   const I = SIM.ice;
   const t = (tick % SIM.worldCycleTicks) / SIM.worldCycleTicks;
   if (t <= I.onsetAt || t >= I.goneAt) return 0;
@@ -521,7 +614,8 @@ export function iceExtentFor(tick: number): number {
     ? (t - I.onsetAt) / (I.peakAt - I.onsetAt)
     : 1 - (t - I.peakAt) / (I.goneAt - I.peakAt);
   const eased = u * u * (3 - 2 * u); // smoothstep: the front eases in and out
-  return eased * I.peakCoverage;
+  // A cold world glaciates hard; a volcanic one barely at all.
+  return Math.min(0.95, eased * I.peakCoverage * iceMult);
 }
 
 // Smooth, deterministic multi-frequency wobble in ~[-1, 1]. Pure (no seed, no
@@ -1183,10 +1277,19 @@ function rollCatastropheSeverity(): number {
   return Math.pow(Math.random(), CATASTROPHE.severitySkew);
 }
 
-function rollCatastropheType(): CatastropheType {
-  const roll = Math.random();
-  return roll < 0.2 ? 'plague' : roll < 0.4 ? 'asteroid' : roll < 0.6 ? 'flood'
-    : roll < 0.8 ? 'earthquake' : 'volcano';
+// Weighted by the world's temperament, so a wet world drowns and a volcanic one
+// burns. Asteroids and plague stay roughly constant — they don't care what kind
+// of planet this is.
+function rollCatastropheType(ch: WorldCharacter): CatastropheType {
+  const weights: Array<[CatastropheType, number]> = [
+    ['plague', 1], ['asteroid', 1],
+    ['flood', ch.flood], ['earthquake', 1 + (ch.volcano - 1) * 0.5], ['volcano', ch.volcano],
+  ];
+  let total = 0;
+  for (const [, w] of weights) total += w;
+  let roll = Math.random() * total;
+  for (const [kind, w] of weights) { roll -= w; if (roll <= 0) return kind; }
+  return 'plague';
 }
 
 // Hand the sim the standing-volcano locations the renderer placed. Each gets a
@@ -1339,7 +1442,7 @@ export function applyCatastrophe(
   const brewing = world.brewing;
   world.brewing = null;
   const severity = brewing ? brewing.severity : rollCatastropheSeverity();
-  const catastropheType = brewing ? brewing.type : rollCatastropheType();
+  const catastropheType = brewing ? brewing.type : rollCatastropheType(characterOf(world));
 
   // Knowledge-loss tier.
   const isMinor  = severity < CATASTROPHE.severityModerateThreshold;
@@ -1692,6 +1795,10 @@ export function step(
   const biomeChanges: BiomeChange[] = [];
   const events: SimEvent[] = [];
 
+  // The world's character as of this tick, hoisted once: the grid scan below
+  // reads it per tile and it must not change mid-tick.
+  const ch = characterOf(world);
+
   const snapshot: { state: TileState; civId: number | null }[][] = world.tiles.map((rowArr) =>
     rowArr.map((t) => ({ state: t.state, civId: t.civId }))
   );
@@ -1817,7 +1924,9 @@ export function step(
 
         if (civ.phase !== 'dead') {
           const myStrength = effectiveStrength(civ);
-          const spreadP = SIM.spreadBase * myStrength;
+          // Fertility is the temperament's most legible consequence: a rich
+          // world fills up, a barren one stays sparse for its whole life.
+          const spreadP = SIM.spreadBase * myStrength * ch.fertility;
           const neighbors = [[row - 1, col], [row + 1, col], [row, col - 1], [row, col + 1]];
           for (const [r, c] of neighbors) {
             if (r < 0 || r >= world.height || c < 0 || c >= world.width) continue;
@@ -1962,7 +2071,7 @@ export function step(
   // Climate: the ice advances from both poles and withdraws, once per world.
   {
     const prev = world.iceExtent;
-    world.iceExtent = iceExtentFor(world.tick);
+    world.iceExtent = iceExtentFor(world.tick, ch.ice);
     if (world.iceExtent > world.iceMax) world.iceMax = world.iceExtent;
     const peak = SIM.ice.peakCoverage * 0.98;
     if (prev < 0.06 && world.iceExtent >= 0.06) events.push({ kind: 'ice_advance' });
@@ -1977,12 +2086,12 @@ export function step(
     settledFraction * CATASTROPHE.pressureSettledWeight +
     avgEraRankNorm * CATASTROPHE.pressureEraWeight +
     timeFactor * CATASTROPHE.pressureTimeSinceLastWeight
-  ) * world.pressureNoise;
+  ) * world.pressureNoise * ch.pressure;
 
   // Once pressure commits to a direction, the coming catastrophe takes shape;
   // omens fire as it nears.
   if (!world.brewing && world.catastrophePressure >= CATASTROPHE.brewingThreshold) {
-    world.brewing = { type: rollCatastropheType(), severity: rollCatastropheSeverity(), omenStage: 0 };
+    world.brewing = { type: rollCatastropheType(characterOf(world)), severity: rollCatastropheSeverity(), omenStage: 0 };
   }
   if (world.brewing) {
     // Omen depth predicts magnitude: a minor event gets only the stage-1

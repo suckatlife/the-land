@@ -12,7 +12,7 @@ const WONDER_RADIUS: Record<NaturalWonderKind, number> = {
   volcano: 5, crater_lake: 8, monolith: 7, rainbow_hills: 6, karst_spires: 6, salt_flat: 6,
 };
 import { drawTile, drawStateOverlayPersistent, redrawOverlay, redrawBiomeTile, lerpColor, gridToScreen, rgbToHsl, hslToRgb } from './iso';
-import { createSimWorld, step, tileOverlayColor, seedInitialCivs, applyCatastrophe, setVolcanoes, eruptVolcanoesNow, setWonderSites, iceDepthAt, SIM, CATASTROPHE, CITY, nearestCityDist, type SimWorld, type Civ, type CivCity, type SimEvent, type Era, type TileOverlay, type BiomeChange, type CatastropheType } from './sim';
+import { createSimWorld, rollCharacter, characterOf, step, tileOverlayColor, seedInitialCivs, applyCatastrophe, setVolcanoes, eruptVolcanoesNow, setWonderSites, iceDepthAt, SIM, CATASTROPHE, CITY, nearestCityDist, type SimWorld, type Civ, type CivCity, type SimEvent, type Era, type TileOverlay, type BiomeChange, type CatastropheType } from './sim';
 import * as audio from './audio';
 import { createAtmosphere, ATMOS } from './atmosphere';
 
@@ -1038,6 +1038,13 @@ function tileToSky(row: number, col: number): { x: number; y: number } {
 // eagerly here would hit the temporal dead zone at module init.)
 // Succession: where the ruins are, how far along the wood is, and a forced bake
 // so a harness can age the world and look at the result immediately.
+// The world's biography — temperament, arc, and the bent values as they stand
+// right now. Nothing announces this in the UI; it's meant to be felt.
+(window as any).__world = {
+  character: () => simWorld.character,
+  now: () => characterOf(simWorld),
+  age: () => +((simWorld.tick % SIM.worldCycleTicks) / SIM.worldCycleTicks).toFixed(3),
+};
 (window as any).__succ = {
   at: (row: number, col: number) => tileToSky(row, col),
   bake: () => { decaySoilMarks(); drawSuccession(true); },
@@ -1439,8 +1446,8 @@ let currentSeed = getInitialSeed();
 saveSeed(currentSeed);
 
 // --- World state ---
-let { biomes: biomeMap, elevation: elevationMap } = generateBiomeMap(GRID_SIZE, GRID_SIZE, currentSeed);
-let simWorld: SimWorld = createSimWorld(GRID_SIZE, GRID_SIZE);
+let { biomes: biomeMap, elevation: elevationMap } = generateBiomeMap(GRID_SIZE, GRID_SIZE, currentSeed, rollCharacter(currentSeed).moistureBias);
+let simWorld: SimWorld = createSimWorld(GRID_SIZE, GRID_SIZE, currentSeed);
 seedInitialCivs(simWorld, biomeMap, 1);
 (window as any).__sim = simWorld;
 interface TileVisual {
@@ -3594,7 +3601,7 @@ function igniteTile(r: number, c: number) {
 }
 function updateFires(dt: number, nowSec: number, night: number) {
   // A new fire breaks out now and then, on a random patch of wild forest.
-  if (fires.length === 0 && Math.random() < dt / FIRE_IGNITE_MEAN) {
+  if (fires.length === 0 && Math.random() < (dt / FIRE_IGNITE_MEAN) * characterOf(simWorld).fire) {
     for (let tries = 0; tries < 24; tries++) {
       const r = (Math.random() * GRID_SIZE) | 0, c = (Math.random() * GRID_SIZE) | 0;
       if (biomeMap[r][c] === 'forest' && simWorld.tiles[r][c].state === 'wild') { igniteTile(r, c); break; }
@@ -3663,7 +3670,7 @@ function hardenLava(l: LavaTile) {
   enrollBiomeTrans(l.row, l.col);
 }
 function maybeEruptVolcano(dt: number) {
-  if (volcanoes.length > 0 || Math.random() >= dt / VOLCANO_MEAN) return;
+  if (volcanoes.length > 0 || Math.random() >= (dt / VOLCANO_MEAN) * characterOf(simWorld).volcano) return;
   // Vents open on high, wild rock — a mountain summit.
   let best = -1, bestR = 0, bestC = 0;
   for (let tries = 0; tries < 40; tries++) {
@@ -3860,7 +3867,7 @@ function maybeFlood(dt: number) {
   if (floods.length > 0 || riverPaths.length === 0) return;
   // Snowmelt swells the rivers in spring — floods come more often then.
   const spring = atmos.seasonOfYear() < 0.3 ? 1.7 : 1;
-  if (Math.random() >= (dt / FLOOD_MEAN) * spring) return;
+  if (Math.random() >= (dt / FLOOD_MEAN) * spring * characterOf(simWorld).flood) return;
   const rp = riverPaths[(Math.random() * riverPaths.length) | 0];
   const tiles: FloodTile[] = [];
   const seen = new Set<number>();
@@ -3937,7 +3944,7 @@ interface Drought { tiles: DroughtTile[]; t: number; dur: number; cx: number; cy
 const droughts: Drought[] = [];
 const DROUGHT_MEAN = 95;   // avg seconds between droughts
 function maybeDrought(dt: number) {
-  if (droughts.length > 0 || Math.random() >= dt / DROUGHT_MEAN) return;
+  if (droughts.length > 0 || Math.random() >= (dt / DROUGHT_MEAN) * characterOf(simWorld).drought) return;
   // Centre on a random patch of inhabited-ish land.
   let cr = -1, cc = -1;
   for (let tries = 0; tries < 30; tries++) {
@@ -6361,9 +6368,9 @@ function refreshTileOverlay(row: number, col: number) {
 function resetWorld(newSeed: string) {
   currentSeed = newSeed;
   saveSeed(newSeed);
-  ({ biomes: biomeMap, elevation: elevationMap } = generateBiomeMap(GRID_SIZE, GRID_SIZE, newSeed));
+  ({ biomes: biomeMap, elevation: elevationMap } = generateBiomeMap(GRID_SIZE, GRID_SIZE, newSeed, rollCharacter(newSeed).moistureBias));
   rebuildNaturalWonders();
-  simWorld = createSimWorld(GRID_SIZE, GRID_SIZE);
+  simWorld = createSimWorld(GRID_SIZE, GRID_SIZE, currentSeed);
   seedInitialCivs(simWorld, biomeMap, 1);
   syncSimWonders();
   (window as any).__sim = simWorld;
@@ -6392,7 +6399,7 @@ function resetWorld(newSeed: string) {
 }
 
 function resetSimOnly() {
-  simWorld = createSimWorld(GRID_SIZE, GRID_SIZE);
+  simWorld = createSimWorld(GRID_SIZE, GRID_SIZE, currentSeed);
   seedInitialCivs(simWorld, biomeMap, 1);
   (window as any).__sim = simWorld;
   fadedDeadCivs.clear();
@@ -6645,6 +6652,9 @@ app.ticker.add((ticker) => {
   // Periodic density refresh (vitality drift, prominence growth). Walks only owned tiles
   // via the civ index instead of the full 96×96 grid.
   if (simWorld.tick % DENSITY.refreshInterval === 0) {
+    // The world's temperament bends across its life, so the weather it drives
+    // is refreshed on the same slow cadence rather than every frame.
+    atmos.setStormRate(characterOf(simWorld).storm);
     // Reclamation creeps on its own slow cadence (drawSuccession early-returns
     // between bakes), and the soil marks age with it.
     if (simWorld.tick - lastSuccessionBake >= SUCCESSION.rebakeTicks) { decaySoilMarks(); drawSuccession(); }

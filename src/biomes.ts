@@ -145,6 +145,9 @@ export function generateBiomeMap(
   width: number,
   height: number,
   seed: string,
+  // The world's temperament, applied where it shows most: a wet planet grows
+  // green continents, a dry one tan ones, from the same terrain seed.
+  moistureBias = 0,
 ): { biomes: Biome[][]; elevation: number[][] } {
   const continentalNoise: NoiseFunction2D = createNoise2D(mulberry32(seed + ':continental'));
   const detailNoise: NoiseFunction2D      = createNoise2D(mulberry32(seed + ':detail'));
@@ -163,7 +166,7 @@ export function generateBiomeMap(
       const ease = f * f * (3 - 2 * f);
       const elev = (continental * CONTINENTAL_WEIGHT + detail * DETAIL_WEIGHT) * ease
         - (1 - ease) * EDGE_DEPTH;
-      const moisture    = moistureNoise(col * MOISTURE_SCALE, row * MOISTURE_SCALE);
+      const moisture    = moistureNoise(col * MOISTURE_SCALE, row * MOISTURE_SCALE) + moistureBias;
       biomes[row][col]    = classify(elev, moisture);
       elevation[row][col] = elev;
     }
