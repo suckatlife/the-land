@@ -458,6 +458,7 @@ export interface Atmosphere {
   onCelestialEvent(cb: (kind: string) => void): void;
   triggerCelestial(kind: 'comet' | 'eclipse' | 'aurora' | 'meteors'): void;
   light(): CelestialLight;
+  horizonColor(): number;                    // the sky's current horizon hue (dread lean included)
   setLightAzimuth(v: number | null): void;   // pin the light's azimuth (null = resume cycle)
   setLightAltitude(v: number | null): void;  // pin the light's altitude
   setStarRotation(v: number): void;          // 0..1 of a full turn
@@ -1543,6 +1544,9 @@ export function createAtmosphere(): Atmosphere {
     onCelestialEvent: (cb: (kind: string) => void) => { eventCb = cb; },
     triggerCelestial: (kind: 'comet' | 'eclipse' | 'aurora' | 'meteors') => { startCelestial(kind); },
     light: () => curLight,
+    // The sky's current horizon color, dread lean included. Anything that has
+    // to melt into the horizon (the depth haze in main.ts) tints to this.
+    horizonColor: () => lastSkyHorizon,
     setLightAzimuth: (v: number | null) => { lightAzOverride = v == null ? null : Math.max(0, Math.min(1, v)); },
     setLightAltitude: (v: number | null) => { lightAltOverride = v == null ? null : Math.max(0, Math.min(1, v)); },
     setStarRotation: (v: number) => { starRotation = v * Math.PI * 2; },

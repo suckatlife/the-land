@@ -122,11 +122,41 @@ const MAX_EXTRA_FLOORS = 5; // safety cap (matches max floors-1 across all eras)
 const ERA_SAT_MULT: Record<Era, number> = {
   neolithic:  0.30,  // heavily muted toward gray
   classical:  0.55,
-  medieval:   0.75,
-  industrial: 0.95,
-  modern:     1.15,
-  post:       1.40,  // boosted past natural saturation for synthetic vivid
+  medieval:   0.72,
+  industrial: 0.82,
+  modern:     0.95,
+  post:       1.12,  // still the most synthetic era, but no longer a shout
 };
+
+// --- Late-era hierarchy ----------------------------------------------------
+// A developed world used to read as one uniformly assertive field of colour:
+// every building in every era carried the full civ hue, so the eye had nothing
+// to rank. The fix is contrast budgeting, not new geometry — ordinary
+// settlement drifts toward earth/air tones and gives up saturation, while the
+// city cores (and above all the capital) keep theirs. Squint test: geography
+// first, civilisations second, active history third.
+const HIERARCHY = {
+  quietSat:      0.32,      // saturation multiplier at the most ordinary hinterland tile
+  quietBlend:    0.42,      // how far that tile's colour drifts toward the ground it stands on
+  quietLift:     0.10,      // lightness lifted toward the ground, so it contrasts less as well
+  earthTone:     0xa2907a,  // fallback recede target when the ground tone is unknown
+  capitalBoost:  0.40,      // importance added at the capital tile itself
+  capitalRadius: 7,         // tiles over which that boost falls off to nothing
+};
+
+// How much a building is allowed to assert itself: 0 = anonymous hinterland
+// stock, 1 = the capital's core. Density (city proximity × civ vitality) is
+// already the right shape for this — the capital bonus is what stops a big
+// secondary city from reading as loudly as the seat of the civilisation.
+function buildingImportance(row: number, col: number, civ: Civ, density: number): number {
+  let imp = density;
+  const cap = civ.cities[0];
+  if (cap) {
+    const d = Math.hypot(cap.row - row, cap.col - col);
+    imp += HIERARCHY.capitalBoost * Math.max(0, 1 - d / HIERARCHY.capitalRadius);
+  }
+  return Math.max(0, Math.min(1, imp));
+}
 const ERA_SAT_EASE = 0.04;  // per-tick ease toward target saturation when era changes
 
 // --- Label config (tune by eye) ---
@@ -677,7 +707,8 @@ const sceneryWaterGfx = new Graphics(); // beyond-the-grid sea (under glitter)
 const sceneryLandGfx = new Graphics();  // beyond-the-grid land (over glitter)
 const roadsGfx = new Graphics();        // paths between cities, era-styled
 const conflictGfx = new Graphics();     // war flickers at contested tiles
-const warGfx = new Graphics();          // armies, banners, siege camps at the fronts
+const warLayer = new Container();       // armies, banners, sieges — one scaled Graphics per battle
+const warPool: Graphics[] = [];         // pooled per-battle Graphics, each scaled around its front
 const wonderGfx = new Graphics();       // monuments (persist as ruins)
 const skylineGfx = new Graphics();      // era settlement tells: walls, smokestacks, antenna masts
 const boatsGfx = new Graphics();        // sea craft, fishing dots, whales
@@ -693,6 +724,33 @@ const smogGfx = new Graphics();        // end-of-cycle pollution pooling over ci
 const cityLightsGfx = new Graphics();
 cityLightsGfx.blendMode = 'add';
 cityLightsGfx.alpha = 0;
+
+// --- Atmospheric perspective ------------------------------------------------
+// Distance should cost contrast, not only size. The wash is a single vertical
+// gradient laid over the far part of the world capture (world y grows toward
+// the viewer, so y=0 is the far horizon), tinted live to the sky's horizon
+// colour so the far latitudes dissolve into the air they sit under.
+const DEPTH = {
+  reach:     0.60,  // fraction of the capture's depth the haze covers, from the horizon forward
+  strength:  0.32,  // alpha at the very back
+  power:     2.0,   // ramp shape — higher keeps the haze nearer the horizon
+  nightMult: 0.55,  // how much of the haze survives at deep night (air still reads, but dimmer)
+};
+function makeDepthHazeTexture(): Texture {
+  const cv = document.createElement('canvas');
+  cv.width = 2; cv.height = 256;
+  const ctx = cv.getContext('2d')!;
+  const grad = ctx.createLinearGradient(0, 0, 0, 256);
+  // Bake the t^power ramp into the stops so no shader is needed.
+  for (let i = 0; i <= 8; i++) {
+    const t = i / 8;
+    grad.addColorStop(t, `rgba(255,255,255,${Math.pow(1 - t, DEPTH.power).toFixed(4)})`);
+  }
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, 2, 256);
+  return Texture.from(cv);
+}
+const depthHazeSprite = new Sprite(makeDepthHazeTexture());
 
 const biomeLayer = new Container();
 const simLayer = new Container();
@@ -778,7 +836,7 @@ world.addChild(powerGfx);
 // Conflict flickers and monuments stand among the buildings.
 world.addChild(conflictGfx);
 // Armies clash at the war fronts, above the conflict glow.
-world.addChild(warGfx);
+world.addChild(warLayer);
 world.addChild(wonderGfx);
 // Era settlement tells stand among the city's buildings, with the monuments.
 world.addChild(skylineGfx);
@@ -828,6 +886,14 @@ world.addChild(atmos.cloudShadowLayer);
 world.addChild(cityLightsGfx);
 // Festival glow joins the lights; storms ride above everything groundborne.
 world.addChild(festivalGfx);
+// Atmospheric perspective: air between the viewer and the far latitudes. It
+// lies over everything groundborne (terrain, buildings, wonders, night lights)
+// so distance costs detail AND contrast, not just detail — the far half of the
+// world settles toward the horizon colour instead of competing with the near
+// half. One quad inside the world capture, so it bends with the planet; kept
+// to the far portion of the capture so it isn't paying fill for the near half,
+// where its alpha would be ~0 anyway.
+world.addChild(depthHazeSprite);
 world.addChild(atmos.stormLayer);
 // Bird flocks cross at dawn and dusk.
 world.addChild(atmos.birdLayer);
@@ -850,6 +916,13 @@ atmos.attach({ biomeLayer });
 // bends together. The capture rect is in world units, window-independent.
 const WORLD_CAPTURE = { x0: -1600, y0: -110, w: 3200, h: 1720 };
 const captureScale = ATMOS.composition.worldScale;
+
+// Size the depth haze to the back DEPTH.reach of the capture (declared above,
+// where the layer stack needs it; the capture rect only exists here).
+depthHazeSprite.x = WORLD_CAPTURE.x0;
+depthHazeSprite.y = WORLD_CAPTURE.y0;
+depthHazeSprite.width = WORLD_CAPTURE.w;
+depthHazeSprite.height = WORLD_CAPTURE.h * DEPTH.reach;
 
 // The world is rendered into this texture EVERY frame; its resolution comes
 // from the quality setting.
@@ -924,6 +997,28 @@ function tileToSky(row: number, col: number): { x: number; y: number } {
 (window as any).__anim = () => ({ tiles: animatingTiles.size, buildings: animatingBuildingTiles.size, biome: animatingBiomeTiles.size });
 (window as any).__rt = () => ({ res: worldRT.source.resolution, w: worldRT.source.pixelWidth, h: worldRT.source.pixelHeight, bound: worldPlane.texture === worldRT, tickerFPS: Math.round(app.ticker.FPS) });
 (window as any).__perf = { sky: atmos.skyLayer, plane: worldPlane, set skipRT(v: boolean) { (window as any).__skipRT = v; } };
+// Live scrubbers for the visual-hierarchy pass — mutate a field, call the
+// matching apply, judge by eye. `flat()` is the A/B: it turns the whole pass
+// off (uniform building colour, no depth haze, dense ground texture) so the
+// same world can be compared with and without it.
+// (getters, not values: GROUND is declared further down the file, so reading it
+// eagerly here would hit the temporal dead zone at module init.)
+(window as any).__hier = {
+  get HIERARCHY() { return HIERARCHY; },
+  get DEPTH() { return DEPTH; },
+  get GROUND() { return GROUND; },
+  buildings: () => rebuildBuildingSprites(),   // re-tint every building in place
+  ground: () => drawBiomes(),                  // re-bake terrain texture (slow, ~1s)
+  haze: () => {
+    depthHazeSprite.texture = makeDepthHazeTexture();
+    depthHazeSprite.height = WORLD_CAPTURE.h * DEPTH.reach;
+  },
+  flat: () => {
+    HIERARCHY.quietSat = 1; HIERARCHY.quietBlend = 0; HIERARCHY.capitalBoost = 0;
+    DEPTH.strength = 0; GROUND.bareBelow = 0; GROUND.bladeAlpha = 0.3; GROUND.grainAlpha = 0.32;
+    rebuildBuildingSprites(); drawBiomes();
+  },
+};
 (window as any).__fx = { smogGfx, farmGfx, buildingLayer, sky: atmos.skyLayer, fog: atmos.fogLayer };
 (window as any).__life = () => ({ herds: herds.length, power: powerLines.length, cables: cables.length, caravans: caravans.length, boats: boats.length });
 
@@ -1552,6 +1647,23 @@ function patchCoreness(row: number, col: number, biome: Biome): number {
   return same / total;
 }
 
+// Open ground used to carry the same grain/blade texture on every single tile,
+// which made empty land as busy as settled land and left the eye nowhere to
+// rest. A slow seedless swell (smooth over ~10 tiles) thins that texture out
+// and, below a threshold, leaves stretches simply bare — so plains read as
+// plains. Forests and mountains are deliberately untouched: they're geography,
+// and geography is supposed to read first.
+const GROUND = {
+  bareBelow:  0.40,  // swell under this leaves ground bare — the quiet passages
+  bladeAlpha: 0.20,  // grass/fertile blades (was a flat 0.30 everywhere)
+  grainAlpha: 0.22,  // sand grains (was a flat 0.32 everywhere)
+};
+function groundCover(row: number, col: number): number {
+  const a = Math.sin(row * 0.13 + col * 0.09) + Math.sin(col * 0.11 - row * 0.16);
+  const swell = (a / 2 + 1) / 2;                       // ~0..1, smooth
+  return Math.max(0, (swell - GROUND.bareBelow) / (1 - GROUND.bareBelow));
+}
+
 // One little tree (conifer or broadleaf) at a tile-local offset. Shared by
 // forests and by forested mountain foothills.
 function drawTree(g: Graphics, ox: number, oy: number, s: number, conifer: boolean) {
@@ -1619,18 +1731,21 @@ function decorateTile(g: Graphics, biome: Biome, row: number, col: number) {
       g.poly([apexX, -peak, apexX - snow * 0.7, -peak + snow, apexX + snow * 0.7, -peak + snow]).fill({ color: 0xeef2f6, alpha: 0.92 });
     }
   } else if (biome === 'sand') {
-    for (let i = 0; i < 6; i++) {
+    const cover = groundCover(row, col);
+    const n = Math.round(6 * cover);
+    for (let i = 0; i < n; i++) {
       const ox = (rnd(i * 2 + 1) - 0.5) * 24, oy = (rnd(i * 2 + 2) - 0.5) * 11;
-      g.circle(ox, oy, 0.7).fill({ color: i % 3 ? 0xd6bd86 : 0xc6ab74, alpha: 0.32 }); // faint grains
+      g.circle(ox, oy, 0.7).fill({ color: i % 3 ? 0xd6bd86 : 0xc6ab74, alpha: GROUND.grainAlpha }); // faint grains
     }
   } else { // grass, fertile — a few faint blades, lusher on fertile
-    const n = biome === 'fertile' ? 5 : 4;
+    const cover = groundCover(row, col);
+    const n = Math.round((biome === 'fertile' ? 5 : 4) * cover);
     const tip = biome === 'fertile' ? 0x7aac58 : 0x82ad68;
     for (let i = 0; i < n; i++) {
       const ox = (rnd(i * 2 + 1) - 0.5) * 22, oy = (rnd(i * 2 + 2) - 0.5) * 10;
       g.moveTo(ox - 0.7, oy).lineTo(ox - 0.7, oy - 2.0).moveTo(ox, oy).lineTo(ox, oy - 2.4)
         .moveTo(ox + 0.7, oy).lineTo(ox + 0.7, oy - 1.9)
-        .stroke({ color: tip, alpha: 0.3, width: 0.6, cap: 'round' });
+        .stroke({ color: tip, alpha: GROUND.bladeAlpha, width: 0.6, cap: 'round' });
     }
   }
 }
@@ -1819,14 +1934,24 @@ const civLastEra = new Map<number, Era>();
 // up to ±BUILDING_VARIATION.* around the civ's base color, then apply the
 // civ's current (eased) era saturation multiplier on top. Stable per (row,col,slot)
 // for fixed civ era; smoothly shifts during era transitions.
-function tintForBuilding(baseColor: number, row: number, col: number, slotIdx: number, civ: Civ): number {
+function tintForBuilding(baseColor: number, row: number, col: number, slotIdx: number, civ: Civ, importance = 1, groundTone = HIERARCHY.earthTone): number {
   const lOff = ((_bldHash(row, col, slotIdx, 5) / 0xffffffff) * 2 - 1) * BUILDING_VARIATION.lightness;
   const sOff = ((_bldHash(row, col, slotIdx, 6) / 0xffffffff) * 2 - 1) * BUILDING_VARIATION.saturation;
   const [h, s, l] = rgbToHsl(baseColor);
   const eraSat = civCurSatMult.get(civ.id) ?? ERA_SAT_MULT[civ.era];
-  return hslToRgb(h,
-    Math.max(0, Math.min(1, (s + sOff) * eraSat)),
-    Math.max(0, Math.min(1, l + lOff)));
+  // Ordinary stock gives up chroma; the core keeps all of it.
+  const ordinary = 1 - importance;
+  const quiet = HIERARCHY.quietSat + (1 - HIERARCHY.quietSat) * importance;
+  const [, , gl] = rgbToHsl(groundTone);
+  const c = hslToRgb(h,
+    Math.max(0, Math.min(1, (s + sOff) * eraSat * quiet)),
+    // Lift toward the ground's value too: cutting chroma alone leaves a dark
+    // mass that still shouts by contrast. Recede in value AND colour.
+    Math.max(0, Math.min(1, l + lOff + (gl - l) * HIERARCHY.quietLift * ordinary)));
+  // …and drifts toward the ground it stands on — a desert town goes sandy, a
+  // forest town goes green — so hinterland settlement reads as part of the
+  // landscape rather than as a swatch of the civ's colour laid over it.
+  return lerpColor(c, groundTone, HIERARCHY.quietBlend * ordinary);
 }
 
 // 0..1 density for a built tile. Proximity drives the shape; vitality scales it.
@@ -1922,6 +2047,12 @@ function refreshBuildingSprite(row: number, col: number) {
   }
 
   const density = computeTileDensity(row, col, civ!);
+  const importance = buildingImportance(row, col, civ!, density);
+  // The ground this tile stands on, matching drawBiomes' rule that forest and
+  // rock tiles keep the grass base under their trees/peaks.
+  const tileBiome = biomeMap[row][col];
+  const groundTone = (tileBiome === 'forest' || tileBiome === 'rock' || tileBiome === 'water')
+    ? BIOME_COLORS.grass : BIOME_COLORS[tileBiome];
   const count = densityToCount(density);
   if (count === 0 && !state) return;
 
@@ -1967,7 +2098,7 @@ function refreshBuildingSprite(row: number, col: number) {
     }
     state.ruined[slotIdx] = nowRuined;
 
-    const tint = wantActive ? tintForBuilding(civ!.color, row, col, slotIdx, civ!) : RUIN_TINT;
+    const tint = wantActive ? tintForBuilding(civ!.color, row, col, slotIdx, civ!, importance, groundTone) : RUIN_TINT;
     const [dx, dy] = SLOT_POSITIONS[slotIdx];
     const baseY = y + dy;
     const slotZBase = ((row + col) * 4 + SLOT_DEPTHS[slotIdx]) * 100;
@@ -3888,14 +4019,34 @@ function drawDeathRobot(g: Graphics, x: number, groundY: number, hx: number, now
   g.circle(x, hipY + 1, 3).fill({ color: core, alpha: 0.25 * env });
   if (Math.sin(nowSec * 4 + x) > 0.6) g.circle(x + hx * 11, hipY, 1.7).fill({ color: 0xeaffff, alpha: 0.85 * env }); // muzzle flash
 }
+// War units read tiny at full-globe zoom, so each battle is drawn into its own
+// Graphics scaled around its own front centre — the whole clash (units AND their
+// spread) grows together, in place, from one knob. Bump WAR_SCALE to taste.
+let WAR_SCALE = 1.7;
+// War units are 6–16px in world space, which is a handful of pixels on a
+// full-globe capture — so this is a knob to judge live, and these are the
+// handles for doing it: scrub the scale, and ask where the live fronts are on
+// screen (through the curvature, via tileToSky) so a shot can be cropped onto
+// one instead of hunting for it by eye.
+(window as any).__war = {
+  get scale() { return WAR_SCALE; },
+  set scale(v: number) { WAR_SCALE = v; },
+  list: () => battles.map((b) => ({ row: b.row, col: b.col, siege: b.siege, era: b.era, ...tileToSky(b.row, b.col) })),
+};
 function updateWarfare(nowSec: number) {
-  warGfx.clear();
   for (let i = battles.length - 1; i >= 0; i--) {
-    const b = battles[i];
-    const cold = nowSec - b.lastHit;
-    if (cold > BATTLE_LIFE) { battles.splice(i, 1); continue; }
-    drawOneBattle(warGfx, b, nowSec);
+    if (nowSec - battles[i].lastHit > BATTLE_LIFE) battles.splice(i, 1);
   }
+  for (let i = 0; i < battles.length; i++) {
+    const b = battles[i];
+    let g = warPool[i];
+    if (!g) { g = new Graphics(); warPool[i] = g; warLayer.addChild(g); }
+    g.clear(); g.visible = true;
+    // Pivot+position at the front centre so scaling grows the clash around itself.
+    g.pivot.set(b.cx, b.cy); g.position.set(b.cx, b.cy); g.scale.set(WAR_SCALE);
+    drawOneBattle(g, b, nowSec);
+  }
+  for (let i = battles.length; i < warPool.length; i++) warPool[i].visible = false;
 }
 function drawOneBattle(warGfx: Graphics, b: Battle, nowSec: number) {
   {
@@ -5347,7 +5498,7 @@ function resetStorySurfaces() {
   waterRouteCache.clear();
   warHeat.clear();
   conflictFlashes.length = 0;
-  battles.length = 0; warGfx.clear();
+  battles.length = 0; for (const g of warPool) g.visible = false;
   boats.length = 0;
   wrecks.length = 0;
   caravans.length = 0;
@@ -5921,6 +6072,10 @@ app.ticker.add((ticker) => {
   const L = atmos.light();
   const n = L.nightness;
   cityLightsGfx.alpha = LIGHTS.maxAlpha * (n * n * (3 - 2 * n));
+  // The far air takes the horizon's colour — dread lean and all — so the back
+  // of the world is always dissolving into the sky actually behind it.
+  depthHazeSprite.tint = atmos.horizonColor();
+  depthHazeSprite.alpha = DEPTH.strength * (1 - DEPTH.nightMult * n);
   // Clock text reads dark over the day sky, light over the night sky — softly,
   // with a contrasting glow so it stays legible without a panel.
   if (Math.abs(n - lastClockNight) > 0.01) {
