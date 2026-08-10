@@ -895,6 +895,7 @@ const roadsGfx = new Graphics();        // paths between cities, era-styled
 const conflictGfx = new Graphics();     // war flickers at contested tiles
 const warLayer = new Container();       // armies, banners, sieges — one scaled Graphics per battle
 const warPool: Graphics[] = [];         // pooled per-battle Graphics, each scaled around its front
+const successionGfx = new Graphics();   // scrub/wood reclaiming ruins (cached; re-baked slowly)
 const iceGfx = new Graphics();          // polar ice sheets, snow, moraine (cached; re-baked rarely)
 const quietGfx = new Graphics();        // dead-ground silhouette left by a catastrophe
 const wonderGfx = new Graphics();       // monuments (persist as ruins)
@@ -1011,6 +1012,9 @@ world.addChild(farmGrowGfx);
 world.addChild(roadsGfx);
 // Worn land routes (traffic heat) sit just over the roads.
 world.addChild(landTrailGfx);
+// Reclamation grows OVER the roads (grass crossing an abandoned highway is the
+// whole image) but under anything still standing.
+world.addChild(successionGfx);
 // The ice sheets lie over the ground and its roads — snow covers a road — but
 // under everything built, so what survives the cold stands in the snow.
 world.addChild(iceGfx);
@@ -1240,6 +1244,23 @@ function tileToSky(row: number, col: number): { x: number; y: number } {
 // same world can be compared with and without it.
 // (getters, not values: GROUND is declared further down the file, so reading it
 // eagerly here would hit the temporal dead zone at module init.)
+// Succession: where the ruins are, how far along the wood is, and a forced bake
+// so a harness can age the world and look at the result immediately.
+(window as any).__succ = {
+  at: (row: number, col: number) => tileToSky(row, col),
+  bake: () => { decaySoilMarks(); drawSuccession(true); },
+  stats: () => {
+    let abandoned = 0, scrub = 0, wood = 0, ghosts = roadGhosts.length;
+    for (let i = 0; i < abandonTick.length; i++) {
+      if (abandonTick[i] < 0) continue;
+      abandoned++;
+      const t = successionStage(i);
+      if (t >= SUCCESSION.matureFrom) wood++;
+      else if (t >= SUCCESSION.scrubFrom) scrub++;
+    }
+    return { abandoned, scrub, wood, ghosts };
+  },
+};
 (window as any).__hier = {
   get HIERARCHY() { return HIERARCHY; },
   get DEPTH() { return DEPTH; },
@@ -1250,6 +1271,7 @@ function tileToSky(row: number, col: number): { x: number; y: number } {
     depthHazeSprite.texture = makeDepthHazeTexture();
     depthHazeSprite.height = WORLD_CAPTURE.h * DEPTH.reach;
   },
+  get SUCCESSION() { return SUCCESSION; },
   // Aftermath quiet zones — same deal: getters, because QUIET is declared
   // further down. zones() reports each wound's screen position so a shot can be
   // cropped onto it.
@@ -2000,6 +2022,144 @@ function patchCoreness(row: number, col: number, biome: Biome): number {
     }
   }
   return same / total;
+}
+
+// --- Ecological succession --------------------------------------------------
+// The thesis of the whole piece, stated mechanically: civilisation arrives
+// quickly and the land absorbs it slowly. A city falls in seconds; the ground
+// it stood on takes minutes to stop being a city — scrub crosses the roads,
+// saplings gather in the foundations, and eventually only altered soil and the
+// ghost of a road are left for somebody else to find.
+//
+// Rendered as a cached world-space layer re-baked on a slow cadence (the same
+// shape as the ice sheet), because growth is continuous but nobody can see a
+// tree grow at 60fps.
+const SUCCESSION = {
+  matureTicks:   5400,   // abandonment → mature wood (~3 min of viewing)
+  scrubFrom:     0.14,   // stage fractions: first green over the rubble
+  saplingFrom:   0.42,
+  matureFrom:    0.74,
+  rebakeTicks:   120,    // ~4s between re-bakes — growth is slow, the cache is not free
+  soilAlpha:     0.20,   // altered ground where settlement stood, after everything else has gone
+  soilColor:     0x8d7f63,
+  soilDecayTicks: 24000, // the soil mark outlasts the trees, but not the world
+  roadGhostSec:  240,    // an abandoned road stays legible this long (a quarter of a world)
+  roadGhostAlpha: 0.5,   // fraction of the living road's alpha a ghost starts at
+  ghostRoadCost: 0.55,   // A* step cost on a ghost tile — under 1, so new roads follow old ones
+};
+
+// Per-tile succession state. abandonTick survives the tile reverting to wild:
+// the wood keeps growing after the ruin itself is gone, which is the point.
+const abandonTick = new Int32Array(GRID_SIZE * GRID_SIZE).fill(-1);
+const soilMark = new Float32Array(GRID_SIZE * GRID_SIZE);
+let lastSuccessionBake = -1e9;
+
+// After a 5000-tick skip the per-tile hooks never ran, so every existing ruin
+// would read as freshly abandoned (or not abandoned at all). The sim already
+// stamps lastChangedTick — recover the real ages from it.
+function seedSuccessionAfterSkip() {
+  abandonTick.fill(-1); soilMark.fill(0);
+  for (let r = 0; r < GRID_SIZE; r++) {
+    for (let c = 0; c < GRID_SIZE; c++) {
+      const t = simWorld.tiles[r][c];
+      const k = r * GRID_SIZE + c;
+      if (t.state === 'ruin') { abandonTick[k] = t.lastChangedTick; soilMark[k] = 1; }
+      else if (t.state === 'built' || t.state === 'cleared') soilMark[k] = 1;
+    }
+  }
+  lastSuccessionBake = -1e9;
+  drawSuccession(true);
+}
+
+function noteSuccession(row: number, col: number) {
+  const k = row * GRID_SIZE + col;
+  const st = simWorld.tiles[row][col].state;
+  if (st === 'built' || st === 'cleared') {
+    abandonTick[k] = -1;      // occupied again: the clock resets, the wood is cleared
+    soilMark[k] = 1;
+  } else if (st === 'ruin' && abandonTick[k] < 0) {
+    abandonTick[k] = simWorld.tick;
+    soilMark[k] = 1;
+  }
+}
+
+// 0 = freshly abandoned, 1 = mature wood.
+function successionStage(k: number): number {
+  const at = abandonTick[k];
+  if (at < 0) return 0;
+  return Math.max(0, Math.min(1, (simWorld.tick - at) / SUCCESSION.matureTicks));
+}
+
+function drawSuccession(force = false) {
+  if (!force && simWorld.tick - lastSuccessionBake < SUCCESSION.rebakeTicks) return;
+  lastSuccessionBake = simWorld.tick;
+  successionGfx.cacheAsTexture?.(false);
+  successionGfx.clear();
+  let drew = 0;
+  for (let r = 0; r < GRID_SIZE; r++) {
+    for (let c = 0; c < GRID_SIZE; c++) {
+      const k = r * GRID_SIZE + c;
+      if (abandonTick[k] < 0 && soilMark[k] <= 0.01) continue;
+      const biome = biomeMap[r][c];
+      if (biome === 'water') continue;
+      const { x, y } = gridToScreen(c, r);
+
+      // Altered soil: the longest-lived trace, and the one a later civilisation
+      // is unknowingly drawn back to.
+      const soil = soilMark[k];
+      if (soil > 0.01) {
+        successionGfx.poly([x, y - 8, x + 16, y, x, y + 8, x - 16, y])
+          .fill({ color: SUCCESSION.soilColor, alpha: SUCCESSION.soilAlpha * soil });
+        drew++;
+      }
+
+      const t = successionStage(k);
+      if (t < SUCCESSION.scrubFrom || simWorld.tiles[r][c].state === 'built') continue;
+      const rnd = (s: number) => tileRand(r, c, s);
+
+      if (t < SUCCESSION.saplingFrom) {
+        // Scrub: tufts pushing up through the rubble and over the roads.
+        const f = (t - SUCCESSION.scrubFrom) / (SUCCESSION.saplingFrom - SUCCESSION.scrubFrom);
+        for (let i = 0; i < 5; i++) {
+          const ox = (rnd(i * 3 + 41) - 0.5) * 22, oy = (rnd(i * 3 + 42) - 0.5) * 10;
+          successionGfx.moveTo(ox + x - 0.7, oy + y).lineTo(ox + x - 0.7, oy + y - 2.2)
+            .moveTo(ox + x, oy + y).lineTo(ox + x, oy + y - 2.8)
+            .stroke({ color: 0x7d9c5c, alpha: 0.42 * f, width: 0.7, cap: 'round' });
+        }
+        drew++;
+      } else {
+        // Saplings thickening into a wood. Trees gather on the foundations
+        // rather than scattering evenly — the ruin is where the seed catches.
+        const f = Math.min(1, (t - SUCCESSION.saplingFrom) / (SUCCESSION.matureFrom - SUCCESSION.saplingFrom));
+        const grown = t >= SUCCESSION.matureFrom;
+        const n = biome === 'sand' ? 1 : (grown ? 3 + Math.round(rnd(9) * 2) : 1 + Math.round(f * 2));
+        const scale = (grown ? 0.72 + rnd(11) * 0.3 : 0.3 + f * 0.4);
+        const trees: Array<{ ox: number; oy: number; s: number; conifer: boolean }> = [];
+        for (let i = 0; i < n; i++) {
+          trees.push({
+            ox: x + (rnd(i * 4 + 51) - 0.5) * 20,
+            oy: y + (rnd(i * 4 + 52) - 0.5) * 8,
+            s: scale * (0.8 + rnd(i * 4 + 53) * 0.4),
+            conifer: rnd(i * 4 + 54) < 0.45,
+          });
+        }
+        trees.sort((a, b) => a.oy - b.oy);
+        for (const tr of trees) drawTree(successionGfx, tr.ox, tr.oy, tr.s, tr.conifer);
+        drew++;
+      }
+    }
+  }
+  successionGfx.visible = drew > 0;
+  if (drew > 0) successionGfx.cacheAsTexture?.(true);
+}
+
+// The soil mark fades over many minutes — slower than the wood that grows on
+// it, so the last thing to go is the fact that anyone was ever here.
+function decaySoilMarks() {
+  const d = SUCCESSION.rebakeTicks / SUCCESSION.soilDecayTicks;
+  for (let i = 0; i < soilMark.length; i++) {
+    if (soilMark[i] > 0 && abandonTick[i] >= 0) soilMark[i] = Math.max(0, soilMark[i] - d);
+  }
 }
 
 // --- Ice ages ---------------------------------------------------------------
@@ -3097,7 +3257,9 @@ function findLandPath(r1: number, c1: number, r2: number, c2: number): Array<{ r
       if (nr < 0 || nr >= GRID_SIZE || nc < 0 || nc >= GRID_SIZE) continue;
       if (biomeMap[nr][nc] === 'water') continue;
       const nk = key(nr, nc);
-      const g = g0 + 1;
+      // Under 1 on a ghost tile: a new road would rather rediscover an
+      // ancient route than cut a fresh one — roads outlive their builders.
+      const g = g0 + (roadGhostTiles.has(nk) ? SUCCESSION.ghostRoadCost : 1);
       if (g >= (gScore.get(nk) ?? Infinity)) continue;
       gScore.set(nk, g);
       cameFrom.set(nk, key(cur.r, cur.c));
@@ -3117,8 +3279,28 @@ function roadBetween(a: CivCity, b: CivCity): Array<{ row: number; col: number }
 // the newer city over ROAD_BUILD_SEC, so the network visibly grows as cities
 // connect rather than popping in complete.
 const ROAD_BUILD_SEC = 6;
-interface RoadLine { pts: Array<{ x: number; y: number }>; progress: number; color: number; width: number; alpha: number }
+interface RoadLine { pts: Array<{ x: number; y: number }>; tiles: number[]; progress: number; color: number; width: number; alpha: number }
 const roadLines = new Map<string, RoadLine>();
+
+// Abandoned roads, fading. A road doesn't vanish when the last city that used
+// it falls — it stops being maintained. The trace stays legible for minutes,
+// and the ground it lay on is remembered so somebody later can find the line
+// of it under the grass (see the A* bias in findLandPath).
+interface RoadGhost { pts: Array<{ x: number; y: number }>; alpha: number; life: number }
+const roadGhosts: RoadGhost[] = [];
+const roadGhostTiles = new Set<number>();
+function updateRoadGhosts(dt: number) {
+  for (let i = roadGhosts.length - 1; i >= 0; i--) {
+    const g = roadGhosts[i];
+    g.life -= dt / SUCCESSION.roadGhostSec;
+    if (g.life <= 0) { roadGhosts.splice(i, 1); continue; }
+    const a = g.alpha * g.life * g.life; // holds, then lets go
+    if (a < 0.01) continue;
+    roadsGfx.moveTo(g.pts[0].x, g.pts[0].y);
+    for (let j = 1; j < g.pts.length; j++) roadsGfx.lineTo(g.pts[j].x, g.pts[j].y);
+    roadsGfx.stroke({ color: 0x8a8069, alpha: a, width: 1.1, cap: 'round', join: 'round' });
+  }
+}
 
 // Reconcile the road set on the city cadence: add new connections (at
 // progress 0), drop roads whose cities are gone.
@@ -3147,16 +3329,26 @@ function rebuildRoads() {
       if (!path || path.length < 2) continue;
       roadLines.set(key, {
         pts: path.map((p) => gridToScreen(p.col, p.row)),
+        tiles: path.map((p) => p.row * GRID_SIZE + p.col),
         progress: 0, color: style.color, width: style.width, alpha: style.alpha,
       });
     }
   }
-  for (const k of [...roadLines.keys()]) if (!live.has(k)) roadLines.delete(k);
+  for (const k of [...roadLines.keys()]) {
+    if (live.has(k)) continue;
+    const dead = roadLines.get(k)!;
+    if (dead.progress > 0.3) {   // only roads that actually got built leave a trace
+      roadGhosts.push({ pts: dead.pts, alpha: dead.alpha * SUCCESSION.roadGhostAlpha, life: 1 });
+      for (const t of dead.tiles) roadGhostTiles.add(t);
+    }
+    roadLines.delete(k);
+  }
+  while (roadGhosts.length > 40) roadGhosts.shift();
 }
 
 // Advance each road's build and redraw, drawing only the completed fraction.
 function drawRoads(dt: number) {
-  if (roadLines.size === 0) { roadsGfx.clear(); return; }
+  if (roadLines.size === 0) { roadsGfx.clear(); return; }  // ghosts are drawn after this, into the cleared layer
   roadsGfx.clear();
   for (const road of roadLines.values()) {
     road.progress = Math.min(1, road.progress + dt / ROAD_BUILD_SEC);
@@ -6109,6 +6301,9 @@ function resetStorySurfaces() {
   battles.length = 0; for (const g of warPool) g.visible = false;
   quietZones.length = 0; drawQuietZones();
   lastIceExtent = -1; lastIceMemory = -1; drawIce(true);
+  roadGhosts.length = 0; roadGhostTiles.clear();
+  abandonTick.fill(-1); soilMark.fill(0);
+  lastSuccessionBake = -1e9; drawSuccession(true);
   boats.length = 0;
   wrecks.length = 0;
   caravans.length = 0;
@@ -6690,7 +6885,7 @@ app.ticker.add((ticker) => {
     const { changes, events, biomeChanges } = step(simWorld, biomeMap, elevationMap);
     rememberWorldEvents(currentWorldHistory, events);
     frameEvents.push(...events);
-    for (const { row, col } of changes) { noteTileChange(row, col); refreshTileOverlay(row, col); refreshBuildingSprite(row, col); noteFarmTile(row, col); }
+    for (const { row, col } of changes) { noteTileChange(row, col); noteSuccession(row, col); refreshTileOverlay(row, col); refreshBuildingSprite(row, col); noteFarmTile(row, col); }
     // Biome changes (the breathing land, plus floods/quakes) crossfade in over
     // the cached base, then commit to the cache when the fade completes.
     for (const { row, col } of biomeChanges) { enrollBiomeTrans(row, col); }
@@ -6800,6 +6995,7 @@ app.ticker.add((ticker) => {
   updateBiomeTrans();
   flushBiomeChanges(simWorld.tick);
   drawRoads(dtSec);
+  updateRoadGhosts(dtSec);   // drawRoads clears roadsGfx, so the ghosts go on after it
   drawPowerLines(dtSec, n);
   drawCables(dtSec, n);
   updateConflictFlashes(dtSec);
@@ -6850,6 +7046,9 @@ app.ticker.add((ticker) => {
   // Periodic density refresh (vitality drift, prominence growth). Walks only owned tiles
   // via the civ index instead of the full 96×96 grid.
   if (simWorld.tick % DENSITY.refreshInterval === 0) {
+    // Reclamation creeps on its own slow cadence (drawSuccession early-returns
+    // between bakes), and the soil marks age with it.
+    if (simWorld.tick - lastSuccessionBake >= SUCCESSION.rebakeTicks) { decaySoilMarks(); drawSuccession(); }
     // The ice front is checked on the same cadence; drawIce early-returns
     // unless it has actually moved past ICE.redrawStep, so this is nearly free.
     drawIce();
@@ -8057,6 +8256,7 @@ document.getElementById('skip')!.addEventListener('click', () => {
   rebuildEnergyFarms();
   rebuildMegastructures();
   seedTrailsAfterSkip();
+  seedSuccessionAfterSkip();
   drawCityMarkers();
   eventLog.length = 0;
   accumulator = 0;
