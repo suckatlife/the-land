@@ -34,7 +34,10 @@ export type SimEvent =
   | { kind: 'migration'; row: number; col: number }
   | { kind: 'spared'; civId: number; catastropheType: CatastropheType }
   | { kind: 'rally'; civId: number }
-  | { kind: 'last_flight'; civId: number };
+  | { kind: 'last_flight'; civId: number }
+  | { kind: 'ice_advance' }
+  | { kind: 'ice_peak' }
+  | { kind: 'ice_retreat' };
 
 export type BiomeChange = { row: number; col: number };
 
@@ -256,6 +259,24 @@ export const SIM = {
 
   nameMemoryRadius: 8,
 
+  // --- Ice ages ------------------------------------------------------------
+  // One complete advance and retreat inside a single world's life, phased as
+  // fractions of worldCycleTicks — so the glacial is an act in the world's
+  // story rather than a cycle running on its own clock beside it. The retreat
+  // is deliberately longer than the advance: ice leaves more slowly than it
+  // comes, and the thaw is where the world gets its colour back.
+  ice: {
+    peakCoverage: 0.60,   // fraction of latitude under ice at the glacial maximum
+    onsetAt:      0.28,   // world-life fraction where the front starts to grow
+    peakAt:       0.55,   // ... reaches its maximum
+    goneAt:       0.97,   // ... has fully withdrawn (goneAt-peakAt > peakAt-onsetAt)
+    edgeSoftness: 0.30,   // latitude band the front fades across — small values are a white wall
+    coldDecay:    1.7,    // extra decay multiplier for tiles deep in the ice
+    refugeBuffer: 0.20,   // latitude nearest the equator the ice may never take:
+                          // the warm belt civilisation retreats into and survives in
+    memoryTicks:  2600,   // pale ground + moraine linger this long after the melt
+  },
+
   // Living land — the wild biomes breathe over deep time. Forests creep into
   // moist grass and pull back when it dries; arid ground spreads from the desert
   // margins and greens over when wet; the shallows flip between sea and shore as
@@ -437,6 +458,11 @@ export interface SimWorld {
   // minimum era a new civ is born into. Climbs over a world's life, resets on
   // reroll/cataclysm (a fresh SimWorld starts at 0).
   eraProgress: number;
+  // Climate: how far the ice has advanced from both poles toward the equator
+  // (0..1). iceMax remembers the furthest it ever reached this world, which is
+  // where the moraine and the pale ground stay after the thaw.
+  iceExtent: number;
+  iceMax: number;
   // Settlements on their way to existing — visible nomad bands.
   pendingSettlements: Array<{ row: number; col: number; ticksLeft: number }>;
   // Progressive terrain change (rifts tearing, islands rising, bridges
@@ -474,9 +500,61 @@ export function createSimWorld(width: number, height: number): SimWorld {
     pressureNoise: 1.0,
     brewing: null,
     eraProgress: 0,
+    iceExtent: 0,
+    iceMax: 0,
     pendingSettlements: [],
     terraform: null,
   };
+}
+
+// --- Ice ages ---------------------------------------------------------------
+// A glacial is an ACT in a world's life, not a cycle running on its own clock
+// beside it: the extent is a pure function of where the world is in its own
+// lifetime, so every world gets exactly one advance and one retreat, and the
+// thaw always lands before the cataclysm. 0 = ice-free, 1 = the front has
+// reached the equator (it never does; refugeBuffer holds a warm belt open).
+export function iceExtentFor(tick: number): number {
+  const I = SIM.ice;
+  const t = (tick % SIM.worldCycleTicks) / SIM.worldCycleTicks;
+  if (t <= I.onsetAt || t >= I.goneAt) return 0;
+  const u = t < I.peakAt
+    ? (t - I.onsetAt) / (I.peakAt - I.onsetAt)
+    : 1 - (t - I.peakAt) / (I.goneAt - I.peakAt);
+  const eased = u * u * (3 - 2 * u); // smoothstep: the front eases in and out
+  return eased * I.peakCoverage;
+}
+
+// Smooth, deterministic multi-frequency wobble in ~[-1, 1]. Pure (no seed, no
+// state) so the sim and the renderer compute an identical ice front without
+// having to share anything.
+function iceNoise(row: number, col: number): number {
+  // Two scales on purpose: broad lobes (the front bulges and retreats over tens
+  // of tiles, the way an ice sheet actually does) plus finer crenulation. A
+  // single fine frequency left the mean line legible as a straight edge.
+  const broad = Math.sin(row * 0.055 + col * 0.041 + 0.4) + Math.sin((col - row) * 0.037 - 1.1);
+  const fine = Math.sin(row * 0.21 + col * 0.13) + Math.sin((row + col) * 0.11 + 1.7);
+  return (broad * 0.62 + fine * 0.22) / 1.68;
+}
+
+// How deeply a tile sits inside the ice (0 = clear, 1 = deep in the sheet).
+// Latitude is distance from the diagonal equator (row+col = H-1). The front is
+// warped by noise and biased by terrain so it grows organically — cold seas and
+// high ground freeze ahead of it, warm lowlands hold out — rather than cutting
+// a clean line across the world. Pass the biome to enable that bias.
+export function iceDepthAt(world: SimWorld, row: number, col: number, biome?: Biome): number {
+  const cover = world.iceExtent;
+  if (cover <= 0.001) return 0;
+  const I = SIM.ice;
+  let lat = Math.abs(row + col - (world.height - 1)) / (world.height - 1);
+  if (biome === 'water') lat += 0.07;        // sea ice tongues out ahead of the front
+  else if (biome === 'rock') lat += 0.06;     // ridges hold snow first
+  else if (biome === 'forest') lat += 0.03;   // snow catches and stays under trees
+  else if (biome === 'sand' || biome === 'fertile') lat -= 0.06; // warm ground holds out
+  lat += iceNoise(row, col) * 0.20;
+  // The front, never closer to the equator than the refuge belt.
+  const line = Math.max(I.refugeBuffer, 1 - cover);
+  if (lat <= line) return 0;
+  return Math.min(1, (lat - line) / Math.max(0.02, I.edgeSoftness));
 }
 
 // --- Helpers ---
@@ -1721,9 +1799,14 @@ export function step(
             : 1.0;
           const deadDamp = civ.phase === 'dead' ? SIM.deathDecayMultiplier : 1.0;
 
+          // Cold: settlement caught by the advancing ice is abandoned faster,
+          // so civilisations visibly contract toward the warm belt and spread
+          // back out on the thaw.
+          const coldFactor = 1 + iceDepthAt(world, row, col, biomes[row][col]) * (SIM.ice.coldDecay - 1);
+
           const decayP = SIM.decayBase * effectiveDecayPressure(civ) * exposureFactor
             * distanceFactor * isolationFactor * deathPeripheryAmp * deadDamp
-            * ventFearAt(world, row, col);
+            * ventFearAt(world, row, col) * coldFactor;
 
           if (Math.random() < decayP) {
             const list = decayCandidates.get(civ.id) || [];
@@ -1874,6 +1957,17 @@ export function step(
   if (world.eraProgress < ERAS_ORDERED.length - 1) {
     const eraRateScale = SIM.eraReferenceCycle / SIM.worldCycleTicks;
     world.eraProgress += (SIM.eraProgressBase + settledFraction * SIM.eraProgressSettleWeight) * eraRateScale;
+  }
+
+  // Climate: the ice advances from both poles and withdraws, once per world.
+  {
+    const prev = world.iceExtent;
+    world.iceExtent = iceExtentFor(world.tick);
+    if (world.iceExtent > world.iceMax) world.iceMax = world.iceExtent;
+    const peak = SIM.ice.peakCoverage * 0.98;
+    if (prev < 0.06 && world.iceExtent >= 0.06) events.push({ kind: 'ice_advance' });
+    else if (prev < peak && world.iceExtent >= peak) events.push({ kind: 'ice_peak' });
+    else if (prev > 0.06 && world.iceExtent <= 0.06) events.push({ kind: 'ice_retreat' });
   }
 
   const avgEraRankNorm = eraRankCount > 0 ? eraRankSum / eraRankCount / (ERAS_ORDERED.length - 1) : 0;

@@ -12,7 +12,7 @@ const WONDER_RADIUS: Record<NaturalWonderKind, number> = {
   volcano: 5, crater_lake: 8, monolith: 7, rainbow_hills: 6, karst_spires: 6, salt_flat: 6,
 };
 import { drawTile, drawStateOverlayPersistent, redrawOverlay, redrawBiomeTile, lerpColor, gridToScreen, rgbToHsl, hslToRgb } from './iso';
-import { createSimWorld, step, tileOverlayColor, seedInitialCivs, applyCatastrophe, setVolcanoes, eruptVolcanoesNow, setWonderSites, SIM, CATASTROPHE, CITY, nearestCityDist, type SimWorld, type Civ, type CivCity, type SimEvent, type Era, type TileOverlay, type BiomeChange, type CatastropheType } from './sim';
+import { createSimWorld, step, tileOverlayColor, seedInitialCivs, applyCatastrophe, setVolcanoes, eruptVolcanoesNow, setWonderSites, iceDepthAt, SIM, CATASTROPHE, CITY, nearestCityDist, type SimWorld, type Civ, type CivCity, type SimEvent, type Era, type TileOverlay, type BiomeChange, type CatastropheType } from './sim';
 import * as audio from './audio';
 import { createAtmosphere, ATMOS } from './atmosphere';
 
@@ -533,6 +533,26 @@ function narrateEvent(ev: SimEvent, world: SimWorld): string {
         ? pick([`Disease sweeps the ${loc} lands. ${n} falters.`, `Plague and collapse come to the ${loc}. ${n} is brought low.`])
         : pick([`Disease sweeps the ${loc} lands.`, `The ${loc} lands go dark. Something vast has ended.`]);
     }
+    // The slowest register the world has: a glacial, once per world, told in
+    // three lines — the cold arriving, the world at its narrowest, the thaw.
+    case 'ice_advance':
+      return pick([
+        'The winters stop ending. Ice gathers at the top and bottom of the world.',
+        'A cold that does not lift settles on the high latitudes. The ice begins to walk.',
+        'Snow lies through the summer for the first time in memory, and then again.',
+      ]);
+    case 'ice_peak':
+      return pick([
+        'The ice stands at its furthest. What lives, lives in a narrow warm belt.',
+        'The world is white to the horizons. Everything that remains is crowded into the middle of it.',
+        'The glaciers reach their limit. The habitable world is a band, and it is thin.',
+      ]);
+    case 'ice_retreat':
+      return pick([
+        'The ice lets go. Meltwater runs where the sheets stood, and green follows it back.',
+        'The long cold breaks. The world widens again, scoured and pale where the ice lay.',
+        'The glaciers withdraw, leaving bare ground and heaped stone to mark how far they came.',
+      ]);
   }
 }
 
@@ -593,6 +613,7 @@ const EVENT_PRIORITY: Partial<Record<SimEvent['kind'], NarrationPriority>> = {
   rift_opened: 'high', island_born: 'high', land_bridge: 'high', spared: 'high', rally: 'high',
   civ_declining: 'normal', last_flight: 'normal', refuge_founded: 'normal',
   breakaway: 'normal', civ_born: 'normal', migration: 'normal', island_rising: 'normal',
+  ice_advance: 'high', ice_peak: 'high', ice_retreat: 'high',
   capital_moved: 'low', city_fell: 'low', colony_founded: 'low', conquest: 'low',
 };
 
@@ -709,6 +730,7 @@ const roadsGfx = new Graphics();        // paths between cities, era-styled
 const conflictGfx = new Graphics();     // war flickers at contested tiles
 const warLayer = new Container();       // armies, banners, sieges — one scaled Graphics per battle
 const warPool: Graphics[] = [];         // pooled per-battle Graphics, each scaled around its front
+const iceGfx = new Graphics();          // polar ice sheets, snow, moraine (cached; re-baked rarely)
 const quietGfx = new Graphics();        // dead-ground silhouette left by a catastrophe
 const wonderGfx = new Graphics();       // monuments (persist as ruins)
 const skylineGfx = new Graphics();      // era settlement tells: walls, smokestacks, antenna masts
@@ -824,6 +846,9 @@ world.addChild(farmGrowGfx);
 world.addChild(roadsGfx);
 // Worn land routes (traffic heat) sit just over the roads.
 world.addChild(landTrailGfx);
+// The ice sheets lie over the ground and its roads — snow covers a road — but
+// under everything built, so what survives the cold stands in the snow.
+world.addChild(iceGfx);
 // Scars sit above civ tints (catastrophes hit settled land) but below buildings.
 world.addChild(atmos.scarLayer);
 // The dead ground a catastrophe leaves: over the scar wash, under the buildings,
@@ -1023,6 +1048,16 @@ function tileToSky(row: number, col: number): { x: number; y: number } {
   get QUIET() { return QUIET; },
   zones: () => quietZones.map((z) => ({ row: z.row, col: z.col, radius: z.radius, ...tileToSky(z.row, z.col) })),
   redrawQuiet: () => drawQuietZones(),
+  // Ice ages: scrub the extent directly to inspect any point of the glacial
+  // without waiting minutes for the world to reach it.
+  get ICE() { return ICE; },
+  ice: (extent: number) => {
+    simWorld.iceExtent = Math.max(0, Math.min(1, extent));
+    simWorld.iceMax = Math.max(simWorld.iceMax, simWorld.iceExtent);
+    drawIce(true);
+    rebuildBuildingSprites();
+  },
+  iceState: () => ({ extent: +simWorld.iceExtent.toFixed(3), max: +simWorld.iceMax.toFixed(3), memory: +iceMemoryFade().toFixed(3) }),
   flat: () => {
     HIERARCHY.quietSat = 1; HIERARCHY.quietBlend = 0; HIERARCHY.capitalBoost = 0;
     DEPTH.strength = 0; GROUND.bareBelow = 0; GROUND.bladeAlpha = 0.3; GROUND.grainAlpha = 0.32;
@@ -1562,9 +1597,14 @@ const SCENERY = {
   edgeDepth: 0.3,   // must match EDGE_DEPTH in biomes.ts
 };
 
+// The beyond-the-grid tiles, kept so the ice cap can reach the whole visible
+// globe. Without this the sheet stops at the sim diamond and its two straight
+// edges show as a hard chevron — the ice has to cover the scenery too.
+let sceneryTiles: Array<{ r: number; c: number; x: number; y: number; water: boolean }> = [];
 function drawScenery() {
   sceneryWaterGfx.clear();
   sceneryLandGfx.clear();
+  sceneryTiles = [];
   const sampler = makeTerrainSampler(currentSeed);
   const { x0, y0, w, h } = WORLD_CAPTURE;
   for (let r = -60; r <= 155; r++) {
@@ -1581,6 +1621,7 @@ function drawScenery() {
       const water = biome === 'water';
       const color = water ? waterColorFromElev(elev, r, c) : BIOME_COLORS[biome];
       const target = water ? sceneryWaterGfx : sceneryLandGfx;
+      sceneryTiles.push({ r, c, x, y, water });
       target.poly([x, y - 8, x + 16, y, x, y + 8, x - 16, y])
         .fill(color)
         .stroke({ color: 0x000000, alpha: 0.08, width: 1 });
@@ -1655,6 +1696,134 @@ function patchCoreness(row: number, col: number, biome: Biome): number {
     }
   }
   return same / total;
+}
+
+// --- Ice ages ---------------------------------------------------------------
+// The sim owns the ice LINE (sim.ts: iceExtentFor / iceDepthAt); this owns how
+// it looks. Two rules shaped the implementation:
+//
+//   1. It is world-space and cached. A screen-edge wash would read as frost on
+//      the viewer's lens rather than ice on a planet. This layer bends with the
+//      globe like everything else, bakes to one texture, and is re-baked only
+//      when the front has actually moved a meaningful amount — so the per-frame
+//      cost is one quad, and there is no new fullscreen blended pass.
+//   2. Snow arrives unevenly. A uniform alpha ramp is a white wall; real snow
+//      collects in hollows, catches under trees, and leaves high wind-scoured
+//      ground bare. The unevenness is what makes it read as weather on terrain
+//      instead of a filter over it.
+const ICE = {
+  snowColor:    0xf4f9ff,
+  seaColor:     0xe2edf5,   // sea ice a touch cooler and duller than snow
+  snowAlpha:    0.80,       // opacity at full depth on land
+  seaAlpha:     0.62,
+  hollowGain:   0.45,       // extra snow where ground sits below its surroundings
+  ridgeLoss:    0.30,       // snow scoured off high ground
+  forestGain:   0.22,       // extra snow caught and held under trees
+  jitter:       0.22,       // per-tile randomness so the sheet has grain
+  redrawStep:   0.010,      // extent change that earns a re-bake — the "meaningful threshold"
+  paleAlpha:    0.20,       // scoured pale ground the ice leaves behind it
+  moraineAlpha: 0.26,       // heaped stone at the furthest advance
+  moraineColor: 0xb9b3a6,
+  dimCold:      0.75,       // chroma taken from settlement deep in the ice
+  dimTone:      0xc2ccd6,   // the cold grey-blue frozen settlement drifts toward
+};
+
+// How much snow this tile holds, independent of the front's position: hollows
+// gather, ridges are scoured bare, woods hold what falls on them.
+function snowCatch(row: number, col: number): number {
+  const e = elevationMap[row][col];
+  let neigh = 0, n = 0;
+  for (const [dr, dc] of [[-1, 0], [1, 0], [0, -1], [0, 1]] as const) {
+    const r = row + dr, c = col + dc;
+    if (r < 0 || r >= GRID_SIZE || c < 0 || c >= GRID_SIZE) continue;
+    neigh += elevationMap[r][c]; n++;
+  }
+  const rel = n ? (neigh / n) - e : 0;          // >0 means this tile sits in a dip
+  let k = 1 + Math.max(-1, Math.min(1, rel * 14)) * ICE.hollowGain;
+  if (e > 0.62) k -= ICE.ridgeLoss * Math.min(1, (e - 0.62) / 0.2);
+  if (biomeMap[row][col] === 'forest') k += ICE.forestGain;
+  return Math.max(0, k * (1 - ICE.jitter * 0.5 + tileRand(row, col, 313) * ICE.jitter));
+}
+
+// A world stub for asking iceDepthAt about a DIFFERENT extent than the current
+// one — used to find the furthest the ice ever reached this world.
+const iceProbe = { iceExtent: 0, height: GRID_SIZE } as unknown as SimWorld;
+function depthAtExtent(extent: number, row: number, col: number): number {
+  iceProbe.iceExtent = extent;
+  return iceDepthAt(iceProbe, row, col, biomeMap[row][col]);
+}
+
+// After the thaw the ground stays pale and the terminal moraine stays put, both
+// fading over SIM.ice.memoryTicks. This is "the land remembers" at the slowest
+// register the world has.
+function iceMemoryFade(): number {
+  if (simWorld.iceMax < 0.05) return 0;
+  const cycle = SIM.worldCycleTicks;
+  const since = (simWorld.tick % cycle) - SIM.ice.goneAt * cycle;
+  if (since <= 0) return 1;                       // still glaciated, or mid-retreat
+  return Math.max(0, 1 - since / SIM.ice.memoryTicks);
+}
+
+let lastIceExtent = -1;
+let lastIceMemory = -1;
+function drawIce(force = false) {
+  const ext = simWorld.iceExtent;
+  const mem = iceMemoryFade();
+  if (!force
+    && Math.abs(ext - lastIceExtent) < ICE.redrawStep
+    && Math.abs(mem - lastIceMemory) < 0.02) return;
+  lastIceExtent = ext; lastIceMemory = mem;
+
+  // cacheAsTexture(false) first: re-baking in place is what keeps this off the
+  // per-frame budget, but the cache has to be released before the redraw.
+  iceGfx.cacheAsTexture?.(false);
+  iceGfx.clear();
+  if (ext <= 0.002 && mem <= 0.002) { iceGfx.visible = false; return; }
+  iceGfx.visible = true;
+
+  const maxExt = simWorld.iceMax;
+  for (let r = 0; r < GRID_SIZE; r++) {
+    for (let c = 0; c < GRID_SIZE; c++) {
+      const water = biomeMap[r][c] === 'water';
+      const d = ext > 0.002 ? iceDepthAt(simWorld, r, c, biomeMap[r][c]) : 0;
+      const { x, y } = gridToScreen(c, r);
+      const diamond = [x, y - 8, x + 16, y, x, y + 8, x - 16, y];
+
+      if (d > 0.01) {
+        const a = (water ? ICE.seaAlpha : ICE.snowAlpha)
+          * Math.min(1, d * (water ? 1 : snowCatch(r, c)));
+        if (a > 0.01) iceGfx.poly(diamond).fill({ color: water ? ICE.seaColor : ICE.snowColor, alpha: a });
+        continue;
+      }
+      if (mem <= 0.002 || water || maxExt < 0.05) continue;
+
+      // Ground the ice has already left: scoured pale, with heaped stone in the
+      // narrow band that marks how far it came.
+      const dMax = depthAtExtent(maxExt, r, c);
+      if (dMax <= 0.01) continue;
+      if (dMax < 0.24) {
+        iceGfx.poly(diamond).fill({ color: ICE.moraineColor, alpha: ICE.moraineAlpha * mem * (0.5 + tileRand(r, c, 517) * 0.5) });
+      } else {
+        iceGfx.poly(diamond).fill({ color: ICE.snowColor, alpha: ICE.paleAlpha * mem * Math.min(1, dMax) });
+      }
+    }
+  }
+
+  // The world beyond the sim grid freezes too, or the cap ends on the diamond's
+  // straight edges. No elevation out here, so the unevenness is jitter only.
+  if (ext > 0.002) {
+    for (const t of sceneryTiles) {
+      const d = iceDepthAt(simWorld, t.r, t.c, t.water ? 'water' : 'grass');
+      if (d <= 0.01) continue;
+      const catchK = t.water ? 1 : (1 - ICE.jitter * 0.5 + tileRand(t.r + 200, t.c + 200, 313) * ICE.jitter);
+      const a = (t.water ? ICE.seaAlpha : ICE.snowAlpha) * Math.min(1, d * catchK);
+      if (a > 0.01) {
+        iceGfx.poly([t.x, t.y - 8, t.x + 16, t.y, t.x, t.y + 8, t.x - 16, t.y])
+          .fill({ color: t.water ? ICE.seaColor : ICE.snowColor, alpha: a });
+      }
+    }
+  }
+  iceGfx.cacheAsTexture?.(true);
 }
 
 // --- Aftermath quiet zones --------------------------------------------------
@@ -2047,7 +2216,7 @@ const civLastEra = new Map<number, Era>();
 // up to ±BUILDING_VARIATION.* around the civ's base color, then apply the
 // civ's current (eased) era saturation multiplier on top. Stable per (row,col,slot)
 // for fixed civ era; smoothly shifts during era transitions.
-function tintForBuilding(baseColor: number, row: number, col: number, slotIdx: number, civ: Civ, importance = 1, groundTone = HIERARCHY.earthTone, quiet = 0): number {
+function tintForBuilding(baseColor: number, row: number, col: number, slotIdx: number, civ: Civ, importance = 1, groundTone = HIERARCHY.earthTone, quiet = 0, cold = 0): number {
   const lOff = ((_bldHash(row, col, slotIdx, 5) / 0xffffffff) * 2 - 1) * BUILDING_VARIATION.lightness;
   const sOff = ((_bldHash(row, col, slotIdx, 6) / 0xffffffff) * 2 - 1) * BUILDING_VARIATION.saturation;
   const [h, s, l] = rgbToHsl(baseColor);
@@ -2058,17 +2227,22 @@ function tintForBuilding(baseColor: number, row: number, col: number, slotIdx: n
   // A wound outranks everything: settlement inside a quiet zone drains toward
   // ash no matter how important it was. That's the point — the absence reads.
   const wound = 1 - QUIET.suppress * quiet;
+  // Cold does the same thing more gently: settlement caught by the ice goes
+  // grey-blue and dim before it contracts away entirely.
+  const chill = 1 - ICE.dimCold * cold;
   const [, , gl] = rgbToHsl(groundTone);
   const c = hslToRgb(h,
-    Math.max(0, Math.min(1, (s + sOff) * eraSat * rank * wound)),
+    Math.max(0, Math.min(1, (s + sOff) * eraSat * rank * wound * chill)),
     // Lift toward the ground's value too: cutting chroma alone leaves a dark
     // mass that still shouts by contrast. Recede in value AND colour.
     Math.max(0, Math.min(1, l + lOff + (gl - l) * HIERARCHY.quietLift * ordinary)));
   // …and drifts toward the ground it stands on — a desert town goes sandy, a
   // forest town goes green — so hinterland settlement reads as part of the
   // landscape rather than as a swatch of the civ's colour laid over it.
-  const settled = lerpColor(c, groundTone, HIERARCHY.quietBlend * ordinary);
-  return quiet > 0 ? lerpColor(settled, QUIET.groundColor, 0.45 * quiet) : settled;
+  let settled = lerpColor(c, groundTone, HIERARCHY.quietBlend * ordinary);
+  if (quiet > 0) settled = lerpColor(settled, QUIET.groundColor, 0.45 * quiet);
+  if (cold > 0) settled = lerpColor(settled, ICE.dimTone, 0.34 * cold);
+  return settled;
 }
 
 // 0..1 density for a built tile. Proximity drives the shape; vitality scales it.
@@ -2171,6 +2345,7 @@ function refreshBuildingSprite(row: number, col: number) {
   const groundTone = (tileBiome === 'forest' || tileBiome === 'rock' || tileBiome === 'water')
     ? BIOME_COLORS.grass : BIOME_COLORS[tileBiome];
   const quiet = quietZones.length ? quietnessAt(row, col, performance.now() / 1000) : 0;
+  const cold = simWorld.iceExtent > 0.002 ? iceDepthAt(simWorld, row, col, tileBiome) : 0;
   const count = densityToCount(density);
   if (count === 0 && !state) return;
 
@@ -2216,7 +2391,7 @@ function refreshBuildingSprite(row: number, col: number) {
     }
     state.ruined[slotIdx] = nowRuined;
 
-    const tint = wantActive ? tintForBuilding(civ!.color, row, col, slotIdx, civ!, importance, groundTone, quiet) : RUIN_TINT;
+    const tint = wantActive ? tintForBuilding(civ!.color, row, col, slotIdx, civ!, importance, groundTone, quiet, cold) : RUIN_TINT;
     const [dx, dy] = SLOT_POSITIONS[slotIdx];
     const baseY = y + dy;
     const slotZBase = ((row + col) * 4 + SLOT_DEPTHS[slotIdx]) * 100;
@@ -5618,6 +5793,7 @@ function resetStorySurfaces() {
   conflictFlashes.length = 0;
   battles.length = 0; for (const g of warPool) g.visible = false;
   quietZones.length = 0; drawQuietZones();
+  lastIceExtent = -1; lastIceMemory = -1; drawIce(true);
   boats.length = 0;
   wrecks.length = 0;
   caravans.length = 0;
@@ -6273,6 +6449,9 @@ app.ticker.add((ticker) => {
   // Periodic density refresh (vitality drift, prominence growth). Walks only owned tiles
   // via the civ index instead of the full 96×96 grid.
   if (simWorld.tick % DENSITY.refreshInterval === 0) {
+    // The ice front is checked on the same cadence; drawIce early-returns
+    // unless it has actually moved past ICE.redrawStep, so this is nearly free.
+    drawIce();
     // The wounds heal on the same cadence: the silhouette pulls in, and the
     // building pass below picks up the receding quiet for free.
     if (quietZones.length) drawQuietZones();
