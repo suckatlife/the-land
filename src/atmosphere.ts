@@ -470,6 +470,7 @@ export interface Atmosphere {
   light(): CelestialLight;
   celestialPosition(): { x: number; y: number; kind: 'sun' | 'moon' } | null;
   brightStarPositions(): Array<{ x: number; y: number }>;
+  setStormRate(v: number): void;             // temperament multiplier on storm frequency
   horizonColor(): number;                    // the sky's current horizon hue (dread lean included)
   setLightAzimuth(v: number | null): void;   // pin the light's azimuth (null = resume cycle)
   setLightAltitude(v: number | null): void;  // pin the light's altitude
@@ -745,6 +746,7 @@ export function createAtmosphere(): Atmosphere {
     d.sp.blendMode = 'add';
     d.sp.scale.y *= 0.3; // long thin waves
   }
+  let stormRateMult = 1;
   let lastWind = { x: 0, y: 0 };
 
   // Rare celestial events.
@@ -963,7 +965,7 @@ export function createAtmosphere(): Atmosphere {
   function updateStorm(dt: number, wx: number, wy: number, L: CelestialLight) {
     const S = ATMOS.storm;
     if (!storm) {
-      if (Math.random() < dt / S.meanSec) {
+      if (Math.random() < (dt / S.meanSec) * stormRateMult) {
         // Enter upwind so the cell crosses the world.
         const fromX = wx >= 0 ? DRIFT.minX - 200 : DRIFT.maxX + 200;
         storm = { x: fromX, y: 200 + weatherRand() * 1100, t: 0 };
@@ -1592,6 +1594,9 @@ export function createAtmosphere(): Atmosphere {
         y: py + p.x * sa + p.y * ca,
       }));
     },
+    // The world's temperament reaches the weather: a wet planet storms far more
+    // often than a dry one. Set from the sim's character in main.ts.
+    setStormRate: (v: number) => { stormRateMult = Math.max(0, v); },
     // The sky's current horizon color, dread lean included. Anything that has
     // to melt into the horizon (the depth haze in main.ts) tints to this.
     horizonColor: () => lastSkyHorizon,
