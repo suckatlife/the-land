@@ -709,6 +709,7 @@ const roadsGfx = new Graphics();        // paths between cities, era-styled
 const conflictGfx = new Graphics();     // war flickers at contested tiles
 const warLayer = new Container();       // armies, banners, sieges — one scaled Graphics per battle
 const warPool: Graphics[] = [];         // pooled per-battle Graphics, each scaled around its front
+const quietGfx = new Graphics();        // dead-ground silhouette left by a catastrophe
 const wonderGfx = new Graphics();       // monuments (persist as ruins)
 const skylineGfx = new Graphics();      // era settlement tells: walls, smokestacks, antenna masts
 const boatsGfx = new Graphics();        // sea craft, fishing dots, whales
@@ -825,6 +826,9 @@ world.addChild(roadsGfx);
 world.addChild(landTrailGfx);
 // Scars sit above civ tints (catastrophes hit settled land) but below buildings.
 world.addChild(atmos.scarLayer);
+// The dead ground a catastrophe leaves: over the scar wash, under the buildings,
+// so what survives still stands in it.
+world.addChild(quietGfx);
 // Wild herds graze the open land, beneath the towns that will displace them.
 world.addChild(wildlifeGfx);
 // Wind shimmer brightens the ground, masked to land below.
@@ -1013,6 +1017,12 @@ function tileToSky(row: number, col: number): { x: number; y: number } {
     depthHazeSprite.texture = makeDepthHazeTexture();
     depthHazeSprite.height = WORLD_CAPTURE.h * DEPTH.reach;
   },
+  // Aftermath quiet zones — same deal: getters, because QUIET is declared
+  // further down. zones() reports each wound's screen position so a shot can be
+  // cropped onto it.
+  get QUIET() { return QUIET; },
+  zones: () => quietZones.map((z) => ({ row: z.row, col: z.col, radius: z.radius, ...tileToSky(z.row, z.col) })),
+  redrawQuiet: () => drawQuietZones(),
   flat: () => {
     HIERARCHY.quietSat = 1; HIERARCHY.quietBlend = 0; HIERARCHY.capitalBoost = 0;
     DEPTH.strength = 0; GROUND.bareBelow = 0; GROUND.bladeAlpha = 0.3; GROUND.grainAlpha = 0.32;
@@ -1647,6 +1657,109 @@ function patchCoreness(row: number, col: number, biome: Biome): number {
   return same / total;
 }
 
+// --- Aftermath quiet zones --------------------------------------------------
+// After a catastrophe the mood shifted but the PLACE didn't: the wound sat in
+// among dense settlement colour and you couldn't point at it, even when the
+// chronicle said ash had buried the fields. Making scars louder would just add
+// noise. Instead the land goes quiet where it was hit — settlement there loses
+// its colour, an irregular dead-ground silhouette holds the shape, and the
+// quiet recovers from the OUTSIDE IN, so the absence itself is what reads.
+// A faint remainder never recovers: the land remembers.
+const QUIET = {
+  maxZones:       6,
+  radiusScale:    0.80,  // fraction of the blast radius the quiet reaches
+  suppress:       0.85,  // chroma taken from settlement at the centre of a fresh wound
+  holdSeconds:    8,     // full quiet before recovery begins
+  recoverSeconds: 95,    // outside-in recovery (60–120s is the band that reads as healing)
+  remainder:      0.13,  // fraction of the quiet that never recovers, over the old footprint
+  rimFeather:     0.38,  // outer fraction of the radius the remainder fades across — without
+                         // this the permanent floor ends in a step and draws a visible circle
+  groundAlpha:    0.34,  // dead-ground silhouette opacity at full quiet
+  groundColor:    0x6f6659,
+  lobes:          7,     // silhouette irregularity — a wound is not a circle
+  lobeDepth:      0.26,
+};
+interface QuietZone { row: number; col: number; radius: number; born: number; seed: number }
+const quietZones: QuietZone[] = [];
+
+// Irregular radius of a zone in the direction of a given angle.
+function quietRadiusAt(z: QuietZone, ang: number): number {
+  const wobble = 1 + QUIET.lobeDepth * (
+    Math.sin(QUIET.lobes * ang + z.seed) * 0.6 + Math.sin(3 * ang - z.seed * 1.7) * 0.4);
+  return z.radius * QUIET.radiusScale * wobble;
+}
+
+// 0 = untouched, 1 = the dead heart of a fresh wound. The live core shrinks as
+// the zone recovers (healing runs edge → centre); the permanent remainder
+// covers the original footprint at a low, fixed level.
+function quietnessAt(row: number, col: number, nowSec: number): number {
+  let out = 0;
+  for (const z of quietZones) {
+    const dr = row - z.row, dc = col - z.col;
+    const d = Math.hypot(dr, dc);
+    const R = quietRadiusAt(z, Math.atan2(dr, dc));
+    if (d > R) continue;
+    const p = Math.max(0, Math.min(1, (nowSec - z.born - QUIET.holdSeconds) / QUIET.recoverSeconds));
+    const liveR = R * (1 - p);
+    const live = liveR > 0.001 ? Math.max(0, 1 - d / liveR) * (1 - p) : 0;
+    // The permanent floor has to fade out at the rim too, or its edge draws a
+    // hard circle around the wound — the one thing a painterly stain must not do.
+    const perm = QUIET.remainder * Math.min(1, (R - d) / Math.max(1e-3, R * QUIET.rimFeather));
+    out = Math.max(out, perm, live);
+  }
+  return Math.min(1, out);
+}
+
+function addQuietZone(row: number, col: number, radius: number, nowSec: number) {
+  quietZones.push({ row, col, radius, born: nowSec, seed: tileRand(row, col, 991) * 6.283 });
+  // Oldest (most recovered) zone goes first if we're over the cap.
+  while (quietZones.length > QUIET.maxZones) quietZones.shift();
+  drawQuietZones();
+  // Repaint the settlement inside the new wound immediately rather than waiting
+  // for the periodic density pass — the colour should drain as the dust lands.
+  const r0 = Math.max(0, row - radius | 0), r1 = Math.min(GRID_SIZE - 1, row + radius | 0);
+  const c0 = Math.max(0, col - radius | 0), c1 = Math.min(GRID_SIZE - 1, col + radius | 0);
+  for (let r = r0; r <= r1; r++) {
+    for (let c = c0; c <= c1; c++) {
+      if (simWorld.tiles[r][c].state === 'built') refreshBuildingSprite(r, c);
+    }
+  }
+}
+
+// The dead-ground silhouette, rasterised per tile from the same quietness field
+// that drains the buildings. Per-tile rather than one smooth polygon for two
+// reasons: it hugs the coastline for free (the sea is never stained — a wash
+// over open water read as an oil slick), and the tile grain matches how the
+// rest of the ground is drawn. Alpha jitters slightly per tile so the stain is
+// a wash, not a decal.
+function drawQuietZones() {
+  quietGfx.clear();
+  if (!quietZones.length) { quietGfx.visible = false; return; }
+  quietGfx.visible = true;
+  const nowSec = performance.now() / 1000;
+  // Walk each zone's box, but paint any tile once — overlapping wounds share a
+  // quietness (quietnessAt takes the max), so drawing twice would double-darken.
+  const painted = new Set<number>();
+  for (const z of quietZones) {
+    const reach = Math.ceil(z.radius * QUIET.radiusScale * (1 + QUIET.lobeDepth));
+    const r0 = Math.max(0, z.row - reach), r1 = Math.min(GRID_SIZE - 1, z.row + reach);
+    const c0 = Math.max(0, z.col - reach), c1 = Math.min(GRID_SIZE - 1, z.col + reach);
+    for (let r = r0; r <= r1; r++) {
+      for (let c = c0; c <= c1; c++) {
+        if (biomeMap[r][c] === 'water') continue;   // the sea does not scar
+        const key = r * GRID_SIZE + c;
+        if (painted.has(key)) continue;
+        const q = quietnessAt(r, c, nowSec);
+        if (q < 0.02) continue;
+        painted.add(key);
+        const a = QUIET.groundAlpha * q * (0.8 + tileRand(r, c, 77) * 0.4);
+        const { x, y } = gridToScreen(c, r);
+        quietGfx.poly([x, y - 8, x + 16, y, x, y + 8, x - 16, y]).fill({ color: QUIET.groundColor, alpha: a });
+      }
+    }
+  }
+}
+
 // Open ground used to carry the same grain/blade texture on every single tile,
 // which made empty land as busy as settled land and left the eye nowhere to
 // rest. A slow seedless swell (smooth over ~10 tiles) thins that texture out
@@ -1934,24 +2047,28 @@ const civLastEra = new Map<number, Era>();
 // up to ±BUILDING_VARIATION.* around the civ's base color, then apply the
 // civ's current (eased) era saturation multiplier on top. Stable per (row,col,slot)
 // for fixed civ era; smoothly shifts during era transitions.
-function tintForBuilding(baseColor: number, row: number, col: number, slotIdx: number, civ: Civ, importance = 1, groundTone = HIERARCHY.earthTone): number {
+function tintForBuilding(baseColor: number, row: number, col: number, slotIdx: number, civ: Civ, importance = 1, groundTone = HIERARCHY.earthTone, quiet = 0): number {
   const lOff = ((_bldHash(row, col, slotIdx, 5) / 0xffffffff) * 2 - 1) * BUILDING_VARIATION.lightness;
   const sOff = ((_bldHash(row, col, slotIdx, 6) / 0xffffffff) * 2 - 1) * BUILDING_VARIATION.saturation;
   const [h, s, l] = rgbToHsl(baseColor);
   const eraSat = civCurSatMult.get(civ.id) ?? ERA_SAT_MULT[civ.era];
   // Ordinary stock gives up chroma; the core keeps all of it.
   const ordinary = 1 - importance;
-  const quiet = HIERARCHY.quietSat + (1 - HIERARCHY.quietSat) * importance;
+  const rank = HIERARCHY.quietSat + (1 - HIERARCHY.quietSat) * importance;
+  // A wound outranks everything: settlement inside a quiet zone drains toward
+  // ash no matter how important it was. That's the point — the absence reads.
+  const wound = 1 - QUIET.suppress * quiet;
   const [, , gl] = rgbToHsl(groundTone);
   const c = hslToRgb(h,
-    Math.max(0, Math.min(1, (s + sOff) * eraSat * quiet)),
+    Math.max(0, Math.min(1, (s + sOff) * eraSat * rank * wound)),
     // Lift toward the ground's value too: cutting chroma alone leaves a dark
     // mass that still shouts by contrast. Recede in value AND colour.
     Math.max(0, Math.min(1, l + lOff + (gl - l) * HIERARCHY.quietLift * ordinary)));
   // …and drifts toward the ground it stands on — a desert town goes sandy, a
   // forest town goes green — so hinterland settlement reads as part of the
   // landscape rather than as a swatch of the civ's colour laid over it.
-  return lerpColor(c, groundTone, HIERARCHY.quietBlend * ordinary);
+  const settled = lerpColor(c, groundTone, HIERARCHY.quietBlend * ordinary);
+  return quiet > 0 ? lerpColor(settled, QUIET.groundColor, 0.45 * quiet) : settled;
 }
 
 // 0..1 density for a built tile. Proximity drives the shape; vitality scales it.
@@ -2053,6 +2170,7 @@ function refreshBuildingSprite(row: number, col: number) {
   const tileBiome = biomeMap[row][col];
   const groundTone = (tileBiome === 'forest' || tileBiome === 'rock' || tileBiome === 'water')
     ? BIOME_COLORS.grass : BIOME_COLORS[tileBiome];
+  const quiet = quietZones.length ? quietnessAt(row, col, performance.now() / 1000) : 0;
   const count = densityToCount(density);
   if (count === 0 && !state) return;
 
@@ -2098,7 +2216,7 @@ function refreshBuildingSprite(row: number, col: number) {
     }
     state.ruined[slotIdx] = nowRuined;
 
-    const tint = wantActive ? tintForBuilding(civ!.color, row, col, slotIdx, civ!, importance, groundTone) : RUIN_TINT;
+    const tint = wantActive ? tintForBuilding(civ!.color, row, col, slotIdx, civ!, importance, groundTone, quiet) : RUIN_TINT;
     const [dx, dy] = SLOT_POSITIONS[slotIdx];
     const baseY = y + dy;
     const slotZBase = ((row + col) * 4 + SLOT_DEPTHS[slotIdx]) * 100;
@@ -5499,6 +5617,7 @@ function resetStorySurfaces() {
   warHeat.clear();
   conflictFlashes.length = 0;
   battles.length = 0; for (const g of warPool) g.visible = false;
+  quietZones.length = 0; drawQuietZones();
   boats.length = 0;
   wrecks.length = 0;
   caravans.length = 0;
@@ -6028,6 +6147,7 @@ app.ticker.add((ticker) => {
       triggerImpact(ev.catastropheType, ev.severity);
       triggerEpicenter(ev.centerRow, ev.centerCol, ev.catastropheType, ev.severity);
       atmos.addScar(ev.catastropheType, ev.centerRow, ev.centerCol, ev.radius, ev.severity);
+      addQuietZone(ev.centerRow, ev.centerCol, ev.radius, performance.now() / 1000);
       audio.impact(ev.severity);
     } else if (ev.kind === 'omen' && ev.stage === 3) {
       audio.omenBell();
@@ -6153,6 +6273,9 @@ app.ticker.add((ticker) => {
   // Periodic density refresh (vitality drift, prominence growth). Walks only owned tiles
   // via the civ index instead of the full 96×96 grid.
   if (simWorld.tick % DENSITY.refreshInterval === 0) {
+    // The wounds heal on the same cadence: the silhouette pulls in, and the
+    // building pass below picks up the receding quiet for free.
+    if (quietZones.length) drawQuietZones();
     for (const ts of civTiles.values()) {
       for (const key of ts) {
         const r = (key / GRID_SIZE) | 0;
@@ -6412,6 +6535,7 @@ function fireCatastrophe() {
       triggerImpact(ev.catastropheType, ev.severity);
       triggerEpicenter(ev.centerRow, ev.centerCol, ev.catastropheType, ev.severity);
       atmos.addScar(ev.catastropheType, ev.centerRow, ev.centerCol, ev.radius, ev.severity);
+      addQuietZone(ev.centerRow, ev.centerCol, ev.radius, performance.now() / 1000);
       audio.impact(ev.severity);
     }
   }
