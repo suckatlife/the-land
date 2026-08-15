@@ -7424,8 +7424,17 @@ window.addEventListener('resize', () => {
   requestAnimationFrame(rebuildInspectorProjection);
 });
 
+const INSPECTOR_HOVER_DELAY = 320;
+const INSPECTOR_RELEASE_DISTANCE = 14;
+let inspectorHoverTimer = 0;
+let inspectorAnchor: { x: number; y: number } | null = null;
+
 function hideWorldInspector() {
+  clearTimeout(inspectorHoverTimer);
+  inspectorHoverTimer = 0;
+  inspectorAnchor = null;
   worldInspector.classList.remove('is-visible');
+  worldInspector.setAttribute('aria-hidden', 'true');
 }
 function inspectWorldAt(clientX: number, clientY: number) {
   if (document.querySelector('.world-intro')) {
@@ -7537,26 +7546,37 @@ function inspectWorldAt(clientX: number, clientY: number) {
   inspectorDetail.textContent = best.detail;
   worldInspector.style.left = `${Math.min(clientX + 17, window.innerWidth - 224)}px`;
   worldInspector.style.top = `${Math.min(clientY + 19, window.innerHeight - 102)}px`;
+  inspectorAnchor = { x: clientX, y: clientY };
+  worldInspector.setAttribute('aria-hidden', 'false');
   worldInspector.classList.add('is-visible');
 }
 
-let inspectorFrame = 0;
 let inspectorPointer = { x: 0, y: 0 };
 window.addEventListener('pointermove', (event) => {
   const target = event.target;
   if (
     event.pointerType === 'touch' ||
-    (target instanceof Element && target.closest('.viewer-controls, .world-intro, .world-archive'))
+    (target instanceof Element && target.closest('.viewer-controls, .world-intro, .world-archive, .world-ending'))
   ) {
     hideWorldInspector();
     return;
   }
   inspectorPointer = { x: event.clientX, y: event.clientY };
-  if (inspectorFrame) return;
-  inspectorFrame = requestAnimationFrame(() => {
-    inspectorFrame = 0;
-    inspectWorldAt(inspectorPointer.x, inspectorPointer.y);
-  });
+  if (inspectorAnchor) {
+    const moved = Math.hypot(
+      inspectorPointer.x - inspectorAnchor.x,
+      inspectorPointer.y - inspectorAnchor.y,
+    );
+    if (moved <= INSPECTOR_RELEASE_DISTANCE) return;
+    worldInspector.classList.remove('is-visible');
+    worldInspector.setAttribute('aria-hidden', 'true');
+    inspectorAnchor = null;
+  }
+  clearTimeout(inspectorHoverTimer);
+  inspectorHoverTimer = window.setTimeout(() => {
+    inspectorHoverTimer = 0;
+    requestAnimationFrame(() => inspectWorldAt(inspectorPointer.x, inspectorPointer.y));
+  }, INSPECTOR_HOVER_DELAY);
 });
 document.documentElement.addEventListener('pointerleave', hideWorldInspector);
 
