@@ -16,21 +16,23 @@ import { drawTile, drawStateOverlayPersistent, redrawOverlay, redrawBiomeTile, l
 import { createSimWorld, step, tileOverlayColor, seedInitialCivs, applyCatastrophe, setVolcanoes, eruptVolcanoesNow, setWonderSites, iceDepthAt, SIM, CATASTROPHE, CITY, nearestCityDist, type SimWorld, type Civ, type CivCity, type SimEvent, type Era, type TileOverlay, type BiomeChange, type CatastropheType } from './sim';
 import * as audio from './audio';
 import { createAtmosphere, ATMOS } from './atmosphere';
+import {
+  WORLD_ENDINGS,
+  createWorldHistory,
+  rememberWorldEvents,
+  resolveWorldEnding,
+  worldFateForSeed,
+  type ResolvedWorldEnding,
+  type WorldEndingKind,
+  type WorldFate,
+  type WorldHistory,
+} from './endings';
 
 const GRID_SIZE = 96;
 const ticksPerSecond = 30;
 const SKIP_TICKS = 5000;
-// Ticks between auto-rerolls — the world ends and a new one is rolled. Driven
-// by the single deep-time knob in sim.ts (SIM.worldCycleTicks), which also
-// rescales the era arc so the full stone-age-to-post climb always fits.
-const CATACLYSM_INTERVAL = SIM.worldCycleTicks;
-const CATACLYSM_NARRATIONS = [
-  'A cataclysm unmakes the world. A new land emerges from the dust.',
-  'The world ends in fire. The cycle begins again, on a new shore.',
-  'All things pass. The world unbinds itself and a new land takes shape.',
-  'An age beyond memory closes. New coasts rise where the old ones drowned.',
-  'The deep time turns over. What was is forgotten; a new world begins.',
-];
+// Seeded lifespans prevent every history from reaching the same horizon.
+const ENDING_HOLD_SECONDS = 24;
 const SHOW_BUILDING_SPRITES = true;
 // Civ ownership: tile-fill tint (the diamond color overlay) vs. just the border outline.
 // Off → rely on buildings + farmland alone to read territory (experiment).
@@ -1153,7 +1155,7 @@ const BLIGHT = {
 
 function updatePollution() {
   // How far through the world's life, and how industrial it has become.
-  const cycleFrac = (simWorld.tick % CATACLYSM_INTERVAL) / CATACLYSM_INTERVAL;
+  const cycleFrac = simWorld.tick / Math.max(1, currentWorldFate.endTick);
 
   // Blight ramp — eased, gated on some industry so a pristine pre-industrial
   // world doesn't grey out (it withers hardest where it was most developed).
@@ -1432,7 +1434,7 @@ function worldNameForSeed(seed: string): string {
   return `The ${adjective} ${noun}`;
 }
 
-type WorldEnding = 'completed' | 'left_behind';
+type WorldEnding = WorldEndingKind | 'left_behind';
 interface ArchivedWorld {
   seed: string;
   name: string;
@@ -1474,6 +1476,8 @@ saveSeed(currentSeed);
 // --- World state ---
 let { biomes: biomeMap, elevation: elevationMap } = generateBiomeMap(GRID_SIZE, GRID_SIZE, currentSeed);
 let simWorld: SimWorld = createSimWorld(GRID_SIZE, GRID_SIZE);
+let currentWorldFate: WorldFate = worldFateForSeed(currentSeed, SIM.worldCycleTicks);
+let currentWorldHistory: WorldHistory = createWorldHistory(biomeMap);
 seedInitialCivs(simWorld, biomeMap, 1);
 (window as any).__sim = simWorld;
 interface TileVisual {
@@ -6231,7 +6235,7 @@ const WORLD_ERA_NAMES: Record<Era, string> = {
   post: 'The Future',
 };
 
-function archiveCurrentWorld(ending: WorldEnding): ArchivedWorld | null {
+function archiveCurrentWorld(ending: WorldEnding, outcome?: ResolvedWorldEnding): ArchivedWorld | null {
   const observedMs = Date.now() - worldStartedAt;
   if (simWorld.tick < ticksPerSecond * 10 && observedMs < 10_000) return null;
 
@@ -6239,7 +6243,7 @@ function archiveCurrentWorld(ending: WorldEnding): ArchivedWorld | null {
   for (const civ of simWorld.civs.values()) {
     peakRank = Math.max(peakRank, WORLD_ERA_ORDER.indexOf(civ.era));
   }
-  const peakEra = WORLD_ERA_ORDER[peakRank];
+  const peakEra = outcome?.highestEra ?? WORLD_ERA_ORDER[peakRank];
   const civilizations = simWorld.civs.size;
   const survivingCivilizations = [...simWorld.civs.values()].filter((civ) => civ.phase !== 'dead').length;
   const cities = [...simWorld.civs.values()].reduce((total, civ) => total + civ.cities.length, 0);
@@ -6248,7 +6252,7 @@ function archiveCurrentWorld(ending: WorldEnding): ArchivedWorld | null {
     survivingCivilizations === 0 ? 'None remained at the end.' :
     survivingCivilizations === 1 ? 'One people remained at the end.' :
     `${survivingCivilizations} peoples remained at the end.`;
-  const epitaph = `${civilizationText}, reaching ${WORLD_ERA_NAMES[peakEra]}. ${survivalText}`;
+  const epitaph = outcome?.epitaph ?? `${civilizationText}, reaching ${WORLD_ERA_NAMES[peakEra]}. ${survivalText}`;
 
   const record: ArchivedWorld = {
     seed: currentSeed,
@@ -6268,8 +6272,8 @@ function archiveCurrentWorld(ending: WorldEnding): ArchivedWorld | null {
   return record;
 }
 
-function resetWorld(newSeed: string, archiveEnding?: WorldEnding): ArchivedWorld | null {
-  const archived = archiveEnding ? archiveCurrentWorld(archiveEnding) : null;
+function resetWorld(newSeed: string, archiveEnding?: WorldEnding, outcome?: ResolvedWorldEnding): ArchivedWorld | null {
+  const archived = archiveEnding ? archiveCurrentWorld(archiveEnding, outcome) : null;
   currentSeed = newSeed;
   currentWorldName = worldNameForSeed(newSeed);
   worldStartedAt = Date.now();
@@ -6277,6 +6281,8 @@ function resetWorld(newSeed: string, archiveEnding?: WorldEnding): ArchivedWorld
   ({ biomes: biomeMap, elevation: elevationMap } = generateBiomeMap(GRID_SIZE, GRID_SIZE, newSeed));
   rebuildNaturalWonders();
   simWorld = createSimWorld(GRID_SIZE, GRID_SIZE);
+  currentWorldFate = worldFateForSeed(newSeed, SIM.worldCycleTicks);
+  currentWorldHistory = createWorldHistory(biomeMap);
   seedInitialCivs(simWorld, biomeMap, 1);
   syncSimWonders();
   (window as any).__sim = simWorld;
@@ -6361,6 +6367,33 @@ const BLACKOUT_HOLD = 0.7;  // beat of pure black at the turnover
 const BLACKOUT_FADE = 1.8;  // seconds for the new world to rise out of black
 const BARS_REFRESH_FRAMES = 10;  // DOM rebuild for civ bar panel; ~6 Hz at 60fps
 
+interface ActiveWorldEnding {
+  outcome: ResolvedWorldEnding;
+  elapsed: number;
+}
+let activeWorldEnding: ActiveWorldEnding | null = null;
+
+function beginWorldEnding(forcedKind?: WorldEndingKind) {
+  if (activeWorldEnding) return;
+  let outcome = resolveWorldEnding(simWorld, biomeMap, currentWorldHistory, currentWorldFate);
+  if (forcedKind) {
+    const profile = WORLD_ENDINGS[forcedKind];
+    outcome = { ...outcome, ...profile, epitaph: profile.description };
+  }
+  activeWorldEnding = { outcome, elapsed: 0 };
+  accumulator = 0;
+  showWorldEnding(outcome);
+}
+
+function finishWorldEnding() {
+  if (!activeWorldEnding) return;
+  const { outcome } = activeWorldEnding;
+  hideWorldEnding();
+  activeWorldEnding = null;
+  resetWorld(randomSeed(), outcome.kind, outcome);
+  blackout = 1; blackoutHold = BLACKOUT_HOLD;
+}
+
 // Rare celestial events get a narrated line — wonder, not warning.
 atmos.onCelestialEvent((kind) => {
   const lines: Record<string, string[]> = {
@@ -6386,12 +6419,20 @@ atmos.onCelestialEvent((kind) => {
 
 app.ticker.add((ticker) => {
   if (!running) return;
-  accumulator += (ticker.deltaMS / 1000) * timeScale;
+  const frameSeconds = ticker.deltaMS / 1000;
+  if (activeWorldEnding) {
+    activeWorldEnding.elapsed += frameSeconds;
+    updateWorldEndingProgress(activeWorldEnding.elapsed / ENDING_HOLD_SECONDS);
+    if (activeWorldEnding.elapsed >= ENDING_HOLD_SECONDS) finishWorldEnding();
+  } else {
+    accumulator += frameSeconds * timeScale;
+  }
   const tickInterval = 1 / ticksPerSecond;
   const frameEvents: SimEvent[] = [];
-  while (accumulator >= tickInterval) {
+  while (!activeWorldEnding && accumulator >= tickInterval) {
     accumulator -= tickInterval;
     const { changes, events, biomeChanges } = step(simWorld, biomeMap, elevationMap);
+    rememberWorldEvents(currentWorldHistory, events);
     frameEvents.push(...events);
     for (const { row, col } of changes) { noteTileChange(row, col); refreshTileOverlay(row, col); refreshBuildingSprite(row, col); noteFarmTile(row, col); }
     // Biome changes (the breathing land, plus floods/quakes) crossfade in over
@@ -6418,15 +6459,11 @@ app.ticker.add((ticker) => {
         }
       }
     }
-    // Cataclysm — every CATACLYSM_INTERVAL ticks, the world is unmade and rerolled.
-    if (simWorld.tick > 0 && simWorld.tick % CATACLYSM_INTERVAL === 0) {
-      const endedWorld = resetWorld(randomSeed(), 'completed');
-      if (endedWorld) showWorldEpitaph(endedWorld);
-      frameEvents.length = 0;  // drop events from the now-defunct world
-      pushNarration(pick(CATACLYSM_NARRATIONS), { priority: 'high', variant: 'catastrophe' });
-      // Snap to black the instant the new world is built — hides the pop, then
-      // holds a beat before the fresh map rises out of the dark.
-      blackout = 1; blackoutHold = BLACKOUT_HOLD;
+    // Hold on the world's actual final state before deep time turns over.
+    if (simWorld.tick >= currentWorldFate.endTick) {
+      beginWorldEnding();
+      frameEvents.length = 0;
+      break;
     }
   }
   pushLogEvents(frameEvents);
@@ -7100,17 +7137,59 @@ worldArchivePanel.innerHTML = `
 document.body.appendChild(worldArchivePanel);
 const worldArchiveList = worldArchivePanel.querySelector<HTMLElement>('.world-archive__list')!;
 
-const worldEpitaph = document.createElement('section');
-worldEpitaph.className = 'world-epitaph';
-worldEpitaph.hidden = true;
-worldEpitaph.setAttribute('aria-live', 'polite');
-worldEpitaph.innerHTML = `
-  <p>the world passes into memory</p>
-  <h2></h2>
-  <span></span>
+
+const worldEndingPanel = document.createElement('section');
+worldEndingPanel.className = 'world-ending';
+worldEndingPanel.hidden = true;
+worldEndingPanel.setAttribute('aria-live', 'polite');
+worldEndingPanel.innerHTML = `
+  <div class="world-ending__veil"></div>
+  <div class="world-ending__card">
+    <p class="world-ending__eyebrow"></p>
+    <p class="world-ending__world"></p>
+    <h2></h2>
+    <p class="world-ending__epitaph"></p>
+    <div class="world-ending__footer">
+      <span>A new world emerges in <b>24</b>s</span>
+      <button type="button">next world</button>
+    </div>
+    <div class="world-ending__progress"><i></i></div>
+  </div>
 `;
-document.body.appendChild(worldEpitaph);
-let epitaphTimer = 0;
+document.body.appendChild(worldEndingPanel);
+
+function showWorldEnding(outcome: ResolvedWorldEnding) {
+  document.body.dataset.worldEnding = outcome.kind;
+  worldEndingPanel.querySelector<HTMLElement>('.world-ending__eyebrow')!.textContent = outcome.eyebrow;
+  worldEndingPanel.querySelector<HTMLElement>('.world-ending__world')!.textContent = currentWorldName;
+  worldEndingPanel.querySelector('h2')!.textContent = outcome.title;
+  worldEndingPanel.querySelector<HTMLElement>('.world-ending__epitaph')!.textContent = outcome.epitaph;
+  worldEndingPanel.hidden = false;
+  updateWorldEndingProgress(0);
+  requestAnimationFrame(() => worldEndingPanel.classList.add('is-visible'));
+}
+
+function updateWorldEndingProgress(progress: number) {
+  const clamped = Math.max(0, Math.min(1, progress));
+  worldEndingPanel.style.setProperty('--ending-progress', String(clamped));
+  const seconds = Math.max(0, Math.ceil(ENDING_HOLD_SECONDS * (1 - clamped)));
+  worldEndingPanel.querySelector<HTMLElement>('.world-ending__footer b')!.textContent = String(seconds);
+}
+
+function hideWorldEnding() {
+  worldEndingPanel.classList.remove('is-visible');
+  delete document.body.dataset.worldEnding;
+  window.setTimeout(() => { worldEndingPanel.hidden = true; }, 900);
+}
+
+worldEndingPanel.querySelector('button')!.addEventListener('click', finishWorldEnding);
+(window as any).__previewEnding = (kind: WorldEndingKind) => {
+  if (kind in WORLD_ENDINGS) beginWorldEnding(kind);
+};
+const previewEnding = new URLSearchParams(window.location.search).get('ending') as WorldEndingKind | null;
+if (previewEnding && previewEnding in WORLD_ENDINGS) {
+  window.setTimeout(() => beginWorldEnding(previewEnding), 800);
+}
 
 function formatWorldDuration(ticks: number): string {
   const minutes = Math.max(1, Math.round(ticks / ticksPerSecond / 60));
@@ -7135,7 +7214,7 @@ function renderWorldArchive() {
     name.textContent = world.name;
     const meta = document.createElement('p');
     const ended = new Intl.DateTimeFormat([], { month: 'short', day: 'numeric' }).format(world.endedAt);
-    const ending = world.ending === 'completed' ? 'passed' : 'left behind';
+    const ending = world.ending === 'left_behind' ? 'left behind' : WORLD_ENDINGS[world.ending]?.archiveLabel ?? 'passed';
     meta.textContent = `${ending} · ${ended} · ${formatWorldDuration(world.ticksLived)} · ${WORLD_ERA_NAMES[world.peakEra]}`;
     const epitaph = document.createElement('span');
     epitaph.textContent = world.epitaph;
@@ -7162,17 +7241,6 @@ function setWorldArchiveOpen(open: boolean) {
     renderWorldArchive();
     hideWorldInspector();
   }
-}
-function showWorldEpitaph(world: ArchivedWorld) {
-  clearTimeout(epitaphTimer);
-  worldEpitaph.querySelector('h2')!.textContent = world.name;
-  worldEpitaph.querySelector('span')!.textContent = world.epitaph;
-  worldEpitaph.hidden = false;
-  requestAnimationFrame(() => worldEpitaph.classList.add('is-visible'));
-  epitaphTimer = window.setTimeout(() => {
-    worldEpitaph.classList.remove('is-visible');
-    window.setTimeout(() => { worldEpitaph.hidden = true; }, 700);
-  }, 7500);
 }
 
 const pauseControl = viewerControls.querySelector<HTMLButtonElement>('[data-control="pause"]')!;
@@ -7508,7 +7576,7 @@ if (shouldShowIntro) {
       <p class="world-intro__world">${currentWorldName} · seed ${currentSeed}</p>
       <h1 id="world-intro-title">The Land</h1>
       <p>Civilizations rise, cross oceans, make war, and disappear. The land remembers.</p>
-      <p class="world-intro__aside">A world lives for about seventeen minutes. Leave it on a second screen, or stay for an age. There is nothing to win.</p>
+      <p class="world-intro__aside">A world lives for ten to seventeen minutes. Its history decides how it ends. Leave it on a second screen, or stay for an age.</p>
       <button type="button">watch the world</button>
     </div>
   `;
