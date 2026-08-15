@@ -1408,6 +1408,56 @@ function getInitialSeed(): string {
 function randomSeed(): string {
   return Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, '0');
 }
+
+const WORLD_NAME_ADJECTIVES = [
+  'Amber', 'Ashen', 'Blue', 'Broken', 'Distant', 'Golden', 'Green', 'Hidden',
+  'Long', 'Painted', 'Quiet', 'Red', 'Silver', 'Sleeping', 'Verdant', 'Wandering',
+];
+const WORLD_NAME_NOUNS = [
+  'Basin', 'Coast', 'Crown', 'Expanse', 'March', 'Reach', 'Sea', 'Shore',
+  'Vale', 'Waste', 'Wilds', 'World',
+];
+function hashSeed(seed: string): number {
+  let hash = 2166136261;
+  for (let i = 0; i < seed.length; i++) {
+    hash ^= seed.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+function worldNameForSeed(seed: string): string {
+  const hash = hashSeed(seed);
+  const adjective = WORLD_NAME_ADJECTIVES[hash % WORLD_NAME_ADJECTIVES.length];
+  const noun = WORLD_NAME_NOUNS[Math.floor(hash / WORLD_NAME_ADJECTIVES.length) % WORLD_NAME_NOUNS.length];
+  return `The ${adjective} ${noun}`;
+}
+
+type WorldEnding = 'completed' | 'left_behind';
+interface ArchivedWorld {
+  seed: string;
+  name: string;
+  endedAt: number;
+  ending: WorldEnding;
+  ticksLived: number;
+  civilizations: number;
+  survivingCivilizations: number;
+  cities: number;
+  peakEra: Era;
+  epitaph: string;
+}
+const WORLD_ARCHIVE_KEY = 'theLand:worldArchive';
+const WORLD_ARCHIVE_LIMIT = 10;
+function loadWorldArchive(): ArchivedWorld[] {
+  try {
+    const value = JSON.parse(localStorage.getItem(WORLD_ARCHIVE_KEY) ?? '[]');
+    return Array.isArray(value) ? value.slice(0, WORLD_ARCHIVE_LIMIT) : [];
+  } catch {
+    return [];
+  }
+}
+function saveWorldArchive() {
+  localStorage.setItem(WORLD_ARCHIVE_KEY, JSON.stringify(worldArchive));
+}
 function saveSeed(seed: string) {
   localStorage.setItem('theLand:seed', seed);
   const url = new URL(window.location.href);
@@ -1416,6 +1466,9 @@ function saveSeed(seed: string) {
 }
 
 let currentSeed = getInitialSeed();
+let currentWorldName = worldNameForSeed(currentSeed);
+let worldStartedAt = Date.now();
+let worldArchive = loadWorldArchive();
 saveSeed(currentSeed);
 
 // --- World state ---
@@ -6168,8 +6221,58 @@ function refreshTileOverlay(row: number, col: number) {
   animatingTiles.add(`${row},${col}`);
 }
 
-function resetWorld(newSeed: string) {
+const WORLD_ERA_ORDER: Era[] = ['neolithic', 'classical', 'medieval', 'industrial', 'modern', 'post'];
+const WORLD_ERA_NAMES: Record<Era, string> = {
+  neolithic: 'The Beginning',
+  classical: 'The Ancient World',
+  medieval: 'The Middle Ages',
+  industrial: 'The Age of Industry',
+  modern: 'The Modern Age',
+  post: 'The Future',
+};
+
+function archiveCurrentWorld(ending: WorldEnding): ArchivedWorld | null {
+  const observedMs = Date.now() - worldStartedAt;
+  if (simWorld.tick < ticksPerSecond * 10 && observedMs < 10_000) return null;
+
+  let peakRank = Math.max(0, Math.min(WORLD_ERA_ORDER.length - 1, Math.floor(simWorld.eraProgress)));
+  for (const civ of simWorld.civs.values()) {
+    peakRank = Math.max(peakRank, WORLD_ERA_ORDER.indexOf(civ.era));
+  }
+  const peakEra = WORLD_ERA_ORDER[peakRank];
+  const civilizations = simWorld.civs.size;
+  const survivingCivilizations = [...simWorld.civs.values()].filter((civ) => civ.phase !== 'dead').length;
+  const cities = [...simWorld.civs.values()].reduce((total, civ) => total + civ.cities.length, 0);
+  const civilizationText = civilizations === 1 ? 'One civilization lived here' : `${civilizations} civilizations lived here`;
+  const survivalText =
+    survivingCivilizations === 0 ? 'None remained at the end.' :
+    survivingCivilizations === 1 ? 'One people remained at the end.' :
+    `${survivingCivilizations} peoples remained at the end.`;
+  const epitaph = `${civilizationText}, reaching ${WORLD_ERA_NAMES[peakEra]}. ${survivalText}`;
+
+  const record: ArchivedWorld = {
+    seed: currentSeed,
+    name: currentWorldName,
+    endedAt: Date.now(),
+    ending,
+    ticksLived: simWorld.tick,
+    civilizations,
+    survivingCivilizations,
+    cities,
+    peakEra,
+    epitaph,
+  };
+  worldArchive = [record, ...worldArchive.filter((world) => world.seed !== record.seed)]
+    .slice(0, WORLD_ARCHIVE_LIMIT);
+  saveWorldArchive();
+  return record;
+}
+
+function resetWorld(newSeed: string, archiveEnding?: WorldEnding): ArchivedWorld | null {
+  const archived = archiveEnding ? archiveCurrentWorld(archiveEnding) : null;
   currentSeed = newSeed;
+  currentWorldName = worldNameForSeed(newSeed);
+  worldStartedAt = Date.now();
   saveSeed(newSeed);
   ({ biomes: biomeMap, elevation: elevationMap } = generateBiomeMap(GRID_SIZE, GRID_SIZE, newSeed));
   rebuildNaturalWonders();
@@ -6199,6 +6302,9 @@ function resetWorld(newSeed: string) {
   drawCityMarkers();
   rebuildCivIndex();
   updateHud();
+  updateClock();
+  renderWorldArchive();
+  return archived;
 }
 
 function resetSimOnly() {
@@ -6314,7 +6420,8 @@ app.ticker.add((ticker) => {
     }
     // Cataclysm — every CATACLYSM_INTERVAL ticks, the world is unmade and rerolled.
     if (simWorld.tick > 0 && simWorld.tick % CATACLYSM_INTERVAL === 0) {
-      resetWorld(randomSeed());
+      const endedWorld = resetWorld(randomSeed(), 'completed');
+      if (endedWorld) showWorldEpitaph(endedWorld);
       frameEvents.length = 0;  // drop events from the now-defunct world
       pushNarration(pick(CATACLYSM_NARRATIONS), { priority: 'high', variant: 'catastrophe' });
       // Snap to black the instant the new world is built — hides the pop, then
@@ -6919,16 +7026,14 @@ clock.style.cssText = `
   font-family: ui-monospace, Menlo, Consolas, monospace;
   user-select: none; pointer-events: none; line-height: 1.3;
 `;
-clock.innerHTML = `<div id="clock-time" style="font-size:20px;font-weight:600;letter-spacing:0.5px"></div><div id="clock-date" style="font-size:11px;opacity:0.8"></div><div id="clock-age" style="font-size:10px;opacity:0.66;margin-top:2px;font-style:italic"></div>`;
+clock.innerHTML = `<div id="clock-world" style="font-family:Georgia,'Times New Roman',serif;font-size:12px;font-weight:600;letter-spacing:0.02em;margin-bottom:2px"></div><div id="clock-time" style="font-size:20px;font-weight:600;letter-spacing:0.5px"></div><div id="clock-date" style="font-size:11px;opacity:0.8"></div><div id="clock-age" style="font-size:10px;opacity:0.66;margin-top:2px;font-style:italic"></div>`;
 document.body.appendChild(clock);
+const clockWorld = document.getElementById('clock-world')!;
 const clockTime = document.getElementById('clock-time')!;
 const clockDate = document.getElementById('clock-date')!;
 const clockAge = document.getElementById('clock-age')!;
 let lastClockNight = -1; // drives the day/night recolour of the clock text
-const ERA_NAMES: Record<Era, string> = {
-  neolithic: 'The Beginning', classical: 'The Ancient World', medieval: 'The Middle Ages',
-  industrial: 'The Age of Industry', modern: 'The Modern Age', post: 'The Future',
-};
+const ERA_NAMES = WORLD_ERA_NAMES;
 // Deep-time calendar: the era clock (eraProgress, 0→5) mapped to a real calendar
 // year, so the number always sits in its era's true historical window — no more
 // "The Ancient World, year 44,000". Breakpoints are the calendar year at each
@@ -6946,6 +7051,7 @@ function deepTimeYear(world: SimWorld): string {
 }
 function updateClock() {
   const now = new Date();
+  clockWorld.textContent = currentWorldName;
   clockTime.textContent = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   clockDate.textContent = now.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' });
   clockAge.textContent = `${ERA_NAMES[dominantEra(simWorld)]} · ${deepTimeYear(simWorld)}`;
@@ -6967,6 +7073,7 @@ viewerControls.innerHTML = `
   <button type="button" data-control="speed" title="Change simulation speed">1x</button>
   <button type="button" data-control="sound" title="Toggle ambient sound">sound</button>
   <button type="button" data-control="chronicle" title="Show the world chronicle">chronicle</button>
+  <button type="button" data-control="archive" title="Revisit remembered worlds">worlds</button>
   <button type="button" data-control="new" title="Begin a new world">new world</button>
   <button type="button" data-control="share" title="Share this exact world">share</button>
   <button type="button" data-control="awake" title="Keep the display awake">stay awake</button>
@@ -6974,10 +7081,105 @@ viewerControls.innerHTML = `
 `;
 document.body.appendChild(viewerControls);
 
+const worldArchivePanel = document.createElement('section');
+worldArchivePanel.className = 'world-archive';
+worldArchivePanel.hidden = true;
+worldArchivePanel.setAttribute('aria-hidden', 'true');
+worldArchivePanel.setAttribute('aria-labelledby', 'world-archive-title');
+worldArchivePanel.innerHTML = `
+  <header class="world-archive__header">
+    <div>
+      <p>world memory</p>
+      <h2 id="world-archive-title">Past worlds</h2>
+    </div>
+    <button type="button" data-archive-close aria-label="Close past worlds">close</button>
+  </header>
+  <p class="world-archive__intro">Worlds enter memory when they pass, or when you choose to begin another.</p>
+  <div class="world-archive__list"></div>
+`;
+document.body.appendChild(worldArchivePanel);
+const worldArchiveList = worldArchivePanel.querySelector<HTMLElement>('.world-archive__list')!;
+
+const worldEpitaph = document.createElement('section');
+worldEpitaph.className = 'world-epitaph';
+worldEpitaph.hidden = true;
+worldEpitaph.setAttribute('aria-live', 'polite');
+worldEpitaph.innerHTML = `
+  <p>the world passes into memory</p>
+  <h2></h2>
+  <span></span>
+`;
+document.body.appendChild(worldEpitaph);
+let epitaphTimer = 0;
+
+function formatWorldDuration(ticks: number): string {
+  const minutes = Math.max(1, Math.round(ticks / ticksPerSecond / 60));
+  return minutes === 1 ? '1 minute' : `${minutes} minutes`;
+}
+function renderWorldArchive() {
+  worldArchiveList.replaceChildren();
+  if (worldArchive.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'world-archive__empty';
+    empty.textContent = 'No worlds have passed into memory yet.';
+    worldArchiveList.appendChild(empty);
+    return;
+  }
+
+  for (const world of worldArchive) {
+    const item = document.createElement('article');
+    item.className = 'world-archive__item';
+
+    const copy = document.createElement('div');
+    const name = document.createElement('h3');
+    name.textContent = world.name;
+    const meta = document.createElement('p');
+    const ended = new Intl.DateTimeFormat([], { month: 'short', day: 'numeric' }).format(world.endedAt);
+    const ending = world.ending === 'completed' ? 'passed' : 'left behind';
+    meta.textContent = `${ending} · ${ended} · ${formatWorldDuration(world.ticksLived)} · ${WORLD_ERA_NAMES[world.peakEra]}`;
+    const epitaph = document.createElement('span');
+    epitaph.textContent = world.epitaph;
+    copy.append(name, meta, epitaph);
+
+    const revisit = document.createElement('button');
+    revisit.type = 'button';
+    revisit.textContent = 'revisit';
+    revisit.title = `Return to seed ${world.seed}`;
+    revisit.addEventListener('click', () => {
+      resetWorld(world.seed, 'left_behind');
+      setWorldArchiveOpen(false);
+    });
+
+    item.append(copy, revisit);
+    worldArchiveList.appendChild(item);
+  }
+}
+function setWorldArchiveOpen(open: boolean) {
+  worldArchivePanel.hidden = !open;
+  worldArchivePanel.setAttribute('aria-hidden', String(!open));
+  archiveControl.classList.toggle('is-active', open);
+  if (open) {
+    renderWorldArchive();
+    hideWorldInspector();
+  }
+}
+function showWorldEpitaph(world: ArchivedWorld) {
+  clearTimeout(epitaphTimer);
+  worldEpitaph.querySelector('h2')!.textContent = world.name;
+  worldEpitaph.querySelector('span')!.textContent = world.epitaph;
+  worldEpitaph.hidden = false;
+  requestAnimationFrame(() => worldEpitaph.classList.add('is-visible'));
+  epitaphTimer = window.setTimeout(() => {
+    worldEpitaph.classList.remove('is-visible');
+    window.setTimeout(() => { worldEpitaph.hidden = true; }, 700);
+  }, 7500);
+}
+
 const pauseControl = viewerControls.querySelector<HTMLButtonElement>('[data-control="pause"]')!;
 const speedControl = viewerControls.querySelector<HTMLButtonElement>('[data-control="speed"]')!;
 const soundControl = viewerControls.querySelector<HTMLButtonElement>('[data-control="sound"]')!;
 const chronicleControl = viewerControls.querySelector<HTMLButtonElement>('[data-control="chronicle"]')!;
+const archiveControl = viewerControls.querySelector<HTMLButtonElement>('[data-control="archive"]')!;
 const shareControl = viewerControls.querySelector<HTMLButtonElement>('[data-control="share"]')!;
 const awakeControl = viewerControls.querySelector<HTMLButtonElement>('[data-control="awake"]')!;
 
@@ -7015,8 +7217,19 @@ chronicleControl.addEventListener('click', () => {
   chronicleControl.classList.toggle('is-active', showLog);
 });
 
+archiveControl.addEventListener('click', () => {
+  setWorldArchiveOpen(worldArchivePanel.hasAttribute('hidden'));
+});
+worldArchivePanel.querySelector('[data-archive-close]')!.addEventListener('click', () => {
+  setWorldArchiveOpen(false);
+});
+window.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') setWorldArchiveOpen(false);
+});
+renderWorldArchive();
+
 viewerControls.querySelector('[data-control="new"]')!.addEventListener('click', () => {
-  resetWorld(randomSeed());
+  resetWorld(randomSeed(), 'left_behind');
 });
 
 shareControl.addEventListener('click', async () => {
@@ -7024,8 +7237,8 @@ shareControl.addEventListener('click', async () => {
   url.search = '';
   url.searchParams.set('seed', currentSeed);
   const shareData = {
-    title: 'The Land',
-    text: 'Watch this world live and pass into history.',
+    title: `${currentWorldName} — The Land`,
+    text: `Watch ${currentWorldName} live and pass into history.`,
     url: url.toString(),
   };
   try {
@@ -7265,7 +7478,7 @@ window.addEventListener('pointermove', (event) => {
   const target = event.target;
   if (
     event.pointerType === 'touch' ||
-    (target instanceof Element && target.closest('.viewer-controls, .world-intro'))
+    (target instanceof Element && target.closest('.viewer-controls, .world-intro, .world-archive'))
   ) {
     hideWorldInspector();
     return;
@@ -7292,6 +7505,7 @@ if (shouldShowIntro) {
   intro.innerHTML = `
     <div class="world-intro__card">
       <p class="world-intro__eyebrow">a living deep-time diorama</p>
+      <p class="world-intro__world">${currentWorldName} · seed ${currentSeed}</p>
       <h1 id="world-intro-title">The Land</h1>
       <p>Civilizations rise, cross oceans, make war, and disappear. The land remembers.</p>
       <p class="world-intro__aside">A world lives for about seventeen minutes. Leave it on a second screen, or stay for an age. There is nothing to win.</p>
