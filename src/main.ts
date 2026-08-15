@@ -1,4 +1,5 @@
 import { Application, Assets, Container, Graphics, MeshPlane, RenderTexture, Sprite, Text, TextStyle, Texture } from 'pixi.js';
+import './style.css';
 import { generateBiomeMap, generateRivers, makeTerrainSampler, classify, BIOME_COLORS, SEA_LEVEL, type Biome } from './biomes';
 import { placeNaturalWonders, type NaturalWonder, type NaturalWonderKind } from './naturalWonders';
 
@@ -698,6 +699,7 @@ let qualityLevel: QualityLevel =
 // Perf A/B overrides (?mres= / ?rt=) so resolution levers can be measured on
 // clean loads without rebuilding.
 const _qp = new URLSearchParams(location.search);
+const debugMode = _qp.get('debug') === '1';
 const _mresOverride = _qp.has('mres') ? parseFloat(_qp.get('mres')!) : null;
 const _rtOverride = _qp.has('rt') ? parseFloat(_qp.get('rt')!) : null;
 
@@ -1480,6 +1482,7 @@ const animatingTiles = new Set<string>();
 const animatingBiomeTiles = new Set<string>();
 const animatingBuildingTiles = new Set<string>();
 let running = true;
+let timeScale = 1;
 
 const fadedDeadCivs = new Set<number>();
 
@@ -4205,7 +4208,8 @@ interface Battle {
   row: number; col: number; cx: number; cy: number; born: number; lastHit: number;
   ax: number; ay: number; dx: number; dy: number;   // attacker / defender cluster centres
   mx: number; my: number;                            // march origin (attacker city)
-  aColor: number; dColor: number; siege: boolean; seed: number;
+  aColor: number; dColor: number; attackerId: number; defenderId: number;
+  siege: boolean; seed: number;
   era: number;                                       // attacker's ERA_RANK — sets the war style
 }
 const battles: Battle[] = [];
@@ -4240,6 +4244,7 @@ function noteBattle(ev: { row: number; col: number; attackerId: number; defender
     row: ev.row, col: ev.col, cx, cy, born: performance.now() / 1000, lastHit: performance.now() / 1000,
     ax: cx + vx * 7, ay: cy + vy * 7, dx: cx - vx * 7, dy: cy - vy * 7,
     mx: cs.x, my: cs.y, aColor: atk?.color ?? 0xcc5544, dColor: def?.color ?? 0x4466cc,
+    attackerId: ev.attackerId, defenderId: ev.defenderId,
     siege, seed: (ev.row * 13 + ev.col * 7) % 100, era: atk ? ERA_RANK[atk.era] : 1,
   });
 }
@@ -6275,7 +6280,7 @@ atmos.onCelestialEvent((kind) => {
 
 app.ticker.add((ticker) => {
   if (!running) return;
-  accumulator += ticker.deltaMS / 1000;
+  accumulator += (ticker.deltaMS / 1000) * timeScale;
   const tickInterval = 1 / ticksPerSecond;
   const frameEvents: SimEvent[] = [];
   while (accumulator >= tickInterval) {
@@ -6844,6 +6849,7 @@ hud.innerHTML = `
   </span>
 `;
 document.body.appendChild(hud);
+hud.hidden = !debugMode;
 const hudToggle = document.getElementById('hud-toggle')!;
 const hudBody = document.getElementById('hud-body')!;
 hudToggle.addEventListener('click', () => {
@@ -6940,41 +6946,370 @@ function deepTimeYear(world: SimWorld): string {
 }
 function updateClock() {
   const now = new Date();
-  clockTime.textContent = now.toLocaleTimeString('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' });
-  clockDate.textContent = now.toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', weekday: 'long', month: 'long', day: 'numeric' });
+  clockTime.textContent = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  clockDate.textContent = now.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' });
   clockAge.textContent = `${ERA_NAMES[dominantEra(simWorld)]} · ${deepTimeYear(simWorld)}`;
 }
 updateClock();
 setInterval(updateClock, 1000);
 
-// --- Fullscreen: a small corner button, and double-click anywhere ---
+// --- Public viewer controls ---
 function toggleFullscreen() {
   if (!document.fullscreenElement) document.documentElement.requestFullscreen?.().catch(() => {});
   else document.exitFullscreen?.();
 }
-const fsBtn = document.createElement('button');
-fsBtn.textContent = '⛶';
-fsBtn.title = 'fullscreen (or double-click anywhere)';
-fsBtn.style.cssText = `
-  position: fixed; bottom: 12px; right: 12px; width: 30px; height: 30px;
-  font-size: 16px; line-height: 1; cursor: pointer; border-radius: 4px;
-  border: none; background: rgba(255,255,255,0.6); color: #444;
+
+const viewerControls = document.createElement('nav');
+viewerControls.className = 'viewer-controls';
+viewerControls.setAttribute('aria-label', 'World controls');
+viewerControls.innerHTML = `
+  <button type="button" data-control="pause" title="Pause the world">pause</button>
+  <button type="button" data-control="speed" title="Change simulation speed">1x</button>
+  <button type="button" data-control="sound" title="Toggle ambient sound">sound</button>
+  <button type="button" data-control="chronicle" title="Show the world chronicle">chronicle</button>
+  <button type="button" data-control="new" title="Begin a new world">new world</button>
+  <button type="button" data-control="share" title="Share this exact world">share</button>
+  <button type="button" data-control="awake" title="Keep the display awake">stay awake</button>
+  <button type="button" data-control="fullscreen" title="Enter fullscreen">fullscreen</button>
 `;
-fsBtn.addEventListener('click', toggleFullscreen);
-document.body.appendChild(fsBtn);
+document.body.appendChild(viewerControls);
+
+const pauseControl = viewerControls.querySelector<HTMLButtonElement>('[data-control="pause"]')!;
+const speedControl = viewerControls.querySelector<HTMLButtonElement>('[data-control="speed"]')!;
+const soundControl = viewerControls.querySelector<HTMLButtonElement>('[data-control="sound"]')!;
+const chronicleControl = viewerControls.querySelector<HTMLButtonElement>('[data-control="chronicle"]')!;
+const shareControl = viewerControls.querySelector<HTMLButtonElement>('[data-control="share"]')!;
+const awakeControl = viewerControls.querySelector<HTMLButtonElement>('[data-control="awake"]')!;
+
+pauseControl.addEventListener('click', () => {
+  running = !running;
+  pauseControl.textContent = running ? 'pause' : 'resume';
+  pauseControl.classList.toggle('is-active', !running);
+});
+
+const SPEEDS = [1, 2, 4];
+speedControl.addEventListener('click', () => {
+  timeScale = SPEEDS[(SPEEDS.indexOf(timeScale) + 1) % SPEEDS.length];
+  speedControl.textContent = `${timeScale}x`;
+  speedControl.classList.toggle('is-active', timeScale !== 1);
+});
+
+function syncSoundControls() {
+  const enabled = audio.isEnabled();
+  soundControl.textContent = enabled ? 'sound on' : 'sound';
+  soundControl.classList.toggle('is-active', enabled);
+  const debugSound = document.getElementById('sound');
+  if (debugSound) debugSound.textContent = enabled ? 'sound: on' : 'sound: off';
+}
+function toggleSound() {
+  audio.setEnabled(!audio.isEnabled());
+  syncSoundControls();
+}
+soundControl.addEventListener('click', toggleSound);
+syncSoundControls();
+
+chronicleControl.addEventListener('click', () => {
+  showLog = !showLog;
+  logPanel.style.display = showLog ? 'flex' : 'none';
+  toggleLog.textContent = showLog ? 'log: on' : 'log: off';
+  chronicleControl.classList.toggle('is-active', showLog);
+});
+
+viewerControls.querySelector('[data-control="new"]')!.addEventListener('click', () => {
+  resetWorld(randomSeed());
+});
+
+shareControl.addEventListener('click', async () => {
+  const url = new URL(location.href);
+  url.search = '';
+  url.searchParams.set('seed', currentSeed);
+  const shareData = {
+    title: 'The Land',
+    text: 'Watch this world live and pass into history.',
+    url: url.toString(),
+  };
+  try {
+    if (navigator.share) await navigator.share(shareData);
+    else {
+      await navigator.clipboard.writeText(url.toString());
+      shareControl.textContent = 'copied';
+      window.setTimeout(() => { shareControl.textContent = 'share'; }, 1600);
+    }
+  } catch {
+    // Dismissing the native share sheet is not an error the viewer needs to see.
+  }
+});
+
+let keepAwake = false;
+let wakeLock: any = null;
+async function syncWakeLock() {
+  if (!('wakeLock' in navigator)) {
+    awakeControl.hidden = true;
+    return;
+  }
+  if (!keepAwake) {
+    await wakeLock?.release?.();
+    wakeLock = null;
+    awakeControl.textContent = 'stay awake';
+    awakeControl.classList.remove('is-active');
+    return;
+  }
+  try {
+    wakeLock = await (navigator as any).wakeLock.request('screen');
+    awakeControl.textContent = 'awake';
+    awakeControl.classList.add('is-active');
+    wakeLock.addEventListener?.('release', () => {
+      wakeLock = null;
+      if (document.visibilityState === 'visible' && keepAwake) syncWakeLock();
+    }, { once: true });
+  } catch {
+    keepAwake = false;
+    awakeControl.textContent = 'stay awake';
+    awakeControl.classList.remove('is-active');
+  }
+}
+awakeControl.addEventListener('click', () => {
+  keepAwake = !keepAwake;
+  syncWakeLock();
+});
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && keepAwake && !wakeLock) syncWakeLock();
+});
+
+viewerControls.querySelector('[data-control="fullscreen"]')!.addEventListener('click', toggleFullscreen);
 document.addEventListener('dblclick', toggleFullscreen);
 
-// Keep the screen awake (best-effort) — it's a screensaver, after all.
-async function requestWakeLock() {
-  try { await (navigator as any).wakeLock?.request('screen'); } catch { /* unsupported or blocked */ }
+// A passive field guide: hover the curved world to identify what is visible
+// without selecting it or turning observation into a game mechanic.
+interface InspectorHit {
+  rank: number;
+  distance: number;
+  kind: string;
+  title: string;
+  detail: string;
 }
-requestWakeLock();
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') requestWakeLock(); });
+
+const worldInspector = document.createElement('aside');
+worldInspector.className = 'world-inspector';
+worldInspector.setAttribute('aria-hidden', 'true');
+worldInspector.innerHTML = `
+  <span class="world-inspector__kind"></span>
+  <strong class="world-inspector__title"></strong>
+  <span class="world-inspector__detail"></span>
+`;
+document.body.appendChild(worldInspector);
+const inspectorKind = worldInspector.querySelector<HTMLElement>('.world-inspector__kind')!;
+const inspectorTitle = worldInspector.querySelector<HTMLElement>('.world-inspector__title')!;
+const inspectorDetail = worldInspector.querySelector<HTMLElement>('.world-inspector__detail')!;
+
+const BIOME_NAMES: Record<Biome, string> = {
+  water: 'open water',
+  sand: 'sand flats',
+  grass: 'grassland',
+  forest: 'forest',
+  fertile: 'fertile country',
+  rock: 'high stone',
+};
+const TILE_STATE_NAMES = {
+  wild: 'wild land',
+  cleared: 'worked land',
+  built: 'settled land',
+  ruin: 'old ruins',
+} as const;
+
+interface InspectorTile {
+  row: number;
+  col: number;
+  x: number;
+  y: number;
+}
+let inspectorTiles: InspectorTile[] = [];
+function rebuildInspectorProjection() {
+  const projected: InspectorTile[] = [];
+  for (let row = 0; row < GRID_SIZE; row++) {
+    for (let col = 0; col < GRID_SIZE; col++) {
+      const p = tileToSky(row, col);
+      projected.push({ row, col, x: p.x, y: p.y });
+    }
+  }
+  inspectorTiles = projected;
+}
+function worldPointToSky(x: number, y: number) {
+  const t = toTex(x, y);
+  return atmos.project(t.x, t.y);
+}
+rebuildInspectorProjection();
+window.addEventListener('resize', () => {
+  requestAnimationFrame(rebuildInspectorProjection);
+});
+
+function hideWorldInspector() {
+  worldInspector.classList.remove('is-visible');
+}
+function inspectWorldAt(clientX: number, clientY: number) {
+  if (document.querySelector('.world-intro')) {
+    hideWorldInspector();
+    return;
+  }
+
+  let best: InspectorHit | null = null;
+  const consider = (
+    point: { x: number; y: number },
+    radius: number,
+    rank: number,
+    kind: string,
+    title: string,
+    detail: string,
+  ) => {
+    const distance = Math.hypot(point.x - clientX, point.y - clientY);
+    if (distance > radius) return;
+    if (!best || rank > best.rank || (rank === best.rank && distance < best.distance)) {
+      best = { rank, distance, kind, title, detail };
+    }
+  };
+
+  for (const battle of battles) {
+    const attacker = simWorld.civs.get(battle.attackerId);
+    const defender = simWorld.civs.get(battle.defenderId);
+    const sides = attacker && defender ? `${attacker.name} and ${defender.name}` : 'rival peoples';
+    consider(
+      tileToSky(battle.row, battle.col),
+      30,
+      5,
+      battle.siege ? 'siege' : 'battle',
+      battle.siege ? 'A city under siege' : 'A contested front',
+      `War between ${sides}`,
+    );
+  }
+
+  for (const nomad of simWorld.pendingSettlements) {
+    const f = 1 - nomad.ticksLeft / SIM_MIGRATION_TICKS;
+    const target = gridToScreen(nomad.col, nomad.row);
+    const phase = (nomad.row * 7 + nomad.col * 13) % 100;
+    const distance = 80 * (1 - f);
+    const angle = phase + f * 2;
+    const point = worldPointToSky(
+      target.x + Math.cos(angle) * distance,
+      target.y + Math.sin(angle) * distance * 0.5,
+    );
+    consider(point, 28, 5, 'people in motion', 'A roving band', 'Seeking a place to settle');
+  }
+
+  for (const wonder of naturalWonders) {
+    consider(
+      tileToSky(wonder.row, wonder.col),
+      24,
+      4,
+      'natural wonder',
+      wonder.name,
+      wonder.kind.replaceAll('_', ' '),
+    );
+  }
+
+  for (const civ of simWorld.civs.values()) {
+    for (const city of civ.cities) {
+      const fallen = civ.phase === 'dead';
+      consider(
+        tileToSky(city.row, city.col),
+        24,
+        4,
+        fallen ? 'ruined city' : 'city',
+        fallen ? `Ruins of ${city.name}` : city.name,
+        `${civ.name} · ${ERA_NAMES[civ.era]}`,
+      );
+    }
+  }
+
+  let nearestTile: InspectorTile | null = null;
+  let nearestDistance = Infinity;
+  for (const tile of inspectorTiles) {
+    const distance = (tile.x - clientX) ** 2 + (tile.y - clientY) ** 2;
+    if (distance < nearestDistance) {
+      nearestDistance = distance;
+      nearestTile = tile;
+    }
+  }
+
+  if (nearestTile && nearestDistance <= 24 ** 2 && !best) {
+    const { row, col } = nearestTile;
+    const biome = biomeMap[row][col];
+    const tile = simWorld.tiles[row][col];
+    const civ = tile.civId === null ? null : simWorld.civs.get(tile.civId);
+    const kind = TILE_STATE_NAMES[tile.state];
+    const title =
+      tile.state === 'ruin' ? 'A trace of settlement' :
+      civ ? civ.name :
+      BIOME_NAMES[biome];
+    const detail = civ
+      ? `${kind} · ${BIOME_NAMES[biome]}`
+      : kind === 'wild land' ? BIOME_NAMES[biome] : `${kind} · ${BIOME_NAMES[biome]}`;
+    best = { rank: 1, distance: Math.sqrt(nearestDistance), kind, title, detail };
+  }
+
+  if (!best) {
+    hideWorldInspector();
+    return;
+  }
+
+  inspectorKind.textContent = best.kind;
+  inspectorTitle.textContent = best.title;
+  inspectorDetail.textContent = best.detail;
+  worldInspector.style.left = `${Math.min(clientX + 17, window.innerWidth - 224)}px`;
+  worldInspector.style.top = `${Math.min(clientY + 19, window.innerHeight - 102)}px`;
+  worldInspector.classList.add('is-visible');
+}
+
+let inspectorFrame = 0;
+let inspectorPointer = { x: 0, y: 0 };
+window.addEventListener('pointermove', (event) => {
+  const target = event.target;
+  if (
+    event.pointerType === 'touch' ||
+    (target instanceof Element && target.closest('.viewer-controls, .world-intro'))
+  ) {
+    hideWorldInspector();
+    return;
+  }
+  inspectorPointer = { x: event.clientX, y: event.clientY };
+  if (inspectorFrame) return;
+  inspectorFrame = requestAnimationFrame(() => {
+    inspectorFrame = 0;
+    inspectWorldAt(inspectorPointer.x, inspectorPointer.y);
+  });
+});
+document.documentElement.addEventListener('pointerleave', hideWorldInspector);
+
+// First-time visitors get a brief frame for what they are seeing. The intro can
+// always be replayed with ?intro=1, while ?debug=1 opens directly into the tools.
+const shouldShowIntro =
+  !debugMode &&
+  (_qp.get('intro') === '1' || localStorage.getItem('theLand:introSeen') !== '1');
+if (shouldShowIntro) {
+  running = false;
+  const intro = document.createElement('section');
+  intro.className = 'world-intro';
+  intro.setAttribute('aria-labelledby', 'world-intro-title');
+  intro.innerHTML = `
+    <div class="world-intro__card">
+      <p class="world-intro__eyebrow">a living deep-time diorama</p>
+      <h1 id="world-intro-title">The Land</h1>
+      <p>Civilizations rise, cross oceans, make war, and disappear. The land remembers.</p>
+      <p class="world-intro__aside">A world lives for about seventeen minutes. Leave it on a second screen, or stay for an age. There is nothing to win.</p>
+      <button type="button">watch the world</button>
+    </div>
+  `;
+  document.body.appendChild(intro);
+  intro.querySelector('button')!.addEventListener('click', () => {
+    localStorage.setItem('theLand:introSeen', '1');
+    running = true;
+    intro.classList.add('is-leaving');
+    window.setTimeout(() => intro.remove(), 700);
+  });
+}
 
 // Idle: after a few seconds of stillness, hide the cursor and fade the chrome to
-// near-nothing so the screen is pure scene; movement brings it all back. The
-// clock stays — it's the one piece of always-on signage.
-const fadeUI = [fsBtn, hud];
+// near-nothing so the scene can stand on its own. The clock remains visible.
+const fadeUI = [viewerControls, hud];
 for (const el of fadeUI) (el as HTMLElement).style.transition = 'opacity 0.8s ease';
 let idleTimer = 0;
 function onActivity() {
@@ -6988,6 +7323,7 @@ function onActivity() {
 }
 window.addEventListener('mousemove', onActivity);
 window.addEventListener('mousedown', onActivity);
+window.addEventListener('touchstart', onActivity, { passive: true });
 onActivity();
 
 const barsContainer = document.getElementById('bars')!;
@@ -7065,10 +7401,7 @@ document.getElementById('reset-sim')!.addEventListener('click', () => {
   resetSimOnly();
 });
 const soundBtn = document.getElementById('sound')!;
-soundBtn.addEventListener('click', () => {
-  audio.setEnabled(!audio.isEnabled());
-  soundBtn.textContent = audio.isEnabled() ? 'sound: on' : 'sound: off';
-});
+soundBtn.addEventListener('click', toggleSound);
 
 // Graphics-quality cycle. The biggest lever (the main canvas resolution) is
 // set at renderer init, so changing quality saves the choice and reloads —
