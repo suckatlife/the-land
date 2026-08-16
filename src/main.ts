@@ -31,8 +31,6 @@ import {
 const GRID_SIZE = 96;
 const ticksPerSecond = 30;
 const SKIP_TICKS = 5000;
-// Seeded lifespans prevent every history from reaching the same horizon.
-const ENDING_HOLD_SECONDS = 24;
 const SHOW_BUILDING_SPRITES = true;
 // Civ ownership: tile-fill tint (the diamond color overlay) vs. just the border outline.
 // Off → rely on buildings + farmland alone to read territory (experiment).
@@ -6367,29 +6365,9 @@ const BLACKOUT_HOLD = 0.7;  // beat of pure black at the turnover
 const BLACKOUT_FADE = 1.8;  // seconds for the new world to rise out of black
 const BARS_REFRESH_FRAMES = 10;  // DOM rebuild for civ bar panel; ~6 Hz at 60fps
 
-interface ActiveWorldEnding {
-  outcome: ResolvedWorldEnding;
-  elapsed: number;
-}
-let activeWorldEnding: ActiveWorldEnding | null = null;
-
-function beginWorldEnding(forcedKind?: WorldEndingKind) {
-  if (activeWorldEnding) return;
-  let outcome = resolveWorldEnding(simWorld, biomeMap, currentWorldHistory, currentWorldFate);
-  if (forcedKind) {
-    const profile = WORLD_ENDINGS[forcedKind];
-    outcome = { ...outcome, ...profile, epitaph: profile.description };
-  }
-  activeWorldEnding = { outcome, elapsed: 0 };
+function beginWorldEnding() {
+  const outcome = resolveWorldEnding(simWorld, biomeMap, currentWorldHistory, currentWorldFate);
   accumulator = 0;
-  showWorldEnding(outcome);
-}
-
-function finishWorldEnding() {
-  if (!activeWorldEnding) return;
-  const { outcome } = activeWorldEnding;
-  hideWorldEnding();
-  activeWorldEnding = null;
   resetWorld(randomSeed(), outcome.kind, outcome);
   blackout = 1; blackoutHold = BLACKOUT_HOLD;
 }
@@ -6420,16 +6398,10 @@ atmos.onCelestialEvent((kind) => {
 app.ticker.add((ticker) => {
   if (!running) return;
   const frameSeconds = ticker.deltaMS / 1000;
-  if (activeWorldEnding) {
-    activeWorldEnding.elapsed += frameSeconds;
-    updateWorldEndingProgress(activeWorldEnding.elapsed / ENDING_HOLD_SECONDS);
-    if (activeWorldEnding.elapsed >= ENDING_HOLD_SECONDS) finishWorldEnding();
-  } else {
-    accumulator += frameSeconds * timeScale;
-  }
+  accumulator += frameSeconds * timeScale;
   const tickInterval = 1 / ticksPerSecond;
   const frameEvents: SimEvent[] = [];
-  while (!activeWorldEnding && accumulator >= tickInterval) {
+  while (accumulator >= tickInterval) {
     accumulator -= tickInterval;
     const { changes, events, biomeChanges } = step(simWorld, biomeMap, elevationMap);
     rememberWorldEvents(currentWorldHistory, events);
@@ -6459,7 +6431,7 @@ app.ticker.add((ticker) => {
         }
       }
     }
-    // Hold on the world's actual final state before deep time turns over.
+    // Record the ending, then let the next world rise through the blackout.
     if (simWorld.tick >= currentWorldFate.endTick) {
       beginWorldEnding();
       frameEvents.length = 0;
@@ -7138,58 +7110,6 @@ document.body.appendChild(worldArchivePanel);
 const worldArchiveList = worldArchivePanel.querySelector<HTMLElement>('.world-archive__list')!;
 
 
-const worldEndingPanel = document.createElement('section');
-worldEndingPanel.className = 'world-ending';
-worldEndingPanel.hidden = true;
-worldEndingPanel.setAttribute('aria-live', 'polite');
-worldEndingPanel.innerHTML = `
-  <div class="world-ending__veil"></div>
-  <div class="world-ending__card">
-    <p class="world-ending__eyebrow"></p>
-    <p class="world-ending__world"></p>
-    <h2></h2>
-    <p class="world-ending__epitaph"></p>
-    <div class="world-ending__footer">
-      <span>A new world emerges in <b>24</b>s</span>
-      <button type="button">next world</button>
-    </div>
-    <div class="world-ending__progress"><i></i></div>
-  </div>
-`;
-document.body.appendChild(worldEndingPanel);
-
-function showWorldEnding(outcome: ResolvedWorldEnding) {
-  document.body.dataset.worldEnding = outcome.kind;
-  worldEndingPanel.querySelector<HTMLElement>('.world-ending__eyebrow')!.textContent = outcome.eyebrow;
-  worldEndingPanel.querySelector<HTMLElement>('.world-ending__world')!.textContent = currentWorldName;
-  worldEndingPanel.querySelector('h2')!.textContent = outcome.title;
-  worldEndingPanel.querySelector<HTMLElement>('.world-ending__epitaph')!.textContent = outcome.epitaph;
-  worldEndingPanel.hidden = false;
-  updateWorldEndingProgress(0);
-  requestAnimationFrame(() => worldEndingPanel.classList.add('is-visible'));
-}
-
-function updateWorldEndingProgress(progress: number) {
-  const clamped = Math.max(0, Math.min(1, progress));
-  worldEndingPanel.style.setProperty('--ending-progress', String(clamped));
-  const seconds = Math.max(0, Math.ceil(ENDING_HOLD_SECONDS * (1 - clamped)));
-  worldEndingPanel.querySelector<HTMLElement>('.world-ending__footer b')!.textContent = String(seconds);
-}
-
-function hideWorldEnding() {
-  worldEndingPanel.classList.remove('is-visible');
-  delete document.body.dataset.worldEnding;
-  window.setTimeout(() => { worldEndingPanel.hidden = true; }, 900);
-}
-
-worldEndingPanel.querySelector('button')!.addEventListener('click', finishWorldEnding);
-(window as any).__previewEnding = (kind: WorldEndingKind) => {
-  if (kind in WORLD_ENDINGS) beginWorldEnding(kind);
-};
-const previewEnding = new URLSearchParams(window.location.search).get('ending') as WorldEndingKind | null;
-if (previewEnding && previewEnding in WORLD_ENDINGS) {
-  window.setTimeout(() => beginWorldEnding(previewEnding), 800);
-}
 
 function formatWorldDuration(ticks: number): string {
   const minutes = Math.max(1, Math.round(ticks / ticksPerSecond / 60));
@@ -7666,7 +7586,7 @@ window.addEventListener('pointermove', (event) => {
   const target = event.target;
   if (
     event.pointerType === 'touch' ||
-    (target instanceof Element && target.closest('.viewer-controls, .world-intro, .world-archive, .world-ending'))
+    (target instanceof Element && target.closest('.viewer-controls, .world-intro, .world-archive'))
   ) {
     hideWorldInspector();
     return;
