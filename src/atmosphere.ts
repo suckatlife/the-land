@@ -458,6 +458,8 @@ export interface Atmosphere {
   onCelestialEvent(cb: (kind: string) => void): void;
   triggerCelestial(kind: 'comet' | 'eclipse' | 'aurora' | 'meteors'): void;
   light(): CelestialLight;
+  celestialPosition(): { x: number; y: number; kind: 'sun' | 'moon' } | null;
+  brightStarPositions(): Array<{ x: number; y: number }>;
   horizonColor(): number;                    // the sky's current horizon hue (dread lean included)
   setLightAzimuth(v: number | null): void;   // pin the light's azimuth (null = resume cycle)
   setLightAltitude(v: number | null): void;  // pin the light's altitude
@@ -1544,6 +1546,23 @@ export function createAtmosphere(): Atmosphere {
     onCelestialEvent: (cb: (kind: string) => void) => { eventCb = cb; },
     triggerCelestial: (kind: 'comet' | 'eclipse' | 'aurora' | 'meteors') => { startCelestial(kind); },
     light: () => curLight,
+    celestialPosition: () => {
+      if (!limbLayout || curLight.altitude < 0.025) return null;
+      return {
+        x: curLight.azimuth * limbLayout.width,
+        y: limbLayout.height * (0.22 - 0.16 * curLight.altitude),
+        kind: curLight.isDay ? 'sun' : 'moon',
+      };
+    },
+    brightStarPositions: () => {
+      if (!limbLayout || curLight.nightness < 0.25) return [];
+      const ca = Math.cos(starRotation), sa = Math.sin(starRotation);
+      const px = starLayer.position.x, py = starLayer.position.y;
+      return brightStarPos.map((p) => ({
+        x: px + p.x * ca - p.y * sa,
+        y: py + p.x * sa + p.y * ca,
+      }));
+    },
     // The sky's current horizon color, dread lean included. Anything that has
     // to melt into the horizon (the depth haze in main.ts) tints to this.
     horizonColor: () => lastSkyHorizon,

@@ -7457,6 +7457,115 @@ function inspectWorldAt(clientX: number, clientY: number) {
       best = { rank, distance, kind, title, detail };
     }
   };
+  const light = atmos.light();
+  const celestial = atmos.celestialPosition();
+  if (celestial) {
+    const isSun = celestial.kind === 'sun';
+    consider(
+      celestial,
+      isSun ? 36 : 28,
+      7,
+      celestial.kind,
+      isSun ? 'The sun' : 'The moon',
+      isSun ? 'The daylight crossing this world' : 'The night light crossing this world',
+    );
+  }
+
+  const limb = atmos.limbGeometry();
+  for (const star of atmos.brightStarPositions()) {
+    const onScreen = star.x >= 0 && star.x <= window.innerWidth && star.y >= 0 && star.y <= window.innerHeight;
+    const inOpenSky = !limb || Math.hypot(star.x - limb.cx, star.y - limb.cy) >= limb.R;
+    if (onScreen && inOpenSky) {
+      consider(star, 12, 3, 'night sky', 'A star', 'Part of the turning firmament');
+    }
+  }
+
+  const pathPoint = (pts: Array<{ x: number; y: number }>, idx: number) => {
+    if (pts.length < 2) return null;
+    const last = pts.length - 1;
+    const k = Math.min(Math.floor(idx), last - 1);
+    const u = Math.min(1, idx - k);
+    return {
+      x: pts[k].x + (pts[k + 1].x - pts[k].x) * u,
+      y: pts[k].y + (pts[k + 1].y - pts[k].y) * u,
+    };
+  };
+
+  for (const fire of fires) {
+    consider(
+      tileToSky(fire.row, fire.col),
+      26,
+      9,
+      'wildfire',
+      fire.wasForest ? 'A forest fire' : 'A grass fire',
+      fire.t < FIRE_BURN * 0.45 ? 'The blaze is spreading' : 'The ground is burning out',
+    );
+  }
+
+  for (const plague of plagues) {
+    const civ = simWorld.civs.get(plague.civId);
+    for (const district of plague.afflicted.values()) {
+      consider(
+        tileToSky(district.row, district.col),
+        22,
+        8,
+        'plague',
+        district.fate === 'ruin' ? 'A stricken district' : 'An outbreak',
+        civ ? `Spreading through ${civ.name}` : 'A fever passing through the city',
+      );
+    }
+  }
+
+  for (const boat of boats) {
+    const point = pathPoint(boat.pts, boat.idx);
+    if (!point) continue;
+    const civ = [...simWorld.civs.values()].find((candidate) => candidate.color === boat.color);
+    const title = boat.era >= 4 ? 'A cargo vessel' : boat.era >= 3 ? 'A steamship' : 'A sailing vessel';
+    consider(
+      worldPointToSky(point.x, point.y),
+      24,
+      7,
+      'vessel',
+      title,
+      civ ? `${civ.name} · underway` : 'Underway between ports',
+    );
+  }
+
+  for (const boat of riverBoats) {
+    const point = pathPoint(boat.pts, boat.idx);
+    if (point) consider(worldPointToSky(point.x, point.y), 22, 7, 'river craft', 'A river barge', 'Carrying goods inland');
+  }
+
+  for (const wreck of wrecks) {
+    consider(worldPointToSky(wreck.x, wreck.y), 22, 7, 'wreckage', 'A sinking vessel', 'Its voyage ended here');
+  }
+
+  for (const flock of birdFlocks) {
+    const u = flock.t / flock.dur;
+    const x = flock.sx + (flock.tx - flock.sx) * u;
+    const y = flock.sy + (flock.ty - flock.sy) * u - Math.sin(u * Math.PI) * 18;
+    consider(worldPointToSky(x, y), 24, 6, 'wildlife', 'A flock of birds', `${flock.n} birds crossing between forests`);
+  }
+
+  for (const herd of herds) {
+    const forest = biomeMap[herd.r][herd.c] === 'forest';
+    consider(
+      worldPointToSky(herd.x, herd.y),
+      22,
+      6,
+      'wildlife',
+      forest ? 'A woodland herd' : 'A grazing herd',
+      `${herd.size} animals roaming the wilds`,
+    );
+  }
+
+  for (const fish of fishSpots) {
+    consider(worldPointToSky(fish.x, fish.y), 18, 5, 'sea life', 'A school of fish', 'Circling beneath the surface');
+  }
+  if (whale) {
+    consider(worldPointToSky(whale.x, whale.y), 24, 6, 'sea life', 'A surfacing whale', 'Briefly visible in deep water');
+  }
+
 
   for (const battle of battles) {
     const attacker = simWorld.civs.get(battle.attackerId);
@@ -7499,13 +7608,14 @@ function inspectWorldAt(clientX: number, clientY: number) {
   for (const civ of simWorld.civs.values()) {
     for (const city of civ.cities) {
       const fallen = civ.phase === 'dead';
+      const litAtNight = !fallen && light.nightness > 0.45 && cityLightsGfx.alpha > 0.08;
       consider(
         tileToSky(city.row, city.col),
         24,
-        4,
-        fallen ? 'ruined city' : 'city',
-        fallen ? `Ruins of ${city.name}` : city.name,
-        `${civ.name} · ${ERA_NAMES[civ.era]}`,
+        litAtNight ? 6 : 4,
+        fallen ? 'ruined city' : litAtNight ? 'city lights' : 'city',
+        fallen ? `Ruins of ${city.name}` : litAtNight ? `${city.name} after dark` : city.name,
+        litAtNight ? `${civ.name} · windows and streets alight` : `${civ.name} · ${ERA_NAMES[civ.era]}`,
       );
     }
   }
@@ -7527,7 +7637,7 @@ function inspectWorldAt(clientX: number, clientY: number) {
     const civ = tile.civId === null ? null : simWorld.civs.get(tile.civId);
     const kind = TILE_STATE_NAMES[tile.state];
     const title =
-      tile.state === 'ruin' ? 'A trace of settlement' :
+      tile.state === 'ruin' ? (tile.ruinEra ? `Ruins from the ${ERA_NAMES[tile.ruinEra].toLowerCase()}` : 'Ruins of an unknown age') :
       civ ? civ.name :
       BIOME_NAMES[biome];
     const detail = civ
