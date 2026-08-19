@@ -6364,6 +6364,10 @@ let blackoutHold = 0;    // seconds left to hold full black before fading up
 const BLACKOUT_HOLD = 0.7;  // beat of pure black at the turnover
 const BLACKOUT_FADE = 1.8;  // seconds for the new world to rise out of black
 const BARS_REFRESH_FRAMES = 10;  // DOM rebuild for civ bar panel; ~6 Hz at 60fps
+// Pixi caps deltaMS to protect visual animation after a stall. The simulation
+// clock uses raw elapsed time so a world still lasts 10–17 real minutes on a
+// slow renderer, with this ceiling preventing a huge catch-up after suspension.
+const MAX_SIM_FRAME_MS = 1000;
 
 function beginWorldEnding() {
   const outcome = resolveWorldEnding(simWorld, biomeMap, currentWorldHistory, currentWorldFate);
@@ -6397,7 +6401,7 @@ atmos.onCelestialEvent((kind) => {
 
 app.ticker.add((ticker) => {
   if (!running) return;
-  const frameSeconds = ticker.deltaMS / 1000;
+  const frameSeconds = Math.min(ticker.elapsedMS, MAX_SIM_FRAME_MS) / 1000;
   accumulator += frameSeconds * timeScale;
   const tickInterval = 1 / ticksPerSecond;
   const frameEvents: SimEvent[] = [];
