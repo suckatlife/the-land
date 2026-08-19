@@ -683,8 +683,6 @@ export function createAtmosphere(): Atmosphere {
     skyCloudLayer.addChild(sp);
     skyClouds.push({ sp, x: celestialRand(), yFrac: 0.02 + celestialRand() * 0.2, sc: 0.45 + celestialRand() * 0.7 });
   }
-  let moonPhaseAcc = celestialRand() * 100;
-
   // Constellations: astronomers join bright stars into a figure. The lines
   // live in the rotating dome and fade with the bright population.
   function nameConstellation(): boolean {
@@ -1295,7 +1293,6 @@ export function createAtmosphere(): Atmosphere {
     }
 
     // --- Sky: sun & moon overhead, drifting clouds, deep-sky glow ---
-    moonPhaseAcc += dt;
     milkyWayG.alpha = faintStarsG.alpha * 0.85;
     planetG.alpha = brightStarsG.alpha;
     if (limbLayout) {
@@ -1317,9 +1314,8 @@ export function createAtmosphere(): Atmosphere {
       }
 
       // The sun or the moon — it rises from behind the globe (celestialLayer is
-      // behind the world plane) and climbs into the sky. The phase shadow is
-      // painted in the sky's own colour, so it carves a clean crescent and never
-      // spills a dark blob.
+      // behind the world plane) and climbs into the sky. The moon stays full:
+      // at this scale, phases read as clipping rather than celestial detail.
       celestialLayer.clear();
       const bx = L.azimuth * w;
       const by = h * (0.22 - 0.16 * L.altitude); // low (behind the limb) → high in the sky
@@ -1334,30 +1330,10 @@ export function createAtmosphere(): Atmosphere {
       } else {
         const a = Math.max(0.55, L.nightness) * fade;
         const R = 11;
-        const psi = moonPhaseAcc * 0.02;          // slow lunar cycle
-        const off = (1 - Math.cos(psi)) * R;       // shadow offset: 0 (new) … 2R (full)
-        const darkC = 0x222b3c;
         celestialLayer.circle(bx, by, R * 2.4).fill({ color: 0xc2cee2, alpha: 0.05 * a });   // glow
         celestialLayer.circle(bx, by, R).fill({ color: 0xe2e8f4, alpha: 0.94 * a });          // lit disk
         celestialLayer.circle(bx - 3, by - 2, 2.0).fill({ color: 0xc6cedc, alpha: 0.5 * a }); // maria
         celestialLayer.circle(bx + 2.5, by + 3, 1.4).fill({ color: 0xc6cedc, alpha: 0.4 * a });
-        // The dark side is the OVERLAP of the disk with an offset circle of the
-        // same radius — a lens that lies entirely within the moon, so the shadow
-        // can never spill past the rim. (0 < off < 2R; new and full are special.)
-        if (off <= 0.06) {
-          celestialLayer.circle(bx, by, R).fill({ color: darkC, alpha: 0.82 * a }); // new moon
-        } else if (off < 2 * R - 0.06) {
-          const half = off / 2, h = Math.sqrt(Math.max(0, R * R - half * half));
-          const theta = Math.atan2(h, half);                  // disk-arc half angle
-          const phiTop = Math.atan2(h, -half);                // shadow-arc endpoints
-          let span = Math.atan2(-h, -half) - phiTop; while (span < 0) span += Math.PI * 2;
-          const sx = bx + off, N = 18;
-          const pts: number[] = [];
-          for (let i = 0; i <= N; i++) { const t = -theta + 2 * theta * (i / N); pts.push(bx + Math.cos(t) * R, by + Math.sin(t) * R); } // disk arc, shadow-facing side
-          for (let i = 0; i <= N; i++) { const t = phiTop + span * (i / N); pts.push(sx + Math.cos(t) * R, by + Math.sin(t) * R); }       // shadow arc, inside the disk
-          if (Math.sin(psi) < 0) for (let i = 0; i < pts.length; i += 2) pts[i] = 2 * bx - pts[i]; // waning: shadow on the other limb
-          celestialLayer.poly(pts).fill({ color: darkC, alpha: 0.9 * a });
-        }
       }
 
       // Rainbow (front of the planet): a soft arc when a storm breaks up by day.

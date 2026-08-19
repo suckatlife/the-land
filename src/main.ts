@@ -3695,14 +3695,20 @@ function updatePlagues(nowSec: number) {
       const intensity = local * env * (a.ruined ? 0.5 : 1) * (built ? 1.15 : 0.85);
       if (intensity < 0.02) continue;
       const { x, y } = gridToScreen(a.col, a.row);
-      // A sickly pall darkens the streets — dim and abandoned-looking.
+      // Keep the terrain legible beneath the outbreak. A dark, uniform tile
+      // blanket made a mature plague look like a chunk of the map had failed to
+      // render, especially at night. This lighter uneven wash reads as miasma
+      // while roads, buildings, and coastlines remain visible.
+      const grain = 0.72 + tileRand(a.row, a.col, 613) * 0.28;
       plagueGfx.poly([x, y - 8, x + 16, y, x, y + 8, x - 16, y])
-        .fill({ color: 0x33371f, alpha: 0.62 * intensity });
+        .fill({ color: 0x78835a, alpha: 0.28 * intensity * grain });
+      plagueGfx.ellipse(x, y - 1, 9, 3.5)
+        .fill({ color: 0xa7b17a, alpha: 0.07 * intensity * grain });
       // A few miasma motes hang above the worst tiles.
       if (intensity > 0.45) {
         const m = (nowSec * 0.6 + a.row * 0.7 + a.col) % 1;
         plagueGfx.circle(x + Math.sin(nowSec + a.col) * 4, y - 4 - m * 11, 1.5 * (1 - m))
-          .fill({ color: 0x9aa863, alpha: 0.4 * intensity * (1 - m) });
+          .fill({ color: 0xb8c58a, alpha: 0.48 * intensity * (1 - m) });
       }
     }
   }

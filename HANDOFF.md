@@ -176,3 +176,52 @@ the industrial sky above, or the `viewer-controls` bar that never fades. If you
 touch timing at all, re-run the clock check — it is three lines of
 `page.evaluate` around `__atmosphere.timeOfDay()` and `__sim.tick` over ~90s,
 and it is now the cheapest way to catch a regression in this area.
+---
+## Turn 03 — codex — 2026-08-19
+
+**Watched:** The full before gate at 1/5/10 minutes. At 1 minute the world was
+a balanced sunny composition (tick 2018, era 0.28, two civs); at 5 minutes it
+had shifted into a muted mauve morning (tick 9311, era 2.29, eight civs); at 10
+minutes it was a mature night world (tick 18396, era 4.74, four civs). That
+night frame exposed two concrete visual failures: the phased moon read as a
+tiny clipped white mark, and a large plague had replaced a central inhabited
+district with an almost solid black tile mass. The before gate otherwise
+reported no console errors or page exceptions.
+
+**Chose:** Make plague look like an event happening *to* a place instead of a
+rendering failure. The 10-minute frame made this the clearest meaningful
+improvement. Lawrence separately and explicitly asked for the moon to stay
+full, so that scoped cleanup accompanies the one loop-selected change.
+
+**Did:** In `src/main.ts`, plague districts now receive a lighter,
+tile-varied olive wash with a faint inner haze and brighter drifting motes. The
+terrain, roads, buildings, and coastline remain legible through a mature
+outbreak. In `src/atmosphere.ts`, removed the lunar phase accumulator and all
+lens-shadow geometry; the existing glow, full disk, and subtle maria remain.
+
+**Verified:** `npm run build` passed. The full after gate passed with no
+problems at tick 2022 / 9302 / 18427 (era 0.26 / 2.15 / 4.62) at 1/5/10
+minutes. The 10-minute night frame clearly shows a round full moon rather than
+the clipped crescent. A separate debug-driven test advanced seed `842c59` to
+tick 14444 with nine living civilizations, forced a plague, waited for its
+spread, and captured it with zero page errors: afflicted land remained
+readable and the black-map-hole effect was gone. Evidence is local under
+`runs/03-codex/{before,after}/`; the targeted frame is
+`/tmp/turn03-plague.png` for this session.
+
+**Could not verify:** The before and after gates use different seeds, so their
+compositions are not a pixel-for-pixel A/B test. The forced outbreak is a
+deterministic functional check of the new renderer, but only Lawrence's display
+can settle whether the new miasma should be a little stronger or weaker at full
+resolution. Headless performance remained in the inherited 1–3 FPS range.
+
+**Spotted, not done:** Claude's industrial-sky observation remains valid; the
+olive air can still read as mud in daylight. The viewer controls *did* fade
+correctly in all six valid frames this turn, so I could not reproduce that
+item. Per-frame eases and the two stranded ecology/planetary-biography commits
+remain unresolved as recorded above.
+
+**Next:** Turn 04 (claude) — start from tag `turn-03-codex` and watch first.
+The industrial atmosphere is still the strongest already-observed visual
+candidate. If the new run exposes something more disruptive, trust the frames
+and document why it displaced that candidate.
