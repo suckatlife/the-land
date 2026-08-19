@@ -585,3 +585,88 @@ different ticks.
    until the brief names them.
 4. Everything visual here was judged at 1600x900 headless at 1–3 FPS. The three
    atmosphere turns need one real look.
+
+---
+
+## Product analytics handoff - codex - 2026-08-19
+
+This work is outside the automated visual loop above.
+
+**State:** Branch `codex/privacy-analytics-feedback`, commit `9fb767a` (`Add
+privacy-conscious product analytics`), based on live `main` commit `4f34f14`.
+The branch is committed and clean, but has not been pushed, merged, or deployed.
+
+**Implemented:**
+
+- Added a typed analytics wrapper in `src/analytics.ts` using
+  `@vercel/analytics`. All product call sites go through `trackEvent`, so the
+  provider can be replaced without touching the simulation UI again.
+- Tracks one visit per browser-tab session with new/returning status; 1-, 5-,
+  and 10-minute visible engagement; successful native/clipboard shares;
+  successful fullscreen changes; successful Stay Awake changes; PWA install;
+  Chronicle toggles; and manual/automatic new-world generation.
+- Strips query parameters and fragments from every analytics URL, so seeds and
+  viewing options are not sent. Sends no Chronicle text, world data, account
+  data, or persistent user ID. Do Not Track and Global Privacy Control disable
+  analytics entirely.
+- Updated `public/privacy/index.html` with the analytics disclosure.
+- Added a small feedback link under About, leading to `/support/`.
+- Documented the event contract and privacy rules in `ANALYTICS.md`.
+
+**Verified:** `npm run build` passes. `npm audit --omit=dev` reports zero
+vulnerabilities. `git diff --check` passes. Built output contains the privacy
+and feedback changes, and every requested event has an audited call site.
+
+**Could not verify:** A complete browser click-through. The Linux Playwright
+browser is missing `libnspr4.so`, and the Codex in-app browser connection is
+currently blocked by the WSL sandbox-helper error. Do not describe this as
+fully browser-tested until you run it yourself.
+
+**Important provider decision:** Vercel Web Analytics is cookie-free and a good
+fit, but Vercel currently restricts custom events to Pro/Enterprise. Before
+shipping, determine Lawrence's Vercel plan:
+
+1. If Pro/Enterprise: enable Web Analytics in the Vercel project, deploy this
+   branch, then verify pageviews and every custom event in the dashboard.
+2. If Hobby: do not pay for Pro solely for this. Keep the `trackEvent` contract
+   and switch only `src/analytics.ts` to a privacy-restricted provider such as
+   PostHog: autocapture off, session recording off, person profiles never,
+   memory-only analytics persistence, DNT/GPC respected, and no seed/URL query
+   data. This requires a project key and host environment variables. Update the
+   privacy page and dependency list if the provider changes.
+
+**Browser verification checklist:**
+
+- First tab session emits one `visit_started`; reload does not emit another;
+  a later fresh session reports `returning`.
+- Engagement emits exactly once at 1, 5, and 10 visible minutes and pauses while
+  the document is hidden.
+- Native share and clipboard fallback count only after success.
+- Fullscreen and Stay Awake count only successful state changes.
+- `appinstalled` and first standalone launch count a PWA installation only once.
+- Chronicle and new-world events have no duplicate handlers.
+- Inspect outgoing pageviews/events from a URL containing `?seed=...#...` and
+  confirm the transmitted URL contains neither query nor fragment.
+- With DNT or GPC enabled, confirm no analytics script or event is sent.
+
+**Potential follow-up:** Analytics currently initializes on the main world
+experience. The static About, Privacy, Terms, and Support pages are not included
+in pageview tracking. Decide deliberately whether those pages matter before
+expanding coverage.
+
+### Ready-to-use Claude prompt
+
+> Continue The Land from the product analytics handoff at the bottom of
+> `HANDOFF.md`. Read `CLAUDE.md`, `ANALYTICS.md`, and the full new handoff
+> entry before changing anything. Start on branch
+> `codex/privacy-analytics-feedback` at commit `9fb767a`; do not discard or
+> recreate the existing work. Review the diff for privacy and event-quality
+> issues, determine whether the Vercel project is Hobby or Pro, and follow the
+> provider decision recorded in the handoff. Then run the complete browser
+> verification checklist, fix any failures or duplicate events, and update both
+> `ANALYTICS.md` and the Privacy page if implementation details change. Keep
+> seeds, shared URLs, Chronicle text, persistent identities, autocapture, and
+> session recording out of analytics. Build and test before committing. Do not
+> push, merge, or deploy until Lawrence explicitly authorizes it. Finally,
+> append your own concise entry to `HANDOFF.md` describing what you reviewed,
+> changed, verified, could not verify, and recommend next.
