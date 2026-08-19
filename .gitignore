@@ -27,3 +27,9 @@ dist-ssr
 # Spike: large CC0 asset-kit binaries (local only — not committed)
 /models/
 .vercel
+
+# Local evidence and isolated worktrees from the Claude / Codex loop driver
+/runs/
+/.loop-runs/
+/scripts/loop/self_rotate.txt
+/.loop-worktrees/

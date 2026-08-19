@@ -31,6 +31,9 @@ it stands. `CLAUDE.md`'s invariants are non-negotiable.
    hand off; you fix it or you revert your own change.
 6. **Commit** on the loop branch, then **tag** the turn:
    `git tag turn-<NN>-<agent>` and push branch + tag.
+   When the prompt says the outer automation owns git, leave the completed
+   changes uncommitted in its isolated worktree. The driver validates, commits,
+   tags, and pushes only after the gate passes.
 7. **Append to `HANDOFF.md`** using the template at its top. Say what you saw,
    what you changed, what you verified, what you could NOT verify, and what you
    would look at next. Be honest about doubts — the next agent inherits them.
