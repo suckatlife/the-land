@@ -670,3 +670,92 @@ expanding coverage.
 > push, merge, or deploy until Lawrence explicitly authorizes it. Finally,
 > append your own concise entry to `HANDOFF.md` describing what you reviewed,
 > changed, verified, could not verify, and recommend next.
+
+---
+
+## Product analytics review - claude - 2026-08-19
+
+Continues the Codex analytics handoff above. Branch
+`codex/privacy-analytics-feedback`; existing work reviewed and extended, not
+recreated. Not pushed, not merged, not deployed.
+
+**Reviewed:** The full `9fb767a` diff — `src/analytics.ts`, the eight call sites
+in `src/main.ts`, the privacy page, `ANALYTICS.md`. Confirmed against the
+`@vercel/analytics` types that `beforeSend` receives both pageviews and custom
+events and that both carry `url`, so the original URL stripping was sound in
+principle. Traced all four `resetWorld` call sites and the wake-lock failure
+path.
+
+**Plan question, settled:** the Vercel account is **Hobby**
+(`billing_plan: hobby`, from the Vercel API using the already-authenticated
+CLI's token). Per the recorded decision, custom events would have been dropped
+silently, so the provider was swapped and the `trackEvent` contract left alone.
+
+**Changed:**
+
+1. **Provider -> PostHog**, `src/analytics.ts` only; no call site moved.
+   Autocapture off, session recording off, `person_profiles: 'never'`,
+   `persistence: 'memory'`, `respect_dnt`, `advanced_disable_decide`, manual
+   pageview with a stripped URL, and a `sanitize_properties` pass that empties
+   the query and fragment of `$current_url`, `$referrer` and friends — the
+   referrer mattered, because a referrer can carry a seed.
+2. **Loaded by dynamic import.** This was a real finding, not a tidy-up: with a
+   static import the PostHog library was still fetched and parsed under Do Not
+   Track. Nothing was sent, but the checklist item says no analytics script
+   should load, and it did. Now an opted-out viewer never downloads it — and
+   with no key configured Rollup eliminates it entirely (verified: no posthog
+   chunk in a keyless build; a separate 244K chunk appears when a key is set,
+   never in the main bundle).
+3. **Fullscreen events now count the browser's own `fullscreenchange`.** The old
+   code counted requests. A double-click on the fullscreen control fires two
+   clicks *and* a dblclick, so one gesture could emit up to three events and
+   thrash the state; and leaving fullscreen with Esc was never counted at all.
+   One actual state change is now one event, with `source` gaining `system` for
+   changes no control initiated. Also stopped `dblclick` on the chrome from
+   toggling fullscreen — it was fighting the button's own click handler, which
+   was a UX bug before it was an analytics bug.
+4. **Engagement interval now clears** once all three thresholds are reached,
+   instead of waking every second forever on a screen left running for hours.
+5. **DNT detection broadened** to `'yes'`, `window.doNotTrack` and
+   `navigator.msDoNotTrack`.
+6. **Dev-only `window.__analyticsLog`** so the checklist is runnable with no
+   project key and no dashboard. Stripped from production builds (verified).
+7. Docs: `ANALYTICS.md` (provider rationale, env vars, what is deliberately not
+   tracked, how to verify), the privacy page (PostHog, memory-only, no
+   persistent identifier, library not loaded when opted out), and
+   `DEPENDENCY_NOTES.md`.
+
+**Verified:** `npm run build` and `tsc` clean. `npm audit --omit=dev`: 0
+vulnerabilities. **17 browser checks pass** via `scripts/analytics_check.mjs`
+and `scripts/analytics_check_engagement.mjs` — one `visit_started` per tab
+session, reload emits none, a later session reports `returning`; no seed or
+fragment anywhere in a payload from `?seed=SECRETSEED123#SECRETFRAG`; DNT and
+GPC each emit nothing and load no script; chronicle emits exactly two
+alternating events for two clicks; one `world_generated{manual}` per click; a
+double-click burst on the fullscreen control yields at most one event;
+engagement fires exactly once at one visible minute and 40s hidden does not
+count toward it; the clipboard share emits one event while the shared link
+itself still carries the seed.
+
+**Could not verify:** Anything requiring a real PostHog project — no key exists,
+so no event has reached a dashboard and the wire format is unconfirmed. Native
+`navigator.share`, the `appinstalled` prompt, and a genuine standalone PWA
+launch are not reachable headless; only the clipboard fallback and the
+storage-guard logic were exercised. The 5- and 10-minute engagement thresholds
+share the tested code path but were not waited out. Under a rapid double-click
+the fullscreen event's `source` degrades to `system` (the second request throws
+and clears the intent) — the count is right, the attribution is not.
+
+**Recommend next:**
+
+1. Decide whether analytics ships at all. It is inert without
+   `VITE_POSTHOG_KEY`, so merging collects nothing until you set it — that is
+   deliberate, and it means this can merge without being a privacy decision yet.
+2. If it ships: create the PostHog project, set `VITE_POSTHOG_KEY` (and
+   `VITE_POSTHOG_HOST` for EU), deploy to preview, and confirm events arrive
+   with no query or fragment on any URL property.
+3. Remove `@vercel/analytics` from `package.json` if returning to Vercel
+   analytics is off the table; it is unused now and kept only as a one-edit
+   escape hatch.
+4. The static About/Privacy/Terms/Support pages still send no pageview. Still an
+   open, deliberate choice.

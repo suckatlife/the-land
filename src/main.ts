@@ -7353,17 +7353,30 @@ updateClock();
 setInterval(updateClock, 1000);
 
 // --- Public viewer controls ---
+// What asked for the last fullscreen change, so the event can say where it came
+// from. Reset after each change: an exit the viewer made with Esc is a real
+// state change but nobody's control pressed it.
+let fullscreenIntent: 'control' | 'double_click' | 'system' = 'system';
 async function toggleFullscreen(source: 'control' | 'double_click') {
   if (!document.fullscreenEnabled) return;
-  const entering = !document.fullscreenElement;
+  fullscreenIntent = source;
   try {
-    if (entering) await document.documentElement.requestFullscreen();
+    if (!document.fullscreenElement) await document.documentElement.requestFullscreen();
     else await document.exitFullscreen();
-    trackEvent('fullscreen_toggled', { enabled: entering, source });
   } catch {
-    // A denied fullscreen request is not usage and should not be counted.
+    // A denied fullscreen request is not usage; fullscreenchange never fires.
+    fullscreenIntent = 'system';
   }
 }
+// Counted from the browser's own state change rather than from the request.
+// Requesting is not the same as succeeding, the same request can be issued
+// twice (a double-click on the fullscreen button fires two clicks AND a
+// dblclick), and leaving with Esc is a real change that no request precedes.
+// One actual change, one event.
+document.addEventListener('fullscreenchange', () => {
+  trackEvent('fullscreen_toggled', { enabled: document.fullscreenElement !== null, source: fullscreenIntent });
+  fullscreenIntent = 'system';
+});
 
 const viewerControls = document.createElement('nav');
 viewerControls.className = 'viewer-controls';
@@ -7564,7 +7577,13 @@ document.addEventListener('visibilitychange', () => {
 });
 
 viewerControls.querySelector('[data-control="fullscreen"]')!.addEventListener('click', () => toggleFullscreen('control'));
-document.addEventListener('dblclick', () => toggleFullscreen('double_click'));
+// Double-clicking the world enters fullscreen, but double-clicking the chrome
+// must not: on the fullscreen button itself it fought its own click handler.
+document.addEventListener('dblclick', (event) => {
+  const target = event.target;
+  if (target instanceof Element && target.closest('.viewer-controls, .world-archive, .world-inspector, .world-intro, #hud')) return;
+  toggleFullscreen('double_click');
+});
 
 // A passive field guide: hover the curved world to identify what is visible
 // without selecting it or turning observation into a game mechanic.
