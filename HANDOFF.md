@@ -225,3 +225,92 @@ remain unresolved as recorded above.
 The industrial atmosphere is still the strongest already-observed visual
 candidate. If the new run exposes something more disruptive, trust the frames
 and document why it displaced that candidate.
+
+---
+
+## Turn 04 — claude — 2026-08-19
+
+**Watched:** `runs/04-claude/before/` at 1/5/10 min (tick 2018 / 9325 / 18419,
+era 0.26 / 2.25 / 4.72, 3 → 10 → 7 civs, ice 0 → 0.02 → 0.56). The moon reads
+as a proper full disc now and plague districts stay legible — both of Turn 03's
+changes hold up. What stopped me was the HUD: at 5 minutes it read
+**"The Beginning · 3,000 BCE"** with eraProgress at 2.25, and at 10 minutes it
+*still* read "The Beginning · 3,000 BCE" with eraProgress at 4.72.
+
+**Chose:** The deep-time readout. It is the one piece of always-on signage, and
+it was telling the viewer that nothing had happened for ten minutes while
+industrial cities stood on screen.
+
+Measured the cause in a mature world rather than inferring it:
+
+| | |
+| --- | --- |
+| eraProgress | 5.0 (top of the arc) |
+| HUD | "The Middle Ages · 1,500 CE" |
+| living civs | medieval:648, industrial:415, neolithic:321, industrial:256, industrial:122, medieval:109, industrial:88 |
+
+`dominantEra` returned the era of the single largest civ. Because a civ's era is
+fixed at birth and never advances while it lives (a `CLAUDE.md` invariant), one
+big long-lived society pins the readout for the rest of the world's life — and
+the year is anchored to that era, so the calendar froze with it. The era floor
+in `sim.ts` is working correctly; new civs *were* being born industrial. Only
+the reading was wrong.
+
+**Did:** Two things — the second at Lawrence's explicit request.
+
+1. **`dominantEra` now reads the world's age across civs**: the most advanced
+   era holding at least `ERA_READOUT.share` (15%) of settled tiles, falling back
+   to the largest civ when nothing qualifies. If a third of the world is
+   industrial, the world is in the industrial age whatever the biggest single
+   blob is. The rank ratchets and never regresses (`displayedEraRank`, reset per
+   world): the year hangs off it, and a year counting down reads as a bug rather
+   than as a dark age. The sim invariant is untouched — this is a reading fix,
+   not an era-advancement change.
+2. **The speed control now moves the whole world.** `timeScale` multiplied only
+   the history accumulator, so 4x raced the centuries while the sun, seasons and
+   weather stayed at 1x — the identical split Turn 02 fixed for slow frame
+   rates, still sitting on the button three lines away. There is now one
+   `worldClock`: real elapsed time, capped against stalls, multiplied by
+   `timeScale`, frozen while paused. All **12** `performance.now()` lifetimes
+   (battles, quiet zones, ruin decay, wonders, forced plague/faith) moved onto
+   it together — they had to move as one or they would disagree with each other.
+   Side effect, by construction rather than measured: a paused world is now
+   genuinely still, where battles and quiet zones used to keep aging.
+
+Also pinned the harness to one seed (`SEED=loop-standard`, overridable). Turns
+02 and 03 each had to write "before and after used different seeds, so this is
+not a real A/B"; the before/after 10-minute frames this turn are pixel-identical
+terrain. Civ history still diverges — `sim.ts` uses unseeded `Math.random`.
+
+**Verified:** Build clean. Both gates PASS, no page exceptions or console
+errors. Era fix proven by forcing the exact pathology: largest civ set to
+neolithic with 978 tiles, everyone else industrial — HUD reported
+**"The Age of Industry · 1,810 CE"** where the old code would have said "The
+Beginning". Speed fix measured at 4x: the day/night clock ran at **4.23x** wall
+time, where before it would not have moved at all.
+
+**Could not verify:** The after-frames do **not** themselves demonstrate the era
+fix — that run collapsed to two small medieval civs by 10 minutes, so "The
+Middle Ages" was the honest answer for it and the pathology never appeared. The
+synthetic test is the real evidence. I also could not get a clean tick-rate
+number at 4x: the world reached its ending and rerolled mid-measurement, which
+is itself evidence history was running ~4x, but it is not the number I wanted.
+And nothing here was seen on real hardware.
+
+**Spotted, not done:**
+- The industrial sky is *still* the strongest visual candidate, now flagged by
+  both of us across three turns. I passed on it again only because a frozen
+  deep-time readout struck me as a worse defect than a muddy one.
+- `ERA_READOUT.share = 0.15` is a guess. It is one constant and it decides how
+  eagerly the world claims a new age; worth an eye at full resolution.
+- 15% share plus the ratchet means a single brief advanced civ can permanently
+  promote the readout. That is deliberate (deep time ratchets) but it is a
+  taste call, not an obvious truth.
+- Per-frame eases and the two stranded commits, still unresolved since Turn 00.
+
+**Next:** Turn 05 (codex) — the industrial sky is yours if you want it; it has
+outlived three turns of "spotted, not done" and I would rather you took it than
+that it kept being deferred. Note that `dominantEra` now drives the era air as
+well as the text, so a world will reach industrial soot sooner than it used to —
+check the 10-minute frame against `runs/04-claude/before/t10m.png` before
+deciding how much of what you see is your change and how much is mine.

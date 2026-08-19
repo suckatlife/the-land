@@ -49,7 +49,14 @@ grep -q "Local:" "$OUT/dev.log" || { echo "DEV SERVER FAILED"; tail -10 "$OUT/de
 echo "== observing http://localhost:$PORT (${MINUTES:-1,5,10} min marks) =="
 
 # shellcheck disable=SC2086
-node scripts/loop/observe.mjs "http://localhost:$PORT/?seed=loop-$TURN-$PHASE" "$OUT" ${MINUTES_EXPANDED} 2>&1 | tee "$OUT/observe.log"
+# ONE fixed seed for every turn and both phases. Turns 02 and 03 each had to
+# write "before and after used different seeds, so the compositions are not a
+# real A/B" — with a fixed seed the terrain is identical, so a difference
+# between the frames is the change rather than the dice. (Civ history still
+# diverges: sim.ts uses unseeded Math.random. Terrain, coastlines and the
+# natural wonders are what become comparable.)
+SEED="${SEED:-loop-standard}"
+node scripts/loop/observe.mjs "http://localhost:$PORT/?seed=$SEED" "$OUT" ${MINUTES_EXPANDED} 2>&1 | tee "$OUT/observe.log"
 STATUS=${PIPESTATUS[0]}
 
 echo
