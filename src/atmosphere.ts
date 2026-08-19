@@ -188,13 +188,22 @@ export const ATMOS = {
     // The air of an age — keyed by the leading civilization's era and eased
     // slowly. `air`/`amount` lean the glaze; fogMult scales the mist.
     easeSeconds: 30,
+    // How much of the era's air comes back as SCATTERED LIGHT rather than as
+    // shade. The glaze is a multiply, so on its own an era's air could only
+    // ever darken and desaturate the whole frame at once — which is why heavy
+    // air read as mud: land and sea converged on one dull hue and the sea
+    // stopped reading as water. Real haze does the opposite, lifting the dark
+    // end and lowering contrast. This is the lift; the glaze keeps the density.
+    airlight: 0.55,
     moods: {
       neolithic:  { air: 0xf6f0de, amount: 0.06, fogMult: 0.85 }, // primordial clarity
       classical:  { air: 0xf2e9d2, amount: 0.05, fogMult: 0.90 },
       medieval:   { air: 0xe8e0cc, amount: 0.06, fogMult: 1.00 },
-      industrial: { air: 0x99938a, amount: 0.15, fogMult: 1.40 }, // soot and steam
-      modern:     { air: 0xc9cdd1, amount: 0.11, fogMult: 1.10 }, // washed, exhausted
-      post:       { air: 0xbfa9c9, amount: 0.10, fogMult: 1.05 }, // faintly synthetic
+      // Soot in daylight is a warm ash, not a dark olive: a light tint darkens
+      // little through the multiply and carries the haze through the lift.
+      industrial: { air: 0xbcae98, amount: 0.17, fogMult: 1.40 }, // soot and steam
+      modern:     { air: 0xd3d7db, amount: 0.12, fogMult: 1.10 }, // washed, exhausted
+      post:       { air: 0xccb9d8, amount: 0.11, fogMult: 1.05 }, // faintly synthetic
     } as Record<Era, { air: number; amount: number; fogMult: number }>,
   },
 
@@ -421,6 +430,7 @@ function sampleSeason(t: number): SeasonState {
 export interface Atmosphere {
   skyLayer: Sprite;
   glazeLayer: Graphics;
+  airLayer: Graphics;                        // era airlight (screen), sits over the glaze
   scarLayer: Container;
   cloudShadowLayer: Container;
   fogLayer: Container;
@@ -498,6 +508,15 @@ export function createAtmosphere(): Atmosphere {
   const glazeLayer = new Graphics();
   glazeLayer.blendMode = 'multiply';
   glazeLayer.alpha = 0;
+
+  // Airlight: the era's air scattered back as light. Screen blend, so it lifts
+  // the darks toward the air's colour instead of pressing everything down.
+  // Invisible in the clear early eras, so it costs nothing until there is
+  // something in the air.
+  const airLayer = new Graphics();
+  airLayer.blendMode = 'screen';
+  airLayer.alpha = 0;
+  airLayer.visible = false;
 
   const scarLayer = new Container();
 
@@ -1145,6 +1164,8 @@ export function createAtmosphere(): Atmosphere {
     skyLayer.height = height;
     glazeLayer.clear();
     glazeLayer.rect(0, 0, width, height).fill(0xffffff);
+    airLayer.clear();
+    airLayer.rect(0, 0, width, height).fill(0xffffff);
     starLayer.position.set(width * ATMOS.stars.poleX, height * ATMOS.stars.poleY);
   }
 
@@ -1186,11 +1207,17 @@ export function createAtmosphere(): Atmosphere {
     // Glaze: time-of-day light, cast by season, hazed by the era's air.
     let glazeColor = lerpColor(day.glaze, season.cast, season.castAmount);
     glazeColor = lerpColor(glazeColor, eraAirCur.air, eraAirCur.amount);
-    const glazeAlpha = day.glazeAlpha + season.castAmount * 0.5 + eraAirCur.amount * 0.5;
+    const glazeAlpha = day.glazeAlpha + season.castAmount * 0.5 + eraAirCur.amount * 0.28;
     glazeLayer.tint = glazeColor;
     glazeLayer.alpha = Math.min(ATMOS.day.glazeCap, glazeAlpha);
     // Fullscreen multiply quad — skip it entirely near noon when it's ~clear.
     glazeLayer.visible = glazeLayer.alpha > 0.004;
+
+    // …and the matching lift. Alpha follows the era's air alone, so the clear
+    // ages never pay for the layer at all.
+    airLayer.tint = eraAirCur.air;
+    airLayer.alpha = eraAirCur.amount * ATMOS.era.airlight;
+    airLayer.visible = airLayer.alpha > 0.004;
 
     // The limb haze follows the sky's horizon color (including the dread
     // lean) and fades in with the curvature knob.
@@ -1510,7 +1537,7 @@ export function createAtmosphere(): Atmosphere {
   }
 
   return {
-    skyLayer, glazeLayer, scarLayer, cloudShadowLayer, fogLayer,
+    skyLayer, glazeLayer, airLayer, scarLayer, cloudShadowLayer, fogLayer,
     attach: (layers: { biomeLayer: Container }) => { attachedBiomeLayer = layers.biomeLayer; },
     attachPlane: (plane, geom) => {
       attachedPlane = plane;

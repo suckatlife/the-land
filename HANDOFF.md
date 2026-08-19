@@ -314,3 +314,76 @@ that it kept being deferred. Note that `dominantEra` now drives the era air as
 well as the text, so a world will reach industrial soot sooner than it used to —
 check the 10-minute frame against `runs/04-claude/before/t10m.png` before
 deciding how much of what you see is your change and how much is mine.
+
+---
+
+## Turn 05 — claude — 2026-08-19
+
+**Type: VISUAL** (Turn 04 was systemic — clocks and readouts — so this turn
+rotates). Taking the industrial sky, which had been "spotted, not done" for
+three consecutive turns and was therefore mandatory.
+
+**Note on the record:** three commits landed between Turn 04 and this turn with
+no handoff entry and no turn tag — `dc1831a` (loop automation scripts),
+`edf925c` (moon reflections, 8x playback), `b603b2f` (celestial reflections
+aligned to the observer). All authored under Lawrence's git identity. Two of
+them touch `src/atmosphere.ts`, next door to this change. I shot a fresh before
+gate rather than reusing Turn 04's after frames because the code had moved.
+
+**Watched:** `runs/05-claude/before/` (tick 2016 / 9320 / 18380, era 0.3 / 2.32
+/ 4.73). The 10-minute frame reads "The Modern Age · 2,040 CE" — Turn 04's era
+fix working in a live run, no longer stuck at "The Beginning". The 5-minute
+frame is the one that mattered: a heavy red-brown dome with the sea desaturated
+to grey-brown and the land muddy olive. Crucially the HUD said "The Ancient
+World", so **that mud was not industrial air at all** — it was a dread lean
+going through the same path. Codex saw the same thing in Turn 03 and called it
+"a muted mauve morning".
+
+**Chose:** The cause under all three sightings. The glaze is a fullscreen
+**multiply**, so any strong atmospheric lean — era air, dread, dusk — could only
+ever darken and desaturate the entire frame at once. Land and sea converge on a
+single dull hue and the sea stops reading as water. Real haze does the opposite:
+it lifts the dark end and lowers contrast. The industrial sky was one symptom of
+a general defect, which is why retuning the industrial colour alone would not
+have fixed it.
+
+**Did:** `src/atmosphere.ts` + one line in `src/main.ts`.
+- New **airlight** layer: fullscreen, `screen` blend, tinted to the era's air,
+  alpha = `eraAirCur.amount * ATMOS.era.airlight` (0.55). It lifts the darks
+  toward the air's colour instead of pressing everything down. `visible` is
+  false whenever alpha is negligible, so the clear early ages never pay for it.
+- The glaze presses down less now the lift carries the air: the era term in
+  `glazeAlpha` goes from `amount * 0.5` to `amount * 0.28`.
+- Retuned the heavy eras. Industrial was `0x99938a`, a dark olive — as a
+  multiply that is a grey filter. Soot in daylight is a warm ash: `0xbcae98`,
+  amount 0.15 → 0.17. Modern and post lightened to match.
+
+**Verified:** Build clean, after gate PASS, no exceptions. The attributable
+evidence is a controlled capture, not the gate frames: with every civ forced to
+industrial and the day pinned to midday, the frame is legible warm haze — blue
+sea, green land, the veil thickening toward the horizon — where the same
+conditions previously produced an olive dome. Layer confirmed live and doing
+work: one screen-blend layer, alpha 0.067, tint `dacdb7`.
+
+**Could not verify:** The before/after 5-minute pair looks like a large
+improvement — sea blue again under the same warm sky — but I do **not** claim it
+as proof. Dread level differs between the two runs (`sim.ts` uses unseeded
+`Math.random`), and at 5 minutes the era is classical, where the airlight is
+only ~0.03 alpha. Most of that difference is probably the dice. The forced
+industrial capture is the real evidence. Nothing seen on real hardware, and the
+screen blend is one more fullscreen quad in the late eras — where the frame is
+already most expensive. Only Lawrence's FPS counter can settle that.
+
+**Spotted, not done:**
+- Industrial may now be too *clean*. The brief wants "smokier, hazier" and the
+  forced-midday frame reads like a hazy summer day. `ATMOS.era.moods.industrial.amount`
+  and `ATMOS.era.airlight` are the two dials; I stopped rather than tune blind.
+- **Dread still goes through the multiply only.** It is the strongest lean in
+  the system (`dreadSkyBlend` 0.8) and it produced the worst frame this turn.
+  Giving dread its own airlight — or deciding it *should* stay oppressive — is
+  the obvious follow-on and I would take it next if it were a visual turn.
+- Untagged commits landing outside the protocol (see above). Worth a human
+  decision about whether the loop record is meant to be complete.
+- The two stranded commits, unresolved since Turn 00.
+
+**Next:** Turn 06 (claude, systemic by rotation).

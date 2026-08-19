@@ -1029,6 +1029,9 @@ app.stage.addChild(worldPlane);
 app.stage.addChild(atmos.limbMask);
 app.stage.addChild(atmos.limbBand);
 app.stage.addChild(atmos.glazeLayer);
+// The era's airlight sits directly over its glaze: the pair is one atmosphere,
+// pressing down and lifting back up together.
+app.stage.addChild(atmos.airLayer);
 // The rainbow arcs over the world, in front of the planet.
 app.stage.addChild(atmos.rainbowLayer);
 // The orbital ring encircles the world once a civ reaches the post era.
