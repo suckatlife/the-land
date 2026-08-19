@@ -16,6 +16,25 @@ page.on('console', (m) => { if (m.type() === 'error') problems.push('CONSOLE: ' 
 
 await page.goto(url, { waitUntil: 'networkidle' });
 
+// The world opens behind a doorway ("watch the world") and the sim stays at
+// tick 0 until it is dismissed. Without this, every frame in the loop would be
+// a screenshot of a static intro card and every turn would report a dead world.
+const opened = await page.evaluate(() => {
+  const b = document.querySelector('.world-intro button');
+  if (!b) return false;
+  b.click();
+  return true;
+});
+console.log(opened ? 'doorway dismissed' : 'no doorway present');
+await page.waitForTimeout(1200);
+// Refuse to waste ten minutes shooting a world that never started.
+const ticking = await page.evaluate(async () => {
+  const t0 = window.__sim?.tick ?? -1;
+  await new Promise((r) => setTimeout(r, 1500));
+  return (window.__sim?.tick ?? -1) > t0;
+});
+if (!ticking) { console.log('PROBLEMS: sim is not advancing — aborting before the clock starts'); await browser.close(); process.exit(1); }
+
 let elapsed = 0;
 for (const m of marks) {
   await page.waitForTimeout((m - elapsed) * 60000);
