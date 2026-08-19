@@ -6401,7 +6401,20 @@ atmos.onCelestialEvent((kind) => {
 
 app.ticker.add((ticker) => {
   if (!running) return;
-  const frameSeconds = Math.min(ticker.elapsedMS, MAX_SIM_FRAME_MS) / 1000;
+  // ONE clock for the whole world. Turn 01 correctly moved history off Pixi's
+  // deltaMS (which is capped at 100ms to protect animation after a stall) and
+  // onto raw elapsed time, so a world lasts its advertised 10-17 real minutes.
+  // But only history moved: the sky, seasons, weather and every story surface
+  // stayed on the capped clock, so below 10fps they fell behind. Measured at
+  // 3fps: history ran at 1.05x wall-clock while the day/night cycle ran at
+  // 0.37x — a six-minute day taking sixteen real minutes, and worlds reaching
+  // the industrial age having barely seen two dawns.
+  //
+  // Above 10fps a frame is already under the 100ms cap, so elapsedMS and
+  // deltaMS are identical and this changes nothing at all. It engages only
+  // where the divergence actually exists.
+  const frameMS = Math.min(ticker.elapsedMS, MAX_SIM_FRAME_MS);
+  const frameSeconds = frameMS / 1000;
   accumulator += frameSeconds * timeScale;
   const tickInterval = 1 / ticksPerSecond;
   const frameEvents: SimEvent[] = [];
@@ -6468,11 +6481,11 @@ app.ticker.add((ticker) => {
       triggerPing(ev.row, ev.col, 0xd8e4ee);
     }
   }
-  updateAtmosphere(ticker.deltaMS);
+  updateAtmosphere(frameMS);
   updatePollution();
   // Sky + glaze + weather + scar fades. The sky leans toward the last dread
   // hue while curDread eases, so it releases smoothly after a catastrophe.
-  atmos.update(ticker.deltaMS, curDread, curHue.vignette, dominantEra(simWorld));
+  atmos.update(frameMS, curDread, curHue.vignette, dominantEra(simWorld));
   // Dying-world blight: drain the land toward grey as the cataclysm nears.
   // atmos.update just wrote the seasonal tint, so this layers on top each frame.
   if (curBlight > 0.002) {
@@ -6506,7 +6519,7 @@ app.ticker.add((ticker) => {
     clock.style.textShadow = `0 1px 2px rgba(255,255,255,${(0.45 * lum).toFixed(2)}), 0 1px 3px rgba(0,0,0,${(0.5 * n).toFixed(2)})`;
   }
   riverGfx.tint = lerpColor(0xffffff, L.color, 0.35);
-  const dtSec = ticker.deltaMS / 1000;
+  const dtSec = frameSeconds;   // story surfaces share the world's clock too
   const nowSec = performance.now() / 1000;
   // World-turnover blackout: hold full black for a beat, then ease it away so
   // the new world rises out of the dark.
@@ -6561,7 +6574,7 @@ app.ticker.add((ticker) => {
   updateFestival(n);
   maybeChronicle();
   // The camera breathes — whole-stage lens scale, leaning in with dread.
-  breathT += ticker.deltaMS / 1000;
+  breathT += frameSeconds;   // camera breathing on the world's clock
   app.stage.scale.set(
     1 + ATMOS.camera.breathAmp * 0.5 * (1 + Math.sin((Math.PI * 2 * breathT) / ATMOS.camera.breathPeriodSec))
       + curDread * ATMOS.camera.dreadLean
@@ -6716,7 +6729,7 @@ app.ticker.add((ticker) => {
         // low rubble stub, then let the land reclaim it. Hold at age 0 (intact)
         // until this tile's staggered start, so a fallen city crumbles in a ripple.
         if (nowSec >= bts.ruinStartAt) {
-          bts.ruinAge[s] = Math.min(1, bts.ruinAge[s] + (ticker.deltaMS / 1000) / RUIN_DECAY_SECONDS);
+          bts.ruinAge[s] = Math.min(1, bts.ruinAge[s] + frameSeconds / RUIN_DECAY_SECONDS);
         }
         const age = bts.ruinAge[s];
         if (age < 1) settled = false;

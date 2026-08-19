@@ -19,21 +19,33 @@ await page.goto(url, { waitUntil: 'networkidle' });
 // The world opens behind a doorway ("watch the world") and the sim stays at
 // tick 0 until it is dismissed. Without this, every frame in the loop would be
 // a screenshot of a static intro card and every turn would report a dead world.
-const opened = await page.evaluate(() => {
-  const b = document.querySelector('.world-intro button');
-  if (!b) return false;
-  b.click();
-  return true;
-});
-console.log(opened ? 'doorway dismissed' : 'no doorway present');
-await page.waitForTimeout(1200);
+// The doorway is built after the sprite atlases load, so it does not exist at
+// networkidle — wait for it to be ATTACHED, not visible: the card animates in,
+// and Playwright's visibility check will time out on a perfectly real button.
+// Click through evaluate for the same reason.
+const appeared = await page.waitForSelector('.world-intro button', { state: 'attached', timeout: 30000 })
+  .then(() => true).catch(() => false);
+if (appeared) {
+  await page.evaluate(() => document.querySelector('.world-intro button').click());
+  console.log('doorway dismissed');
+} else {
+  console.log('no doorway appeared within 30s');
+}
+await page.waitForTimeout(1500);
 // Refuse to waste ten minutes shooting a world that never started.
 const ticking = await page.evaluate(async () => {
   const t0 = window.__sim?.tick ?? -1;
-  await new Promise((r) => setTimeout(r, 1500));
+  await new Promise((r) => setTimeout(r, 3000));
   return (window.__sim?.tick ?? -1) > t0;
 });
-if (!ticking) { console.log('PROBLEMS: sim is not advancing — aborting before the clock starts'); await browser.close(); process.exit(1); }
+if (!ticking) {
+  // Print what the page complained about; aborting silently hid the real cause
+  // for two runs.
+  console.log('PROBLEMS: sim is not advancing — aborting before the clock starts');
+  for (const p of [...new Set(problems)].slice(0, 10)) console.log('  ' + p);
+  await browser.close();
+  process.exit(1);
+}
 
 let elapsed = 0;
 for (const m of marks) {
