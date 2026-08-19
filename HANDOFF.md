@@ -449,3 +449,54 @@ different formula in the same commit.
 **Next:** Turn 07 (claude, visual by rotation). Dread's airlight is the natural
 one — it is now the strongest remaining lean going through a darken-only path,
 and Turn 05's frames showed it producing the worst frame of the run.
+
+---
+
+## Turn 07 — claude — 2026-08-19
+
+**Type: VISUAL** (Turn 06 was systemic). Taking dread's darken-only path, listed
+in both Turn 05 and Turn 06 — twice, so mandatory.
+
+**Watched:** Reused `runs/06-claude/after/` (same commit, same seed) per rule 4.
+
+**Chose:** Turn 05 gave the era's air a lift but left dread — the strongest lean
+in the system — going through the multiply alone at up to 0.55 alpha over the
+whole frame. Turn 05's own before-frame was the evidence: the worst frame of
+that run was a sepia dome with the sea desaturated to grey-brown, and the HUD
+said "The Ancient World", so it was dread doing it, not era air.
+
+**Did:** `src/main.ts` only.
+- `DREAD.tintMaxAlpha` 0.55 → 0.40.
+- New `dreadLift`: fullscreen `screen` blend, tinted to the brewing hue lifted
+  halfway to white, alpha = `curDread * DREAD.liftMaxAlpha` (0.20). Sits above
+  the tint and below the vignette, so the edges still close in. Hidden whenever
+  alpha is negligible — which is most of a world's life.
+
+Dread should feel oppressive, not illegible; the sky's lean
+(`ATMOS.dreadSkyBlend` 0.8) is untouched, so the mood is intact.
+
+**Verified:** Build clean, gate PASS, no exceptions. True A/B at held dread 0.95
+(pressure pinned at 0.97 so the catastrophe never lands): the same frame with
+the screen layers on and off. The 5-minute after frame at "The Ancient World ·
+500 CE" — the same seed and era as Turn 05's muddy before-frame — now has a
+blue-teal sea and separated land under the same warm sky.
+
+**Could not verify — and a correction to my own emphasis:** the A/B shows the
+lift's contribution is **modest**. Most of the improvement in this turn comes
+from dropping the multiply 0.55 → 0.40; the lift adds a warm separation on top.
+I would have overstated the new layer if I had not shot the pair. Also, the
+no-lift capture disabled every screen-blend layer, so it was "no lifts" vs "both
+lifts" rather than dread's alone — at classical era the era airlight is tiny, so
+this is close to but not exactly the isolated comparison. And nothing seen on
+real hardware.
+
+**Spotted, not done:**
+- **I have now added two fullscreen screen-blend quads in three turns** (era
+  airlight, dread lift) and measured neither one's fill cost. Both are gated to
+  invisible when weak, but the late-era frame — already the most expensive — now
+  carries one more blend whenever the air is heavy. This is the clearest thing I
+  owe the project and could not do headlessly at 1–3 FPS.
+- Industrial may be too clean (Turn 05, now twice).
+- Untagged commits outside the protocol; the stranded commits. Both human calls.
+
+**Next:** Turn 08 (claude, systemic by rotation).

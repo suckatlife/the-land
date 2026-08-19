@@ -1144,8 +1144,15 @@ setTimeout(reapplyCurve, 1200);
 const DREAD = {
   // Ground multiply is gentler now that the sky carries the brewing color
   // (ATMOS.dreadSkyBlend) and the wind/cloud-shadows rise with dread too.
-  tintMaxAlpha:     0.55,
+  // The ground multiply is gentler still now that dread also has a LIFT. On
+  // its own a 0.55 multiply over the whole frame crushed the world's colour
+  // separation: at full dread the sea stopped reading as water and land and
+  // ocean converged on one sepia. Dread should feel oppressive, not illegible.
+  tintMaxAlpha:     0.40,
   vignetteMaxAlpha: 0.80,
+  // Scattered light in the wrong-coloured air: lifts the darks toward the
+  // brewing hue so the world keeps its separation while the light goes wrong.
+  liftMaxAlpha:     0.20,
   easeIn:           0.006,   // per-frame fraction — dread creeps in
   easeOut:          0.0015,  // and drains away slower than it broke
   sevFloor:         0.22,    // dread ceiling for a near-zero-severity fizzle
@@ -1254,6 +1261,13 @@ const dreadTint = new Graphics();
 dreadTint.blendMode = 'multiply';
 dreadTint.alpha = 0;
 dreadTint.visible = false;
+// The lift pairs with dreadTint the way airlight pairs with the glaze: the
+// multiply presses down, this raises the low end. Under the vignette, so the
+// edges still close in.
+const dreadLift = new Graphics();
+dreadLift.blendMode = 'screen';
+dreadLift.alpha = 0;
+dreadLift.visible = false;
 const dreadVignette = new Sprite(makeVignetteTexture());
 dreadVignette.alpha = 0;
 dreadVignette.visible = false;
@@ -1280,6 +1294,7 @@ const epicenterGfx = new Graphics();
 world.addChild(epicenterGfx);
 app.stage.addChild(pollutionGfx);
 app.stage.addChild(dreadTint);
+app.stage.addChild(dreadLift);
 app.stage.addChild(dreadVignette);
 app.stage.addChild(omenStarGfx);
 app.stage.addChild(impactFlash);
@@ -1288,6 +1303,8 @@ app.stage.addChild(blackoutGfx); // top-most: nothing renders over the turnover 
 function layoutAtmosphere() {
   dreadTint.clear();
   dreadTint.rect(0, 0, window.innerWidth, window.innerHeight).fill(0xffffff);
+  dreadLift.clear();
+  dreadLift.rect(0, 0, window.innerWidth, window.innerHeight).fill(0xffffff);
   dreadVignette.width = window.innerWidth;
   dreadVignette.height = window.innerHeight;
   impactFlash.clear();
@@ -1378,6 +1395,11 @@ function updateAtmosphere(deltaMS: number) {
   dreadTint.tint = curHue.tint;
   dreadTint.alpha = curDread * DREAD.tintMaxAlpha;
   dreadTint.visible = dreadTint.alpha > 0.004;
+  // Lifted toward white from the same hue, so the air glows with the doom's
+  // colour rather than only shading the world with it.
+  dreadLift.tint = lerpColor(curHue.tint, 0xffffff, 0.5);
+  dreadLift.alpha = curDread * DREAD.liftMaxAlpha;
+  dreadLift.visible = dreadLift.alpha > 0.004;
   dreadVignette.tint = curHue.vignette;
   dreadVignette.alpha = curDread * DREAD.vignetteMaxAlpha;
   dreadVignette.visible = dreadVignette.alpha > 0.004;
