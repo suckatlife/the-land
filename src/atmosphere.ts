@@ -590,9 +590,10 @@ export function createAtmosphere(): Atmosphere {
   // --- Celestial light + its surfaces -------------------------------------
   const celestialRand = mulberry32(0x51f1ed);
 
-  // Water glitter: a band of light on the ocean, world-space (bends with the
-  // planet), masked to water by main.ts. Soft base + two glint variants
-  // crossfading in counter-phase for twinkle.
+  // Water glitter: a path from the light at the horizon toward the observer at
+  // the globe's front-center. It lives in world space (so it bends with the
+  // planet), is masked to water by main.ts, and uses a soft base plus two glint
+  // variants crossfading in counter-phase for twinkle.
   const glitterLayer = new Container();
   const glitterBase = new Sprite(makeGlitterTexture(celestialRand, false));
   const glintA = new Sprite(makeGlitterTexture(celestialRand, true));
@@ -1213,12 +1214,31 @@ export function createAtmosphere(): Atmosphere {
     if (!glitterSteady) twinklePhase += dt * gl.twinkleSpeed * Math.PI * 2;
     const bandAlpha = (L.isDay ? gl.dayAlpha : gl.nightAlpha) * L.intensity * glitterStrengthMult;
     const bandWidth = (L.isDay ? gl.dayWidthFrac : gl.nightWidthFrac) * 3200;
-    const bandX = -1600 + L.azimuth * 3200;
+    const bandY = -110;
+    const bandHeight = 1720;
+    const viewWidth = limbLayout?.width ?? 3200 * ATMOS.composition.worldScale;
+    const targetScreenX = L.azimuth * viewWidth;
+    let bandTopX = (targetScreenX - viewWidth / 2) / ATMOS.composition.worldScale;
+    if (attachedPlane && planeGeom) {
+      // The outer MeshPlane pinches the horizon toward its center. Invert that
+      // pinch so the reflection's far end projects to the celestial body's
+      // actual screen x instead of drifting outward with the capture width.
+      const horizonPinch = 1 - curPerspective * ATMOS.curve.pinchMaxFrac;
+      const targetPlaneX = targetScreenX - attachedPlane.x;
+      const targetTexX = planeGeom.apex.x
+        + (targetPlaneX - planeGeom.apex.x) / horizonPinch;
+      bandTopX = (targetTexX - planeGeom.apex.x) / ATMOS.composition.worldScale;
+    }
+    // A specular path runs from the light toward the viewer. Shearing the
+    // world-space band makes its near end meet the front-center of the globe;
+    // the outer curve then foreshortens the whole path with the surface.
+    const observerSkew = Math.atan(-bandTopX / bandHeight);
     for (const sp of [glitterBase, glintA, glintB]) {
       sp.tint = L.color;
-      sp.position.set(bandX, -110);
+      sp.position.set(bandTopX, bandY);
       sp.width = bandWidth;
-      sp.height = 1720;
+      sp.height = bandHeight;
+      sp.skew.x = observerSkew;
     }
     glitterBase.alpha = bandAlpha * 0.5;
     const glintAAlpha = glitterSteady ? 0.55 : 0.55 + 0.45 * Math.sin(twinklePhase);
