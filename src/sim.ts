@@ -17,14 +17,14 @@ export type SimEvent =
   | { kind: 'civ_born'; civId: number }
   | { kind: 'civ_declining'; civId: number }
   | { kind: 'civ_died'; civId: number }
-  | { kind: 'colony_founded'; civId: number; desperate: boolean }
+  | { kind: 'colony_founded'; civId: number; desperate: boolean; row: number; col: number }
   | { kind: 'breakaway'; newCivId: number; parentId: number }
   | { kind: 'catastrophe'; centerRow: number; centerCol: number; affectedCivIds: number[]; severity: number; catastropheType: CatastropheType; radius: number }
-  | { kind: 'city_fell'; civId: number; cityName: string; prominence: number; wasCapital: boolean }
-  | { kind: 'capital_moved'; civId: number; oldCapitalName: string; newCapitalName: string }
+  | { kind: 'city_fell'; civId: number; cityName: string; prominence: number; wasCapital: boolean; row: number; col: number }
+  | { kind: 'capital_moved'; civId: number; oldCapitalName: string; newCapitalName: string; row: number; col: number }
   // Suspense events:
   | { kind: 'omen'; stage: 1 | 2 | 3; catastropheType: CatastropheType; severity: number }
-  | { kind: 'refuge_founded'; civId: number; parentName: string }
+  | { kind: 'refuge_founded'; civId: number; parentName: string; row: number; col: number }
   | { kind: 'conquest'; row: number; col: number; attackerId: number; defenderId: number }
   | { kind: 'island_rising'; row: number; col: number }
   | { kind: 'island_born'; row: number; col: number }
@@ -983,14 +983,14 @@ function advanceExpeditions(world: SimWorld, biomes: Biome[][], changed: Array<{
             target.ruinEra = null;
             target.lastChangedTick = world.tick;
             changed.push({ row: tr, col: tc });
-            events.push({ kind: 'refuge_founded', civId: newId, parentName: civ.name });
+            events.push({ kind: 'refuge_founded', civId: newId, parentName: civ.name, row: tr, col: tc });
           } else {
             target.state = 'cleared';
             target.civId = exp.civId;
             target.ruinEra = null;
             target.lastChangedTick = world.tick;
             changed.push({ row: tr, col: tc });
-            events.push({ kind: 'colony_founded', civId: exp.civId, desperate: exp.desperate });
+            events.push({ kind: 'colony_founded', civId: exp.civId, desperate: exp.desperate, row: tr, col: tc });
           }
           break;
         }
@@ -1124,7 +1124,7 @@ function reconcileCities(world: SimWorld, events: SimEvent[]) {
         // Living civs: capitals always narrated, secondaries above threshold.
         // Dead civs' cities crumble silently — their fall was already the story.
         if (civ.phase !== 'dead' && (i === 0 || city.prominence >= CITY.cityFallNarrateThreshold)) {
-          events.push({ kind: 'city_fell', civId: civ.id, cityName: city.name, prominence: city.prominence, wasCapital: i === 0 });
+          events.push({ kind: 'city_fell', civId: civ.id, cityName: city.name, prominence: city.prominence, wasCapital: i === 0, row: city.row, col: city.col });
         }
       }
     }
@@ -1140,7 +1140,7 @@ function reconcileCities(world: SimWorld, events: SimEvent[]) {
       civ.cities.unshift(newCapital);
       civ.originRow = newCapital.row;
       civ.originCol = newCapital.col;
-      events.push({ kind: 'capital_moved', civId: civ.id, oldCapitalName, newCapitalName: newCapital.name });
+      events.push({ kind: 'capital_moved', civId: civ.id, oldCapitalName, newCapitalName: newCapital.name, row: newCapital.row, col: newCapital.col });
     }
   }
 }

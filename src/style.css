@@ -24,6 +24,75 @@ canvas {
   display: none !important;
 }
 
+.chronicle-layer {
+  position: fixed;
+  z-index: 19;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
+}
+
+.chronicle-callout {
+  position: absolute;
+  box-sizing: border-box;
+  padding: 6px 9px 7px;
+  border: 1px solid rgba(83, 75, 56, 0.22);
+  border-radius: 4px;
+  background: rgba(245, 238, 220, 0.88);
+  box-shadow: 0 5px 18px rgba(38, 32, 22, 0.14);
+  color: #3a3020;
+  font: 11px/1.42 Georgia, 'Times New Roman', serif;
+  text-wrap: pretty;
+  backdrop-filter: blur(7px) saturate(0.78);
+  -webkit-backdrop-filter: blur(7px) saturate(0.78);
+}
+
+.chronicle-callout--catastrophe {
+  border-color: rgba(202, 160, 112, 0.26);
+  background: rgba(55, 20, 16, 0.9);
+  color: #ead0aa;
+}
+
+.chronicle-callout--omen {
+  border-color: rgba(184, 174, 208, 0.2);
+  background: rgba(38, 34, 48, 0.9);
+  color: #c4b9d7;
+  font-style: italic;
+}
+
+.chronicle-callout--relief {
+  border-color: rgba(82, 105, 74, 0.22);
+  background: rgba(228, 238, 222, 0.9);
+  color: #3a4a34;
+}
+
+.chronicle-leader {
+  position: absolute;
+  height: 1px;
+  background: rgba(248, 240, 215, 0.88);
+  box-shadow: 0 1px 2px rgba(24, 23, 18, 0.4);
+  transform-origin: 0 50%;
+}
+
+.chronicle-anchor {
+  position: absolute;
+  width: 5px;
+  height: 5px;
+  border: 1px solid rgba(255, 249, 226, 0.88);
+  border-radius: 50%;
+  background: rgba(74, 66, 48, 0.7);
+  box-shadow: 0 0 0 2px rgba(255, 249, 226, 0.13);
+  transform: translate(-50%, -50%);
+}
+
+@media (max-width: 620px) {
+  .chronicle-callout {
+    padding: 5px 8px 6px;
+    font-size: 10px;
+  }
+}
+
 .viewer-controls {
   position: fixed;
   z-index: 20;

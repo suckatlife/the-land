@@ -14,7 +14,6 @@ const WONDER_RADIUS: Record<NaturalWonderKind, number> = {
 };
 import { drawTile, drawStateOverlayPersistent, redrawOverlay, redrawBiomeTile, lerpColor, gridToScreen, rgbToHsl, hslToRgb } from './iso';
 import { createSimWorld, step, tileOverlayColor, seedInitialCivs, applyCatastrophe, setVolcanoes, eruptVolcanoesNow, setWonderSites, iceDepthAt, SIM, CATASTROPHE, CITY, nearestCityDist, type SimWorld, type Civ, type CivCity, type SimEvent, type Era, type TileOverlay, type BiomeChange, type CatastropheType } from './sim';
-import * as audio from './audio';
 import { createAtmosphere, ATMOS } from './atmosphere';
 import {
   WORLD_ENDINGS,
@@ -591,18 +590,20 @@ function narrateEvent(ev: SimEvent, world: SimWorld): string {
 }
 
 // --- Event log ---
-interface LogEntry { text: string; ts: number; variant?: 'catastrophe' | 'omen' | 'relief'; }
+interface NarrationAnchor { row: number; col: number; }
+interface LogEntry {
+  text: string;
+  ts: number;
+  variant?: 'catastrophe' | 'omen' | 'relief';
+  anchor?: NarrationAnchor;
+}
 const eventLog: LogEntry[] = [];
 const LOG_MAX = 5;
 const LOG_LIFETIME_MS = 22000;
 const LOG_FADE_AFTER_MS = 13000;
 
 const logPanel = document.createElement('div');
-logPanel.style.cssText = `
-  position: fixed; bottom: 12px; left: 12px; width: 340px;
-  display: flex; flex-direction: column; gap: 2px;
-  pointer-events: none; user-select: none;
-`;
+logPanel.className = 'chronicle-layer';
 document.body.appendChild(logPanel);
 
 // Visibility toggles, wired to HUD buttons further down. Off by default so the
@@ -624,7 +625,12 @@ let lastNarrationKey = '';
 
 function pushNarration(
   text: string,
-  opts: { priority?: NarrationPriority; variant?: LogEntry['variant']; dedupKey?: string } = {},
+  opts: {
+    priority?: NarrationPriority;
+    variant?: LogEntry['variant'];
+    dedupKey?: string;
+    anchor?: NarrationAnchor;
+  } = {},
 ): boolean {
   if (!text) return false;
   const now = Date.now();
@@ -636,7 +642,7 @@ function pushNarration(
   if (pri !== 'high' && now - lastNarrationTs < NARRATION_GAP_MS[pri]) return false;
   lastNarrationTs = now;
   lastNarrationKey = opts.dedupKey ?? '';
-  eventLog.unshift({ text, ts: now, variant: opts.variant });
+  eventLog.unshift({ text, ts: now, variant: opts.variant, anchor: opts.anchor });
   if (eventLog.length > LOG_MAX) eventLog.length = LOG_MAX;
   return true;
 }
@@ -671,6 +677,48 @@ function colorizeCivNames(text: string): string {
   return out;
 }
 
+function civNarrationAnchor(civId: number): NarrationAnchor | undefined {
+  const civ = simWorld.civs.get(civId);
+  if (!civ) return undefined;
+  const city = civ.cities[0];
+  return city
+    ? { row: city.row, col: city.col }
+    : { row: civ.originRow, col: civ.originCol };
+}
+
+function eventNarrationAnchor(ev: SimEvent): NarrationAnchor | undefined {
+  switch (ev.kind) {
+    case 'catastrophe':
+      return { row: ev.centerRow, col: ev.centerCol };
+    case 'conquest':
+    case 'island_rising':
+    case 'island_born':
+    case 'land_bridge':
+    case 'rift_opened':
+    case 'wonder_built':
+    case 'migration':
+    case 'colony_founded':
+    case 'refuge_founded':
+    case 'city_fell':
+    case 'capital_moved':
+      return { row: ev.row, col: ev.col };
+    case 'breakaway':
+      return civNarrationAnchor(ev.newCivId);
+    case 'civ_born':
+    case 'civ_declining':
+    case 'civ_died':
+    case 'spared':
+    case 'rally':
+    case 'last_flight':
+      return civNarrationAnchor(ev.civId);
+    case 'omen':
+    case 'ice_advance':
+    case 'ice_peak':
+    case 'ice_retreat':
+      return undefined;
+  }
+}
+
 function pushLogEvents(evs: SimEvent[]) {
   for (const ev of evs) {
     const text = colorizeCivNames(narrateEvent(ev, simWorld));
@@ -679,7 +727,11 @@ function pushLogEvents(evs: SimEvent[]) {
       : ev.kind === 'omen' ? 'omen' as const
       : (ev.kind === 'spared' || ev.kind === 'rally') ? 'relief' as const
       : undefined;
-    pushNarration(text, { priority: EVENT_PRIORITY[ev.kind] ?? 'normal', variant });
+    pushNarration(text, {
+      priority: EVENT_PRIORITY[ev.kind] ?? 'normal',
+      variant,
+      anchor: eventNarrationAnchor(ev),
+    });
   }
 }
 
@@ -689,24 +741,79 @@ function updateEventLog() {
   for (let i = eventLog.length - 1; i >= 0; i--) {
     if (now - eventLog[i].ts > LOG_LIFETIME_MS) eventLog.splice(i, 1);
   }
-  logPanel.innerHTML = eventLog.map((e) => {
+
+  const width = window.innerWidth;
+  const height = window.innerHeight;
+  const maxWidth = width < 620 ? 226 : 292;
+  const placed: Array<{ x: number; y: number; w: number; h: number }> = [];
+  const fragment = document.createDocumentFragment();
+  let globalIndex = 0;
+  const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+  const overlaps = (a: { x: number; y: number; w: number; h: number }, b: { x: number; y: number; w: number; h: number }) =>
+    a.x < b.x + b.w + 8 && a.x + a.w + 8 > b.x && a.y < b.y + b.h + 8 && a.y + a.h + 8 > b.y;
+
+  for (const e of eventLog) {
     const age = now - e.ts;
     const opacity = age < LOG_FADE_AFTER_MS
-      ? 0.88
-      : 0.88 * (1 - (age - LOG_FADE_AFTER_MS) / (LOG_LIFETIME_MS - LOG_FADE_AFTER_MS));
-    const bg = e.variant === 'catastrophe' ? 'rgba(55,12,12,0.92)'
-      : e.variant === 'omen' ? 'rgba(38,34,48,0.90)'
-      : e.variant === 'relief' ? 'rgba(228,238,222,0.88)'
-      : 'rgba(245,238,220,0.84)';
-    const fg = e.variant === 'catastrophe' ? '#e8c8a0'
-      : e.variant === 'omen' ? '#b8aed0'
-      : e.variant === 'relief' ? '#3a4a34'
-      : '#3a3020';
-    const style = e.variant === 'omen' ? 'font-style:italic;' : '';
-    return `<div style="background:${bg};padding:3px 8px;border-radius:2px;${style}
-      font-family:Georgia,'Times New Roman',serif;font-size:10px;line-height:1.5;color:${fg};
-      opacity:${opacity.toFixed(2)};">${e.text}</div>`;
-  }).join('');
+      ? 1
+      : 1 - (age - LOG_FADE_AFTER_MS) / (LOG_LIFETIME_MS - LOG_FADE_AFTER_MS);
+    const plainText = e.text.replace(/<[^>]+>/g, '');
+    const boxWidth = Math.min(maxWidth, Math.max(170, 82 + plainText.length * 4.2));
+    const estimatedLines = Math.max(1, Math.ceil((plainText.length * 5.2) / (boxWidth - 24)));
+    const boxHeight = 25 + (estimatedLines - 1) * 15;
+    const projected = e.anchor ? tileToSky(e.anchor.row, e.anchor.col) : null;
+    const anchor = projected
+      ? { x: clamp(projected.x, 8, width - 8), y: clamp(projected.y, 8, height - 8) }
+      : null;
+
+    let x = anchor
+      ? (anchor.x < width * 0.62 ? anchor.x + 24 : anchor.x - boxWidth - 24)
+      : 16;
+    let y = anchor ? anchor.y - boxHeight * 0.55 : 72 + globalIndex * (boxHeight + 10);
+    x = clamp(x, 12, width - boxWidth - 12);
+    y = clamp(y, 12, height - boxHeight - 58);
+
+    // Newer messages get first choice. Older ones step around them rather than
+    // piling into an unreadable stack when several events share a city.
+    let candidate = { x, y, w: boxWidth, h: boxHeight };
+    for (let attempt = 1; placed.some((other) => overlaps(candidate, other)) && attempt <= 10; attempt++) {
+      const direction = attempt % 2 === 0 ? -1 : 1;
+      const step = Math.ceil(attempt / 2) * (boxHeight + 10);
+      candidate = { ...candidate, y: clamp(y + direction * step, 12, height - boxHeight - 58) };
+    }
+    placed.push(candidate);
+    if (!anchor) globalIndex++;
+
+    if (anchor) {
+      const targetX = clamp(anchor.x, candidate.x, candidate.x + candidate.w);
+      const targetY = clamp(anchor.y, candidate.y, candidate.y + candidate.h);
+      const dx = targetX - anchor.x;
+      const dy = targetY - anchor.y;
+      const leader = document.createElement('span');
+      leader.className = 'chronicle-leader';
+      leader.style.left = `${anchor.x}px`;
+      leader.style.top = `${anchor.y}px`;
+      leader.style.width = `${Math.hypot(dx, dy)}px`;
+      leader.style.transform = `rotate(${Math.atan2(dy, dx)}rad)`;
+      leader.style.opacity = (opacity * 0.64).toFixed(2);
+      const dot = document.createElement('span');
+      dot.className = 'chronicle-anchor';
+      dot.style.left = `${anchor.x}px`;
+      dot.style.top = `${anchor.y}px`;
+      dot.style.opacity = (opacity * 0.78).toFixed(2);
+      fragment.append(leader, dot);
+    }
+
+    const callout = document.createElement('div');
+    callout.className = `chronicle-callout${e.variant ? ` chronicle-callout--${e.variant}` : ''}`;
+    callout.style.left = `${candidate.x}px`;
+    callout.style.top = `${candidate.y}px`;
+    callout.style.width = `${candidate.w}px`;
+    callout.style.opacity = opacity.toFixed(2);
+    callout.innerHTML = e.text;
+    fragment.appendChild(callout);
+  }
+  logPanel.replaceChildren(fragment);
 }
 
 // Graphics quality — the user's FPS/fidelity lever (cycled from the HUD, saved
@@ -1010,6 +1117,40 @@ world.y = -WORLD_CAPTURE.y0 * captureScale;
 // Dense enough that the curved silhouette reads as a curve, not a polyline.
 const worldPlane = new MeshPlane({ texture: worldRT, verticesX: 110, verticesY: 36 });
 
+// The projected world texture is rectangular even though the terrain is not.
+// On tall/narrow windows its left and right bounds can enter the viewport as a
+// hard vertical cut. These three screen-space feathers cover that technical
+// boundary with the live horizon colour, so the ocean falls back into the air
+// instead of ending at a line. The upper horizon already has its own soft limb.
+function makeWorldEdgeTexture(direction: 'left' | 'right' | 'bottom'): Texture {
+  const horizontal = direction !== 'bottom';
+  const cv = document.createElement('canvas');
+  cv.width = horizontal ? 256 : 2;
+  cv.height = horizontal ? 2 : 256;
+  const ctx = cv.getContext('2d')!;
+  const grad = horizontal
+    ? ctx.createLinearGradient(0, 0, 256, 0)
+    : ctx.createLinearGradient(0, 0, 0, 256);
+  if (direction === 'left') {
+    grad.addColorStop(0, 'rgba(255,255,255,1)');
+    grad.addColorStop(0.28, 'rgba(255,255,255,0.96)');
+    grad.addColorStop(1, 'rgba(255,255,255,0)');
+  } else {
+    grad.addColorStop(0, 'rgba(255,255,255,0)');
+    grad.addColorStop(0.72, 'rgba(255,255,255,0.96)');
+    grad.addColorStop(1, 'rgba(255,255,255,1)');
+  }
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, cv.width, cv.height);
+  return Texture.from(cv);
+}
+const worldEdgeFade = new Container();
+worldEdgeFade.eventMode = 'none';
+const worldEdgeLeft = new Sprite(makeWorldEdgeTexture('left'));
+const worldEdgeRight = new Sprite(makeWorldEdgeTexture('right'));
+const worldEdgeBottom = new Sprite(makeWorldEdgeTexture('bottom'));
+worldEdgeFade.addChild(worldEdgeLeft, worldEdgeRight, worldEdgeBottom);
+
 app.stage.addChild(atmos.skyLayer);
 // Stars turn behind the planet; the world plane occludes them below the limb.
 app.stage.addChild(atmos.starLayer);
@@ -1024,6 +1165,7 @@ app.stage.addChild(atmos.auroraLayer);
 // only shows where it climbs above the horizon into the sky.
 app.stage.addChild(ringBackGfx);
 app.stage.addChild(worldPlane);
+app.stage.addChild(worldEdgeFade);
 // The limb mask clips the plane at the circular horizon; it must live in the
 // tree. The band lays horizon haze along the arc, above the plane.
 app.stage.addChild(atmos.limbMask);
@@ -1060,6 +1202,25 @@ function tileToSky(row: number, col: number): { x: number; y: number } {
   const t = toTex(x, y);
   return atmos.project(t.x, t.y);
 }
+
+function layoutWorldEdgeFade() {
+  const width = window.innerWidth;
+  const height = window.innerHeight;
+  const edgeWidth = Math.max(76, Math.min(150, width * 0.11));
+  const edgeHeight = Math.max(66, Math.min(130, height * 0.12));
+  const horizonY = Math.max(0, height * ATMOS.composition.horizonFrac - 30);
+  worldEdgeLeft.position.set(-2, horizonY);
+  worldEdgeLeft.width = edgeWidth;
+  worldEdgeLeft.height = height - horizonY + 4;
+  worldEdgeRight.position.set(width - edgeWidth + 2, horizonY);
+  worldEdgeRight.width = edgeWidth;
+  worldEdgeRight.height = height - horizonY + 4;
+  worldEdgeBottom.position.set(-2, height - edgeHeight + 2);
+  worldEdgeBottom.width = width + 4;
+  worldEdgeBottom.height = edgeHeight;
+}
+layoutWorldEdgeFade();
+
 (window as any).__layers = { world, cityMarkersContainer, labelLayer, biomeLayer, buildingLayer, simLayer };
 (window as any).__anim = () => ({ tiles: animatingTiles.size, buildings: animatingBuildingTiles.size, biome: animatingBiomeTiles.size, easeFrames: +easeFrames.toFixed(2), ease15: +ease(0.15).toFixed(3) });
 (window as any).__rt = () => ({ res: worldRT.source.resolution, w: worldRT.source.pixelWidth, h: worldRT.source.pixelHeight, bound: worldPlane.texture === worldRT, tickerFPS: Math.round(app.ticker.FPS) });
@@ -4298,7 +4459,7 @@ function drawPowerLines(dt: number, night: number) {
 
 // War heat: conquest tile-flips aggregate per civ-pair; sustained contact is
 // narrated once, and quiet afterwards is narrated too.
-const warHeat = new Map<string, { a: number; b: number; count: number; lastTs: number; narratedAt: number }>();
+const warHeat = new Map<string, { a: number; b: number; row: number; col: number; count: number; lastTs: number; narratedAt: number }>();
 // At most one war line per minute across the whole map, so a crowded frontier
 // stays a minority beat rather than a war bulletin (war was ~40% of the log).
 const WAR_GLOBAL_GAP_MS = 60000;
@@ -4312,9 +4473,11 @@ function noteConquest(ev: { row: number; col: number; attackerId: number; defend
   const k = `${a}:${b}`;
   const now = Date.now();
   let w = warHeat.get(k);
-  if (!w) { w = { a, b, count: 0, lastTs: now, narratedAt: 0 }; warHeat.set(k, w); }
+  if (!w) { w = { a, b, row: ev.row, col: ev.col, count: 0, lastTs: now, narratedAt: 0 }; warHeat.set(k, w); }
   w.count++;
   w.lastTs = now;
+  w.row = ev.row;
+  w.col = ev.col;
   // A war earns a line only after sustained fighting, rarely after that, and
   // no more than one war line every WAR_GLOBAL_GAP_MS across the whole map —
   // so a crowded frontier doesn't turn the log into a war bulletin.
@@ -4326,7 +4489,7 @@ function noteConquest(ev: { row: number; col: number; attackerId: number; defend
         `There is burning on the line between ${A.name} and ${B.name}.`,
         `${A.name} and ${B.name} have come to blows over the marches.`,
         `War smoulders along the frontier of ${A.name} and ${B.name}.`,
-      ])), { priority: 'normal', dedupKey: `war:${k}` });
+      ])), { priority: 'normal', dedupKey: `war:${k}`, anchor: { row: w.row, col: w.col } });
       if (ok) { w.narratedAt = now; w.count = 0; lastWarNarrationTs = now; }
     }
   }
@@ -4582,7 +4745,7 @@ function checkWarQuiet() {
         pushNarration(colorizeCivNames(pick([
           `The border between ${A.name} and ${B.name} falls quiet.`,
           `The fighting between ${A.name} and ${B.name} burns itself out.`,
-        ])), { priority: 'low', dedupKey: `war:${k}` });
+        ])), { priority: 'low', dedupKey: `war:${k}`, anchor: { row: w.row, col: w.col } });
       }
       warHeat.delete(k);
     } else if (w.narratedAt === 0 && now - w.lastTs > 60000) {
@@ -5831,7 +5994,7 @@ function maybeGhost(dt: number, nightness: number) {
     ghostStart = now;
     ghostUntil = now + 12000;
     if (Math.random() < 0.18) {
-      pushNarration(`Shepherds at the ruins of ${mem.name} say the stones hum.`, { priority: 'low' });
+      pushNarration(`Shepherds at the ruins of ${mem.name} say the stones hum.`, { priority: 'low', anchor: { row: mem.row, col: mem.col } });
     }
     return;
   }
@@ -5839,7 +6002,7 @@ function maybeGhost(dt: number, nightness: number) {
 
 // Festivals: a city reaching full prominence burns its lamps all night, once.
 const festivalDone = new Set<string>();
-let pendingFestivals: Array<{ x: number; y: number; name: string }> = [];
+let pendingFestivals: Array<{ x: number; y: number; row: number; col: number; name: string }> = [];
 let activeFestival: { x: number; y: number; start: number; until: number } | null = null;
 
 function queueFestivals() {
@@ -5851,7 +6014,7 @@ function queueFestivals() {
       if (festivalDone.has(k)) continue;
       festivalDone.add(k);
       const { x, y } = gridToScreen(city.col, city.row);
-      pendingFestivals.push({ x, y, name: city.name });
+      pendingFestivals.push({ x, y, row: city.row, col: city.col, name: city.name });
     }
   }
 }
@@ -5861,7 +6024,7 @@ function updateFestival(nightness: number) {
   if (!activeFestival && pendingFestivals.length > 0 && nightness > 0.5) {
     const f = pendingFestivals.shift()!;
     activeFestival = { x: f.x, y: f.y, start: now, until: now + 45000 };
-    pushNarration(`In ${f.name}, the lamps burn all night.`, { priority: 'normal' });
+    pushNarration(`In ${f.name}, the lamps burn all night.`, { priority: 'normal', anchor: { row: f.row, col: f.col } });
   }
   if (!activeFestival) { festivalGfx.clear(); return; }
   if (now > activeFestival.until) { activeFestival = null; festivalGfx.clear(); return; }
@@ -5917,7 +6080,8 @@ function maybeChronicle() {
     : share > 0.5
       ? `An age of ${leader.name}: half the known world answers to it.`
       : `The age continues: ${living.length} nations share the land, ${leader.name} first among them.`;
-  pushNarration(colorizeCivNames(text), { priority: 'low' });
+  const seat = leader.cities[0] ?? { row: leader.originRow, col: leader.originCol };
+  pushNarration(colorizeCivNames(text), { priority: 'low', anchor: { row: seat.row, col: seat.col } });
 }
 
 // Reset for everything above (called wherever the world is rebuilt).
@@ -6555,9 +6719,6 @@ app.ticker.add((ticker) => {
       triggerEpicenter(ev.centerRow, ev.centerCol, ev.catastropheType, ev.severity);
       atmos.addScar(ev.catastropheType, ev.centerRow, ev.centerCol, ev.radius, ev.severity);
       addQuietZone(ev.centerRow, ev.centerCol, ev.radius, worldClock);
-      audio.impact(ev.severity);
-    } else if (ev.kind === 'omen' && ev.stage === 3) {
-      audio.omenBell();
     } else if (ev.kind === 'civ_born' || ev.kind === 'civ_died' || ev.kind === 'rally'
         || ev.kind === 'capital_moved' || ev.kind === 'last_flight' || ev.kind === 'refuge_founded') {
       const civ = simWorld.civs.get(ev.civId);
@@ -6590,6 +6751,11 @@ app.ticker.add((ticker) => {
   if (oceanApron) oceanApron.alpha = planetary;
   sceneryWaterGfx.alpha = planetary;
   sceneryLandGfx.alpha = planetary;
+  worldEdgeFade.alpha = planetary;
+  const edgeColor = atmos.horizonColor();
+  worldEdgeLeft.tint = edgeColor;
+  worldEdgeRight.tint = edgeColor;
+  worldEdgeBottom.tint = edgeColor;
   // Scenery land and the in-flight biome crossfade tiles follow the same
   // seasonal/blight land tint as the cached biomeLayer — otherwise a changed
   // tile renders at full brightness and reads as a bright spot at night.
@@ -6672,7 +6838,6 @@ app.ticker.add((ticker) => {
     1 + ATMOS.camera.breathAmp * 0.5 * (1 + Math.sin((Math.PI * 2 * breathT) / ATMOS.camera.breathPeriodSec))
       + curDread * ATMOS.camera.dreadLean
   );
-  audio.setDread(curDread);
   frameCount++;
   // Ease per-civ saturation toward era target; refresh tints for any civ mid-transition.
   easeCivSatMults();
@@ -6947,7 +7112,6 @@ function fireCatastrophe() {
       triggerEpicenter(ev.centerRow, ev.centerCol, ev.catastropheType, ev.severity);
       atmos.addScar(ev.catastropheType, ev.centerRow, ev.centerCol, ev.radius, ev.severity);
       addQuietZone(ev.centerRow, ev.centerCol, ev.radius, worldClock);
-      audio.impact(ev.severity);
     }
   }
   drawCityMarkers();
@@ -7067,7 +7231,6 @@ hud.innerHTML = `
     <button id="reset-sim" style="cursor:pointer">reset sim</button>
     <button id="skip" style="cursor:pointer;color:#607080">skip 5k</button>
     <select id="dbg-spawn" style="cursor:pointer;color:#3060a0" title="spawn an event / structure / wonder for testing"></select>
-    <button id="sound" style="cursor:pointer;color:#888" title="ambient sound">sound: off</button>
     <button id="quality" style="cursor:pointer;color:#607080" title="graphics quality — lower for more FPS">gfx: high</button>
     <button id="toggle-bars" style="cursor:pointer;color:#607080" title="show / hide the living-civilizations panel">civ panel: on</button>
     <button id="toggle-log" style="cursor:pointer;color:#607080" title="show / hide the event log">log: on</button>
@@ -7127,7 +7290,7 @@ toggleBars.addEventListener('click', () => {
 const toggleLog = document.getElementById('toggle-log')!;
 toggleLog.addEventListener('click', () => {
   showLog = !showLog;
-  logPanel.style.display = showLog ? 'flex' : 'none';
+  logPanel.style.display = showLog ? 'block' : 'none';
   toggleLog.textContent = showLog ? 'log: on' : 'log: off';
 });
 
@@ -7191,12 +7354,11 @@ viewerControls.setAttribute('aria-label', 'World controls');
 viewerControls.innerHTML = `
   <button type="button" data-control="pause" title="Pause the world">pause</button>
   <button type="button" data-control="speed" title="Change simulation speed">1x</button>
-  <button type="button" data-control="sound" title="Toggle ambient sound">sound</button>
-  <button type="button" data-control="chronicle" title="Show the world chronicle">chronicle</button>
+  <button type="button" data-control="chronicle" title="Show messages beside events in the world">chronicle</button>
   <button type="button" data-control="archive" title="Revisit remembered worlds">worlds</button>
   <button type="button" data-control="new" title="Begin a new world">new world</button>
   <button type="button" data-control="share" title="Share this exact world">share</button>
-  <button type="button" data-control="awake" title="Keep the display awake">stay awake</button>
+  <button type="button" data-control="awake" title="Prevent this display from sleeping while The Land is open">stay awake</button>
   <button type="button" data-control="fullscreen" title="Enter fullscreen">fullscreen</button>
 `;
 document.body.appendChild(viewerControls);
@@ -7276,7 +7438,6 @@ function setWorldArchiveOpen(open: boolean) {
 
 const pauseControl = viewerControls.querySelector<HTMLButtonElement>('[data-control="pause"]')!;
 const speedControl = viewerControls.querySelector<HTMLButtonElement>('[data-control="speed"]')!;
-const soundControl = viewerControls.querySelector<HTMLButtonElement>('[data-control="sound"]')!;
 const chronicleControl = viewerControls.querySelector<HTMLButtonElement>('[data-control="chronicle"]')!;
 const archiveControl = viewerControls.querySelector<HTMLButtonElement>('[data-control="archive"]')!;
 const shareControl = viewerControls.querySelector<HTMLButtonElement>('[data-control="share"]')!;
@@ -7297,23 +7458,9 @@ speedControl.addEventListener('click', () => {
   atmos.setGlitterSteady(timeScale >= 4);
 });
 
-function syncSoundControls() {
-  const enabled = audio.isEnabled();
-  soundControl.textContent = enabled ? 'sound on' : 'sound';
-  soundControl.classList.toggle('is-active', enabled);
-  const debugSound = document.getElementById('sound');
-  if (debugSound) debugSound.textContent = enabled ? 'sound: on' : 'sound: off';
-}
-function toggleSound() {
-  audio.setEnabled(!audio.isEnabled());
-  syncSoundControls();
-}
-soundControl.addEventListener('click', toggleSound);
-syncSoundControls();
-
 chronicleControl.addEventListener('click', () => {
   showLog = !showLog;
-  logPanel.style.display = showLog ? 'flex' : 'none';
+  logPanel.style.display = showLog ? 'block' : 'none';
   toggleLog.textContent = showLog ? 'log: on' : 'log: off';
   chronicleControl.classList.toggle('is-active', showLog);
 });
@@ -7845,8 +7992,6 @@ document.getElementById('reroll')!.addEventListener('click', () => {
 document.getElementById('reset-sim')!.addEventListener('click', () => {
   resetSimOnly();
 });
-const soundBtn = document.getElementById('sound')!;
-soundBtn.addEventListener('click', toggleSound);
 
 // Graphics-quality cycle. The biggest lever (the main canvas resolution) is
 // set at renderer init, so changing quality saves the choice and reloads —
@@ -7899,6 +8044,7 @@ window.addEventListener('resize', () => {
   centerWorld();
   layoutAtmosphere();
   atmos.layout(window.innerWidth, window.innerHeight);
+  layoutWorldEdgeFade();
 });
 
 function colorsWithin(a: number, b: number, tol: number): boolean {
