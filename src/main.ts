@@ -596,11 +596,13 @@ interface LogEntry {
   ts: number;
   variant?: 'catastrophe' | 'omen' | 'relief';
   anchor?: NarrationAnchor;
+  chronicle: boolean;
 }
 const eventLog: LogEntry[] = [];
-const LOG_MAX = 5;
-const LOG_LIFETIME_MS = 22000;
-const LOG_FADE_AFTER_MS = 13000;
+const LOG_MAX = 16;
+const LOG_ENTER_MS = 650;
+const LOG_LIFETIME_MS = 9500;
+const LOG_FADE_AFTER_MS = 6200;
 
 const logPanel = document.createElement('div');
 logPanel.className = 'chronicle-layer';
@@ -630,6 +632,7 @@ function pushNarration(
     variant?: LogEntry['variant'];
     dedupKey?: string;
     anchor?: NarrationAnchor;
+    chronicle?: boolean;
   } = {},
 ): boolean {
   if (!text) return false;
@@ -642,7 +645,13 @@ function pushNarration(
   if (pri !== 'high' && now - lastNarrationTs < NARRATION_GAP_MS[pri]) return false;
   lastNarrationTs = now;
   lastNarrationKey = opts.dedupKey ?? '';
-  eventLog.unshift({ text, ts: now, variant: opts.variant, anchor: opts.anchor });
+  eventLog.unshift({
+    text,
+    ts: now,
+    variant: opts.variant,
+    anchor: opts.anchor,
+    chronicle: opts.chronicle ?? false,
+  });
   if (eventLog.length > LOG_MAX) eventLog.length = LOG_MAX;
   return true;
 }
@@ -731,6 +740,10 @@ function pushLogEvents(evs: SimEvent[]) {
       priority: EVENT_PRIORITY[ev.kind] ?? 'normal',
       variant,
       anchor: eventNarrationAnchor(ev),
+      // Keep Chronicle to genuine turning points. Omens and recovery beats can
+      // be numerous around one disaster, so they stay out of the spatial layer.
+      chronicle: EVENT_PRIORITY[ev.kind] === 'high'
+        && ev.kind !== 'omen' && ev.kind !== 'spared' && ev.kind !== 'rally',
     });
   }
 }
@@ -752,11 +765,17 @@ function updateEventLog() {
   const overlaps = (a: { x: number; y: number; w: number; h: number }, b: { x: number; y: number; w: number; h: number }) =>
     a.x < b.x + b.w + 8 && a.x + a.w + 8 > b.x && a.y < b.y + b.h + 8 && a.y + a.h + 8 > b.y;
 
-  for (const e of eventLog) {
+  // Two simultaneous callouts are enough to connect text to place without
+  // turning the world into a notification surface.
+  const visibleEntries = eventLog.filter((entry) => entry.chronicle).slice(0, 2);
+  for (const e of visibleEntries) {
     const age = now - e.ts;
-    const opacity = age < LOG_FADE_AFTER_MS
+    const enterT = Math.min(1, age / LOG_ENTER_MS);
+    const enterEase = 1 - Math.pow(1 - enterT, 3);
+    const exitOpacity = age < LOG_FADE_AFTER_MS
       ? 1
       : 1 - (age - LOG_FADE_AFTER_MS) / (LOG_LIFETIME_MS - LOG_FADE_AFTER_MS);
+    const opacity = enterEase * exitOpacity;
     const plainText = e.text.replace(/<[^>]+>/g, '');
     const boxWidth = Math.min(maxWidth, Math.max(170, 82 + plainText.length * 4.2));
     const estimatedLines = Math.max(1, Math.ceil((plainText.length * 5.2) / (boxWidth - 24)));
@@ -810,6 +829,7 @@ function updateEventLog() {
     callout.style.top = `${candidate.y}px`;
     callout.style.width = `${candidate.w}px`;
     callout.style.opacity = opacity.toFixed(2);
+    callout.style.transform = `translateY(${((1 - enterEase) * 6).toFixed(1)}px) scale(${(0.985 + enterEase * 0.015).toFixed(3)})`;
     callout.innerHTML = e.text;
     fragment.appendChild(callout);
   }
@@ -1117,20 +1137,16 @@ world.y = -WORLD_CAPTURE.y0 * captureScale;
 // Dense enough that the curved silhouette reads as a curve, not a polyline.
 const worldPlane = new MeshPlane({ texture: worldRT, verticesX: 110, verticesY: 36 });
 
-// The projected world texture is rectangular even though the terrain is not.
-// On tall/narrow windows its left and right bounds can enter the viewport as a
-// hard vertical cut. These three screen-space feathers cover that technical
-// boundary with the live horizon colour, so the ocean falls back into the air
-// instead of ending at a line. The upper horizon already has its own soft limb.
-function makeWorldEdgeTexture(direction: 'left' | 'right' | 'bottom'): Texture {
-  const horizontal = direction !== 'bottom';
+// On windows wider than the projected map, its rectangular texture boundary
+// enters the viewport as a hard vertical cut. These feathers sit on those
+// actual map boundaries and blend inward to the live horizon colour. They are
+// hidden entirely whenever the map fills the viewport.
+function makeWorldEdgeTexture(direction: 'left' | 'right'): Texture {
   const cv = document.createElement('canvas');
-  cv.width = horizontal ? 256 : 2;
-  cv.height = horizontal ? 2 : 256;
+  cv.width = 256;
+  cv.height = 2;
   const ctx = cv.getContext('2d')!;
-  const grad = horizontal
-    ? ctx.createLinearGradient(0, 0, 256, 0)
-    : ctx.createLinearGradient(0, 0, 0, 256);
+  const grad = ctx.createLinearGradient(0, 0, 256, 0);
   if (direction === 'left') {
     grad.addColorStop(0, 'rgba(255,255,255,1)');
     grad.addColorStop(0.28, 'rgba(255,255,255,0.96)');
@@ -1148,8 +1164,7 @@ const worldEdgeFade = new Container();
 worldEdgeFade.eventMode = 'none';
 const worldEdgeLeft = new Sprite(makeWorldEdgeTexture('left'));
 const worldEdgeRight = new Sprite(makeWorldEdgeTexture('right'));
-const worldEdgeBottom = new Sprite(makeWorldEdgeTexture('bottom'));
-worldEdgeFade.addChild(worldEdgeLeft, worldEdgeRight, worldEdgeBottom);
+worldEdgeFade.addChild(worldEdgeLeft, worldEdgeRight);
 
 app.stage.addChild(atmos.skyLayer);
 // Stars turn behind the planet; the world plane occludes them below the limb.
@@ -1206,18 +1221,22 @@ function tileToSky(row: number, col: number): { x: number; y: number } {
 function layoutWorldEdgeFade() {
   const width = window.innerWidth;
   const height = window.innerHeight;
-  const edgeWidth = Math.max(76, Math.min(150, width * 0.11));
-  const edgeHeight = Math.max(66, Math.min(130, height * 0.12));
+  const planeWidth = WORLD_CAPTURE.w * captureScale;
+  const planeLeft = width / 2 + WORLD_CAPTURE.x0 * captureScale;
+  const planeRight = planeLeft + planeWidth;
+  const edgeWidth = Math.max(84, Math.min(150, width * 0.075));
   const horizonY = Math.max(0, height * ATMOS.composition.horizonFrac - 30);
-  worldEdgeLeft.position.set(-2, horizonY);
+
+  worldEdgeLeft.visible = planeLeft > 1;
+  worldEdgeRight.visible = planeRight < width - 1;
+  worldEdgeFade.visible = worldEdgeLeft.visible || worldEdgeRight.visible;
+
+  worldEdgeLeft.position.set(planeLeft - 1, horizonY);
   worldEdgeLeft.width = edgeWidth;
   worldEdgeLeft.height = height - horizonY + 4;
-  worldEdgeRight.position.set(width - edgeWidth + 2, horizonY);
+  worldEdgeRight.position.set(planeRight - edgeWidth + 1, horizonY);
   worldEdgeRight.width = edgeWidth;
   worldEdgeRight.height = height - horizonY + 4;
-  worldEdgeBottom.position.set(-2, height - edgeHeight + 2);
-  worldEdgeBottom.width = width + 4;
-  worldEdgeBottom.height = edgeHeight;
 }
 layoutWorldEdgeFade();
 
@@ -6755,7 +6774,6 @@ app.ticker.add((ticker) => {
   const edgeColor = atmos.horizonColor();
   worldEdgeLeft.tint = edgeColor;
   worldEdgeRight.tint = edgeColor;
-  worldEdgeBottom.tint = edgeColor;
   // Scenery land and the in-flight biome crossfade tiles follow the same
   // seasonal/blight land tint as the cached biomeLayer — otherwise a changed
   // tile renders at full brightness and reads as a bright spot at night.
