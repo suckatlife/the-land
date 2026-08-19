@@ -1,11 +1,23 @@
-You are taking a turn in an alternating agent loop on this repo.
+You are taking a turn in an alternating agent loop on this repo (the-land).
+The other agent is Claude Code. Your turn id is: __TURN_ID__
 
-Read AUTO_LOOP.md first and follow it exactly. Your turn id is: __TURN_ID__
+1. Read AUTO_LOOP.md in the repo root and follow it exactly. Read HANDOFF.md
+   in full before deciding anything.
+2. If you can run shell commands: `scripts/loop/turn.sh before __TURN_ID__`,
+   then LOOK at the three frames in runs/__TURN_ID__/before/ (1, 5 and 10
+   minutes into a world's life) before choosing what to do.
+   If you cannot run commands, say so in your handoff entry and choose your
+   change from the code and from the previous entries instead — but do not
+   pretend you watched the world.
+3. Make ONE meaningful improvement. A feature, a fix, or a real improvement to
+   something that exists. Not five small ones.
+4. Verify: `npm run build` must pass (it typechecks with noUnusedLocals).
+   If you can, run `scripts/loop/turn.sh after __TURN_ID__` too.
+5. Commit on the `auto-loop` branch and tag it `turn-__TURN_ID__`.
+6. Append your entry to HANDOFF.md using the template at the top of that file.
+   Say what you saw, what you could NOT verify, and what you'd look at next.
 
-In short: run `scripts/loop/turn.sh before __TURN_ID__`, LOOK at the three
-frames it writes to runs/__TURN_ID__/before/, read HANDOFF.md, choose ONE
-meaningful improvement justified by what you saw, build it, prove it with
-`scripts/loop/turn.sh after __TURN_ID__`, commit and tag on the auto-loop
-branch, then append your entry to HANDOFF.md.
-
-Do not touch main. Do not revert the other agent's work without saying why.
+Hard rules: never touch `main` (it deploys the live site). Do not revert
+Claude's work without saying why in HANDOFF.md. No new runtime dependencies.
+The land is the protagonist — painterly, muted, quiet. If a change makes the
+world louder or busier, it is probably wrong.
