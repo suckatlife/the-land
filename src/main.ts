@@ -7622,12 +7622,12 @@ if (shouldShowIntro) {
   intro.setAttribute('aria-labelledby', 'world-intro-title');
   intro.innerHTML = `
     <div class="world-intro__card">
-      <p class="world-intro__eyebrow">a living deep-time diorama</p>
+      <p class="world-intro__eyebrow">a world in motion</p>
       <p class="world-intro__world">${currentWorldName} · seed ${currentSeed}</p>
       <h1 id="world-intro-title">The Land</h1>
-      <p>Civilizations rise, cross oceans, make war, and disappear. The land remembers.</p>
-      <p class="world-intro__aside">A world lives for ten to seventeen minutes. Its history decides how it ends. Leave it on a second screen, or stay for an age.</p>
-      <button type="button">watch the world</button>
+      <p>Watch civilizations settle, spread, trade, fight, and sometimes disappear.</p>
+      <p class="world-intro__aside">Each world runs for 10–17 minutes and can end in a different way. Leave it on a second screen, or hover over the map to see what’s happening.</p>
+      <button type="button">start watching</button>
     </div>
   `;
   document.body.appendChild(intro);
