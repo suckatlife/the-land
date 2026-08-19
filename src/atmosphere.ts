@@ -124,7 +124,7 @@ export const ATMOS = {
 
   glitter: {
     dayAlpha:   0.45,   // band strength under full sun
-    nightAlpha: 0.30,   // moon path strength
+    nightAlpha: 0.50,   // 20% peak after the moon's 0.40 intensity multiplier
     dayWidthFrac:   0.30, // band width as fraction of the world's width
     nightWidthFrac: 0.13, // the moon path is narrower
     twinkleSpeed: 1.4,  // glint crossfade rate (cycles/second)
@@ -467,6 +467,7 @@ export interface Atmosphere {
   nameConstellation(): boolean;              // join bright stars into a figure (max 6)
   clearConstellations(): void;
   setGlitterStrength(v: number): void;       // multiplier on the band alpha
+  setGlitterSteady(v: boolean): void;        // hold glints still at high playback speeds
   setStarBrightness(v: number): void;        // multiplier on star alpha
   setCurvature(v: number): void;   // 0..1, live scrub
   setPerspective(v: number): void; // 0..1, live scrub
@@ -683,8 +684,6 @@ export function createAtmosphere(): Atmosphere {
     skyCloudLayer.addChild(sp);
     skyClouds.push({ sp, x: celestialRand(), yFrac: 0.02 + celestialRand() * 0.2, sc: 0.45 + celestialRand() * 0.7 });
   }
-  let moonPhaseAcc = celestialRand() * 100;
-
   // Constellations: astronomers join bright stars into a figure. The lines
   // live in the rotating dome and fade with the bright population.
   function nameConstellation(): boolean {
@@ -1023,6 +1022,7 @@ export function createAtmosphere(): Atmosphere {
   let lightAzOverride: number | null = null;
   let lightAltOverride: number | null = null;
   let glitterStrengthMult = 1;
+  let glitterSteady = false;
   let starBrightnessMult = 1;
   let curLight: CelestialLight = { azimuth: 0.5, altitude: 1, color: 0xfff3dc, intensity: 1, isDay: true, nightness: 0 };
 
@@ -1206,9 +1206,11 @@ export function createAtmosphere(): Atmosphere {
 
     // Water glitter / moon path: the band slides with the light's azimuth,
     // glint variants crossfade for twinkle. Intensity passes through zero at
-    // twilight, so the day/night width and alpha changes never pop.
+    // twilight, so the day/night width and alpha changes never pop. At high
+    // playback speeds the glints hold at their average brightness instead of
+    // turning the accelerated twinkle into a rapid flash.
     const gl = ATMOS.glitter;
-    twinklePhase += dt * gl.twinkleSpeed * Math.PI * 2;
+    if (!glitterSteady) twinklePhase += dt * gl.twinkleSpeed * Math.PI * 2;
     const bandAlpha = (L.isDay ? gl.dayAlpha : gl.nightAlpha) * L.intensity * glitterStrengthMult;
     const bandWidth = (L.isDay ? gl.dayWidthFrac : gl.nightWidthFrac) * 3200;
     const bandX = -1600 + L.azimuth * 3200;
@@ -1219,8 +1221,10 @@ export function createAtmosphere(): Atmosphere {
       sp.height = 1720;
     }
     glitterBase.alpha = bandAlpha * 0.5;
-    glintA.alpha = bandAlpha * (0.55 + 0.45 * Math.sin(twinklePhase));
-    glintB.alpha = bandAlpha * (0.55 + 0.45 * Math.cos(twinklePhase));
+    const glintAAlpha = glitterSteady ? 0.55 : 0.55 + 0.45 * Math.sin(twinklePhase);
+    const glintBAlpha = glitterSteady ? 0.55 : 0.55 + 0.45 * Math.cos(twinklePhase);
+    glintA.alpha = bandAlpha * glintAAlpha;
+    glintB.alpha = bandAlpha * glintBAlpha;
 
     // Land directional response: an additive gradient from the light's side.
     // Fades to nothing at noon (no direction) and at twilight (no light).
@@ -1295,7 +1299,6 @@ export function createAtmosphere(): Atmosphere {
     }
 
     // --- Sky: sun & moon overhead, drifting clouds, deep-sky glow ---
-    moonPhaseAcc += dt;
     milkyWayG.alpha = faintStarsG.alpha * 0.85;
     planetG.alpha = brightStarsG.alpha;
     if (limbLayout) {
@@ -1317,9 +1320,8 @@ export function createAtmosphere(): Atmosphere {
       }
 
       // The sun or the moon — it rises from behind the globe (celestialLayer is
-      // behind the world plane) and climbs into the sky. The phase shadow is
-      // painted in the sky's own colour, so it carves a clean crescent and never
-      // spills a dark blob.
+      // behind the world plane) and climbs into the sky. The moon stays full:
+      // at this scale, phases read as clipping rather than celestial detail.
       celestialLayer.clear();
       const bx = L.azimuth * w;
       const by = h * (0.22 - 0.16 * L.altitude); // low (behind the limb) → high in the sky
@@ -1334,30 +1336,10 @@ export function createAtmosphere(): Atmosphere {
       } else {
         const a = Math.max(0.55, L.nightness) * fade;
         const R = 11;
-        const psi = moonPhaseAcc * 0.02;          // slow lunar cycle
-        const off = (1 - Math.cos(psi)) * R;       // shadow offset: 0 (new) … 2R (full)
-        const darkC = 0x222b3c;
         celestialLayer.circle(bx, by, R * 2.4).fill({ color: 0xc2cee2, alpha: 0.05 * a });   // glow
         celestialLayer.circle(bx, by, R).fill({ color: 0xe2e8f4, alpha: 0.94 * a });          // lit disk
         celestialLayer.circle(bx - 3, by - 2, 2.0).fill({ color: 0xc6cedc, alpha: 0.5 * a }); // maria
         celestialLayer.circle(bx + 2.5, by + 3, 1.4).fill({ color: 0xc6cedc, alpha: 0.4 * a });
-        // The dark side is the OVERLAP of the disk with an offset circle of the
-        // same radius — a lens that lies entirely within the moon, so the shadow
-        // can never spill past the rim. (0 < off < 2R; new and full are special.)
-        if (off <= 0.06) {
-          celestialLayer.circle(bx, by, R).fill({ color: darkC, alpha: 0.82 * a }); // new moon
-        } else if (off < 2 * R - 0.06) {
-          const half = off / 2, h = Math.sqrt(Math.max(0, R * R - half * half));
-          const theta = Math.atan2(h, half);                  // disk-arc half angle
-          const phiTop = Math.atan2(h, -half);                // shadow-arc endpoints
-          let span = Math.atan2(-h, -half) - phiTop; while (span < 0) span += Math.PI * 2;
-          const sx = bx + off, N = 18;
-          const pts: number[] = [];
-          for (let i = 0; i <= N; i++) { const t = -theta + 2 * theta * (i / N); pts.push(bx + Math.cos(t) * R, by + Math.sin(t) * R); } // disk arc, shadow-facing side
-          for (let i = 0; i <= N; i++) { const t = phiTop + span * (i / N); pts.push(sx + Math.cos(t) * R, by + Math.sin(t) * R); }       // shadow arc, inside the disk
-          if (Math.sin(psi) < 0) for (let i = 0; i < pts.length; i += 2) pts[i] = 2 * bx - pts[i]; // waning: shadow on the other limb
-          celestialLayer.poly(pts).fill({ color: darkC, alpha: 0.9 * a });
-        }
       }
 
       // Rainbow (front of the planet): a soft arc when a storm breaks up by day.
@@ -1572,6 +1554,7 @@ export function createAtmosphere(): Atmosphere {
     nameConstellation,
     clearConstellations: () => { constellationGfx.clear(); constellationCount = 0; },
     setGlitterStrength: (v: number) => { glitterStrengthMult = Math.max(0, v); },
+    setGlitterSteady: (v: boolean) => { glitterSteady = v; },
     setStarBrightness: (v: number) => { starBrightnessMult = Math.max(0, v); },
     setCurvature: (v: number) => { curCurvature = Math.max(0, Math.min(1, v)); applyCurve(); layoutLimb(); },
     setPerspective: (v: number) => { curPerspective = Math.max(0, Math.min(1, v)); applyCurve(); },

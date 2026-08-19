@@ -1,0 +1,24 @@
+You are taking an automated turn in an alternating Claude Code / Codex loop on
+The Land. Your turn id is __TURN_ID__. Your isolated worktree is __WORKTREE__.
+
+1. Read AUTO_LOOP.md completely. Read the newest HANDOFF.md entry completely
+   and skim the earlier entries. Follow CLAUDE.md's invariants.
+2. Run `scripts/loop/turn.sh before __TURN_ID__`, then actually inspect all
+   three images in `runs/__TURN_ID__/before/` before choosing a change.
+3. Make ONE meaningful, noticeable product improvement justified by the
+   frames. Keep the product diff below roughly 400 changed source lines.
+4. Run `scripts/loop/turn.sh after __TURN_ID__` and inspect all three after
+   images. The gate and `npm run build` must pass.
+5. Append an honest entry to HANDOFF.md using its template. Include what you
+   watched, chose, changed, verified, could not verify, spotted, and recommend
+   next.
+
+AUTOMATION-SPECIFIC GIT RULE: do not commit, tag, push, merge, switch branches,
+or edit AUTO_LOOP.md. The outer driver validates the gate and diff, then owns
+that entire git lifecycle. Leave your completed product and HANDOFF changes in
+this worktree.
+
+Never touch main. Do not revert the previous agent without explaining why. No
+new runtime dependencies or runtime network calls. The land is the protagonist:
+painterly, muted, quiet. If a change makes the world louder or busier, it is
+probably wrong.

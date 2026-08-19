@@ -1,0 +1,4 @@
+# Turn frames and logs are large and regenerable — kept locally, not committed.
+# The HANDOFF entry is the durable record of what a turn saw.
+*
+!.gitignore

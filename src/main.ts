@@ -194,15 +194,48 @@ function cardinalDesc(row: number, col: number): string {
 // The "voice" of an omen follows the leading civilization's era — neolithic
 // worlds read auguries, modern ones read instruments.
 type EraBucket = 'ancient' | 'middle' | 'late';
+// The age a world is IN. This used to be the era of the single largest
+// civilisation, which read the world wrong in a specific and visible way:
+// because a civ's era is fixed at birth and never advances while it lives (a
+// CLAUDE.md invariant), one big long-lived society pins the readout for the
+// rest of the world's life. Measured at eraProgress 5.0 — the very top of the
+// arc — the always-on HUD still said "The Middle Ages · 1,500 CE" while the
+// living civs were medieval:648, industrial:415, neolithic:321, industrial:256.
+// Ten minutes of watching and deep time appeared not to move at all.
+//
+// So the age is read ACROSS civs: the most advanced era that holds a real share
+// of the settled world. If a third of the world is industrial, the world is in
+// the industrial age, whatever the biggest single blob happens to be.
+const ERA_READOUT = {
+  share: 0.15,   // fraction of settled tiles an era needs before it counts as the world's age
+};
+// Deep time does not run backwards. The readout may stall but never regress:
+// the displayed year is anchored to this era, and a year counting down reads as
+// a bug rather than as a dark age. Reset per world.
+let displayedEraRank = 0;
+// Rank order, mirroring ERA_RANK below (which is declared further down the file
+// but only read at call time).
+const ERA_BY_RANK: Era[] = ['neolithic', 'classical', 'medieval', 'industrial', 'modern', 'post'];
 function dominantEra(world: SimWorld): Era {
-  let bestCount = -1;
-  let bestEra: Era = 'neolithic';
+  const byRank = new Array(ERA_BY_RANK.length).fill(0);
+  let settled = 0;
+  let largestRank = 0, largestCount = -1;
   for (const civ of world.civs.values()) {
     if (civ.phase === 'dead') continue;
     const n = civStats.tileCounts.get(civ.id) || 0;
-    if (n > bestCount) { bestCount = n; bestEra = civ.era; }
+    const rank = ERA_RANK[civ.era];
+    byRank[rank] += n;
+    settled += n;
+    if (n > largestCount) { largestCount = n; largestRank = rank; }
   }
-  return bestEra;
+  let rank = largestRank;   // fall back to the old answer when nothing qualifies
+  if (settled > 0) {
+    for (let i = byRank.length - 1; i >= 0; i--) {
+      if (byRank[i] / settled >= ERA_READOUT.share) { rank = i; break; }
+    }
+  }
+  if (rank > displayedEraRank) displayedEraRank = rank;
+  return ERA_BY_RANK[displayedEraRank];
 }
 function dominantEraBucket(world: SimWorld): EraBucket {
   const rank = ['neolithic', 'classical', 'medieval', 'industrial', 'modern', 'post'].indexOf(dominantEra(world));
@@ -1538,6 +1571,12 @@ const animatingBiomeTiles = new Set<string>();
 const animatingBuildingTiles = new Set<string>();
 let running = true;
 let timeScale = 1;
+// Seconds of WORLD time since load: real elapsed time, capped against stalls,
+// multiplied by the speed control, and frozen while paused. Everything with a
+// lifetime — battles, quiet zones, ruin decay, wonders — is timestamped
+// against this rather than performance.now(), so the speed control moves the
+// whole world and a paused world is genuinely still.
+let worldClock = 0;
 
 const fadedDeadCivs = new Set<number>();
 
@@ -1963,7 +2002,7 @@ function drawQuietZones() {
   quietGfx.clear();
   if (!quietZones.length) { quietGfx.visible = false; return; }
   quietGfx.visible = true;
-  const nowSec = performance.now() / 1000;
+  const nowSec = worldClock;
   // Walk each zone's box, but paint any tile once — overlapping wounds share a
   // quietness (quietnessAt takes the max), so drawing twice would double-darken.
   const painted = new Set<number>();
@@ -2390,7 +2429,7 @@ function refreshBuildingSprite(row: number, col: number) {
       }
     }
     // Stagger the onset so the dead city crumbles tile by tile, not all at once.
-    if (newlyRuined) state.ruinStartAt = performance.now() / 1000 + ruinStaggerFor(row, col);
+    if (newlyRuined) state.ruinStartAt = worldClock + ruinStaggerFor(row, col);
     animatingBuildingTiles.add(`${row},${col}`);
     return;
   }
@@ -2402,7 +2441,7 @@ function refreshBuildingSprite(row: number, col: number) {
   const tileBiome = biomeMap[row][col];
   const groundTone = (tileBiome === 'forest' || tileBiome === 'rock' || tileBiome === 'water')
     ? BIOME_COLORS.grass : BIOME_COLORS[tileBiome];
-  const quiet = quietZones.length ? quietnessAt(row, col, performance.now() / 1000) : 0;
+  const quiet = quietZones.length ? quietnessAt(row, col, worldClock) : 0;
   const cold = simWorld.iceExtent > 0.002 ? iceDepthAt(simWorld, row, col, tileBiome) : 0;
   const count = densityToCount(density);
   if (count === 0 && !state) return;
@@ -3695,14 +3734,20 @@ function updatePlagues(nowSec: number) {
       const intensity = local * env * (a.ruined ? 0.5 : 1) * (built ? 1.15 : 0.85);
       if (intensity < 0.02) continue;
       const { x, y } = gridToScreen(a.col, a.row);
-      // A sickly pall darkens the streets — dim and abandoned-looking.
+      // Keep the terrain legible beneath the outbreak. A dark, uniform tile
+      // blanket made a mature plague look like a chunk of the map had failed to
+      // render, especially at night. This lighter uneven wash reads as miasma
+      // while roads, buildings, and coastlines remain visible.
+      const grain = 0.72 + tileRand(a.row, a.col, 613) * 0.28;
       plagueGfx.poly([x, y - 8, x + 16, y, x, y + 8, x - 16, y])
-        .fill({ color: 0x33371f, alpha: 0.62 * intensity });
+        .fill({ color: 0x78835a, alpha: 0.28 * intensity * grain });
+      plagueGfx.ellipse(x, y - 1, 9, 3.5)
+        .fill({ color: 0xa7b17a, alpha: 0.07 * intensity * grain });
       // A few miasma motes hang above the worst tiles.
       if (intensity > 0.45) {
         const m = (nowSec * 0.6 + a.row * 0.7 + a.col) % 1;
         plagueGfx.circle(x + Math.sin(nowSec + a.col) * 4, y - 4 - m * 11, 1.5 * (1 - m))
-          .fill({ color: 0x9aa863, alpha: 0.4 * intensity * (1 - m) });
+          .fill({ color: 0xb8c58a, alpha: 0.48 * intensity * (1 - m) });
       }
     }
   }
@@ -4278,7 +4323,7 @@ function nearestCity(civ: { cities: Array<{ row: number; col: number }> } | unde
 function noteBattle(ev: { row: number; col: number; attackerId: number; defenderId: number }) {
   // Fold into a nearby existing front so one frontier is one battle, not many.
   for (const b of battles) {
-    if (Math.abs(b.row - ev.row) <= 3 && Math.abs(b.col - ev.col) <= 3) { b.lastHit = performance.now() / 1000; return; }
+    if (Math.abs(b.row - ev.row) <= 3 && Math.abs(b.col - ev.col) <= 3) { b.lastHit = worldClock; return; }
   }
   // Only some fronts flare into a visible battle, so wars read as an occasional
   // beat rather than a constant churn. (Existing battles still sustain above.)
@@ -4296,7 +4341,7 @@ function noteBattle(ev: { row: number; col: number; attackerId: number; defender
     if (r >= 0 && r < GRID_SIZE && c >= 0 && c < GRID_SIZE && simWorld.tiles[r][c].state === 'built' && simWorld.tiles[r][c].civId === ev.defenderId) { siege = true; break; }
   }
   battles.push({
-    row: ev.row, col: ev.col, cx, cy, born: performance.now() / 1000, lastHit: performance.now() / 1000,
+    row: ev.row, col: ev.col, cx, cy, born: worldClock, lastHit: worldClock,
     ax: cx + vx * 7, ay: cy + vy * 7, dx: cx - vx * 7, dy: cy - vy * 7,
     mx: cs.x, my: cs.y, aColor: atk?.color ?? 0xcc5544, dColor: def?.color ?? 0x4466cc,
     attackerId: ev.attackerId, defenderId: ev.defenderId,
@@ -6279,6 +6324,7 @@ function resetWorld(newSeed: string, archiveEnding?: WorldEnding, outcome?: Reso
   ({ biomes: biomeMap, elevation: elevationMap } = generateBiomeMap(GRID_SIZE, GRID_SIZE, newSeed));
   rebuildNaturalWonders();
   simWorld = createSimWorld(GRID_SIZE, GRID_SIZE);
+  displayedEraRank = 0;   // a new world starts at the beginning again
   currentWorldFate = worldFateForSeed(newSeed, SIM.worldCycleTicks);
   currentWorldHistory = createWorldHistory(biomeMap);
   seedInitialCivs(simWorld, biomeMap, 1);
@@ -6313,6 +6359,7 @@ function resetWorld(newSeed: string, archiveEnding?: WorldEnding, outcome?: Reso
 
 function resetSimOnly() {
   simWorld = createSimWorld(GRID_SIZE, GRID_SIZE);
+  displayedEraRank = 0;   // same world, fresh history: the age starts over too
   seedInitialCivs(simWorld, biomeMap, 1);
   (window as any).__sim = simWorld;
   fadedDeadCivs.clear();
@@ -6364,6 +6411,10 @@ let blackoutHold = 0;    // seconds left to hold full black before fading up
 const BLACKOUT_HOLD = 0.7;  // beat of pure black at the turnover
 const BLACKOUT_FADE = 1.8;  // seconds for the new world to rise out of black
 const BARS_REFRESH_FRAMES = 10;  // DOM rebuild for civ bar panel; ~6 Hz at 60fps
+// Pixi caps deltaMS to protect visual animation after a stall. The simulation
+// clock uses raw elapsed time so a world still lasts 10–17 real minutes on a
+// slow renderer, with this ceiling preventing a huge catch-up after suspension.
+const MAX_SIM_FRAME_MS = 1000;
 
 function beginWorldEnding() {
   const outcome = resolveWorldEnding(simWorld, biomeMap, currentWorldHistory, currentWorldFate);
@@ -6397,8 +6448,26 @@ atmos.onCelestialEvent((kind) => {
 
 app.ticker.add((ticker) => {
   if (!running) return;
-  const frameSeconds = ticker.deltaMS / 1000;
-  accumulator += frameSeconds * timeScale;
+  // ONE clock for the whole world. Turn 01 correctly moved history off Pixi's
+  // deltaMS (which is capped at 100ms to protect animation after a stall) and
+  // onto raw elapsed time, so a world lasts its advertised 10-17 real minutes.
+  // But only history moved: the sky, seasons, weather and every story surface
+  // stayed on the capped clock, so below 10fps they fell behind. Measured at
+  // 3fps: history ran at 1.05x wall-clock while the day/night cycle ran at
+  // 0.37x — a six-minute day taking sixteen real minutes, and worlds reaching
+  // the industrial age having barely seen two dawns.
+  //
+  // Above 10fps a frame is already under the 100ms cap, so elapsedMS and
+  // deltaMS are identical and this changes nothing at all. It engages only
+  // where the divergence actually exists.
+  const frameMS = Math.min(ticker.elapsedMS, MAX_SIM_FRAME_MS);
+  // The speed control used to multiply the history accumulator alone, so 4x
+  // raced the centuries while the sun, seasons and weather stayed at 1x — the
+  // same split Turn 02 fixed for slow frame rates, still present on the button.
+  // Scaling here instead means 2x/4x/8x compresses the whole diorama honestly.
+  const worldSeconds = (frameMS / 1000) * timeScale;
+  worldClock += worldSeconds;
+  accumulator += worldSeconds;
   const tickInterval = 1 / ticksPerSecond;
   const frameEvents: SimEvent[] = [];
   while (accumulator >= tickInterval) {
@@ -6444,7 +6513,7 @@ app.ticker.add((ticker) => {
       triggerImpact(ev.catastropheType, ev.severity);
       triggerEpicenter(ev.centerRow, ev.centerCol, ev.catastropheType, ev.severity);
       atmos.addScar(ev.catastropheType, ev.centerRow, ev.centerCol, ev.radius, ev.severity);
-      addQuietZone(ev.centerRow, ev.centerCol, ev.radius, performance.now() / 1000);
+      addQuietZone(ev.centerRow, ev.centerCol, ev.radius, worldClock);
       audio.impact(ev.severity);
     } else if (ev.kind === 'omen' && ev.stage === 3) {
       audio.omenBell();
@@ -6464,11 +6533,11 @@ app.ticker.add((ticker) => {
       triggerPing(ev.row, ev.col, 0xd8e4ee);
     }
   }
-  updateAtmosphere(ticker.deltaMS);
+  updateAtmosphere(worldSeconds * 1000);
   updatePollution();
   // Sky + glaze + weather + scar fades. The sky leans toward the last dread
   // hue while curDread eases, so it releases smoothly after a catastrophe.
-  atmos.update(ticker.deltaMS, curDread, curHue.vignette, dominantEra(simWorld));
+  atmos.update(worldSeconds * 1000, curDread, curHue.vignette, dominantEra(simWorld));
   // Dying-world blight: drain the land toward grey as the cataclysm nears.
   // atmos.update just wrote the seasonal tint, so this layers on top each frame.
   if (curBlight > 0.002) {
@@ -6502,8 +6571,8 @@ app.ticker.add((ticker) => {
     clock.style.textShadow = `0 1px 2px rgba(255,255,255,${(0.45 * lum).toFixed(2)}), 0 1px 3px rgba(0,0,0,${(0.5 * n).toFixed(2)})`;
   }
   riverGfx.tint = lerpColor(0xffffff, L.color, 0.35);
-  const dtSec = ticker.deltaMS / 1000;
-  const nowSec = performance.now() / 1000;
+  const dtSec = worldSeconds;   // story surfaces share the world's clock too
+  const nowSec = worldClock;
   // World-turnover blackout: hold full black for a beat, then ease it away so
   // the new world rises out of the dark.
   if (blackout > 0) {
@@ -6557,7 +6626,7 @@ app.ticker.add((ticker) => {
   updateFestival(n);
   maybeChronicle();
   // The camera breathes — whole-stage lens scale, leaning in with dread.
-  breathT += ticker.deltaMS / 1000;
+  breathT += worldSeconds;   // camera breathing on the world's clock
   app.stage.scale.set(
     1 + ATMOS.camera.breathAmp * 0.5 * (1 + Math.sin((Math.PI * 2 * breathT) / ATMOS.camera.breathPeriodSec))
       + curDread * ATMOS.camera.dreadLean
@@ -6712,7 +6781,7 @@ app.ticker.add((ticker) => {
         // low rubble stub, then let the land reclaim it. Hold at age 0 (intact)
         // until this tile's staggered start, so a fallen city crumbles in a ripple.
         if (nowSec >= bts.ruinStartAt) {
-          bts.ruinAge[s] = Math.min(1, bts.ruinAge[s] + (ticker.deltaMS / 1000) / RUIN_DECAY_SECONDS);
+          bts.ruinAge[s] = Math.min(1, bts.ruinAge[s] + worldSeconds / RUIN_DECAY_SECONDS);
         }
         const age = bts.ruinAge[s];
         if (age < 1) settled = false;
@@ -6835,7 +6904,7 @@ function fireCatastrophe() {
       triggerImpact(ev.catastropheType, ev.severity);
       triggerEpicenter(ev.centerRow, ev.centerCol, ev.catastropheType, ev.severity);
       atmos.addScar(ev.catastropheType, ev.centerRow, ev.centerCol, ev.radius, ev.severity);
-      addQuietZone(ev.centerRow, ev.centerCol, ev.radius, performance.now() / 1000);
+      addQuietZone(ev.centerRow, ev.centerCol, ev.radius, worldClock);
       audio.impact(ev.severity);
     }
   }
@@ -6866,7 +6935,7 @@ function dbgMega(kind: MegaKind) {
 function dbgWonder(era: Era) {
   const s = dbgRandomCity();
   if (debugWonders.length >= 4) debugWonders.shift();
-  debugWonders.push({ row: s.row, col: s.col, era, born: performance.now() / 1000 });
+  debugWonders.push({ row: s.row, col: s.col, era, born: worldClock });
   triggerPing(s.row, s.col, 0xfff0d0);
 }
 function dbgWildfire() {
@@ -6908,8 +6977,8 @@ function dbgSatellite() {
 const DBG_SPAWNS: Array<[string, (() => void) | null]> = [
   ['— land & life —', null],
   ['Volcano (eruption)', () => maybeEruptVolcano(1e6)],
-  ['Plague', () => maybeOutbreak(1e6, performance.now() / 1000)],
-  ['Faith (golden tide)', () => maybeAwaken(1e6, performance.now() / 1000)],
+  ['Plague', () => maybeOutbreak(1e6, worldClock)],
+  ['Faith (golden tide)', () => maybeAwaken(1e6, worldClock)],
   ['Flood', () => maybeFlood(1e6)],
   ['Drought', () => maybeDrought(1e6)],
   ['River delta growth', dbgDelta],
@@ -7177,11 +7246,13 @@ pauseControl.addEventListener('click', () => {
   pauseControl.classList.toggle('is-active', !running);
 });
 
-const SPEEDS = [1, 2, 4];
+const SPEEDS = [1, 2, 4, 8];
 speedControl.addEventListener('click', () => {
   timeScale = SPEEDS[(SPEEDS.indexOf(timeScale) + 1) % SPEEDS.length];
   speedControl.textContent = `${timeScale}x`;
   speedControl.classList.toggle('is-active', timeScale !== 1);
+  // Accelerated twinkle reads as flashing; hold both reflections at mean brightness.
+  atmos.setGlitterSteady(timeScale >= 4);
 });
 
 function syncSoundControls() {
