@@ -1137,11 +1137,10 @@ world.y = -WORLD_CAPTURE.y0 * captureScale;
 // Dense enough that the curved silhouette reads as a curve, not a polyline.
 const worldPlane = new MeshPlane({ texture: worldRT, verticesX: 110, verticesY: 36 });
 
-// On windows wider than the projected map, its rectangular texture boundary
-// enters the viewport as a hard vertical cut. These feathers sit on those
-// actual map boundaries and blend inward to the live horizon colour. They are
-// hidden entirely whenever the map fills the viewport.
-function makeWorldEdgeTexture(direction: 'left' | 'right'): Texture {
+// When a viewport is wider than the projected map, erase the render texture's
+// alpha at its side boundaries. The actual live sky then shows through at every
+// height and time of day; sampling one horizon colour creates visible bars.
+function makeWorldEdgeEraseTexture(direction: 'left' | 'right'): Texture {
   const cv = document.createElement('canvas');
   cv.width = 256;
   cv.height = 2;
@@ -1149,22 +1148,33 @@ function makeWorldEdgeTexture(direction: 'left' | 'right'): Texture {
   const grad = ctx.createLinearGradient(0, 0, 256, 0);
   if (direction === 'left') {
     grad.addColorStop(0, 'rgba(255,255,255,1)');
-    grad.addColorStop(0.28, 'rgba(255,255,255,0.96)');
+    grad.addColorStop(0.2, 'rgba(255,255,255,0.94)');
     grad.addColorStop(1, 'rgba(255,255,255,0)');
   } else {
     grad.addColorStop(0, 'rgba(255,255,255,0)');
-    grad.addColorStop(0.72, 'rgba(255,255,255,0.96)');
+    grad.addColorStop(0.8, 'rgba(255,255,255,0.94)');
     grad.addColorStop(1, 'rgba(255,255,255,1)');
   }
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, cv.width, cv.height);
   return Texture.from(cv);
 }
-const worldEdgeFade = new Container();
-worldEdgeFade.eventMode = 'none';
-const worldEdgeLeft = new Sprite(makeWorldEdgeTexture('left'));
-const worldEdgeRight = new Sprite(makeWorldEdgeTexture('right'));
-worldEdgeFade.addChild(worldEdgeLeft, worldEdgeRight);
+const WORLD_EDGE_FEATHER = 180;
+const worldTextureWidth = Math.ceil(WORLD_CAPTURE.w * captureScale);
+const worldTextureHeight = Math.ceil(WORLD_CAPTURE.h * captureScale);
+const worldEdgeEraser = new Container();
+worldEdgeEraser.eventMode = 'none';
+const worldEdgeEraseLeft = new Sprite(makeWorldEdgeEraseTexture('left'));
+const worldEdgeEraseRight = new Sprite(makeWorldEdgeEraseTexture('right'));
+for (const edge of [worldEdgeEraseLeft, worldEdgeEraseRight]) {
+  edge.blendMode = 'erase';
+  edge.width = WORLD_EDGE_FEATHER;
+  edge.height = worldTextureHeight;
+}
+worldEdgeEraseLeft.position.set(0, 0);
+worldEdgeEraseRight.position.set(worldTextureWidth - WORLD_EDGE_FEATHER, 0);
+worldEdgeEraser.addChild(worldEdgeEraseLeft, worldEdgeEraseRight);
+const worldNeedsEdgeErase = () => window.innerWidth > worldTextureWidth + 2;
 
 app.stage.addChild(atmos.skyLayer);
 // Stars turn behind the planet; the world plane occludes them below the limb.
@@ -1180,7 +1190,6 @@ app.stage.addChild(atmos.auroraLayer);
 // only shows where it climbs above the horizon into the sky.
 app.stage.addChild(ringBackGfx);
 app.stage.addChild(worldPlane);
-app.stage.addChild(worldEdgeFade);
 // The limb mask clips the plane at the circular horizon; it must live in the
 // tree. The band lays horizon haze along the arc, above the plane.
 app.stage.addChild(atmos.limbMask);
@@ -1217,28 +1226,6 @@ function tileToSky(row: number, col: number): { x: number; y: number } {
   const t = toTex(x, y);
   return atmos.project(t.x, t.y);
 }
-
-function layoutWorldEdgeFade() {
-  const width = window.innerWidth;
-  const height = window.innerHeight;
-  const planeWidth = WORLD_CAPTURE.w * captureScale;
-  const planeLeft = width / 2 + WORLD_CAPTURE.x0 * captureScale;
-  const planeRight = planeLeft + planeWidth;
-  const edgeWidth = Math.max(84, Math.min(150, width * 0.075));
-  const horizonY = Math.max(0, height * ATMOS.composition.horizonFrac - 30);
-
-  worldEdgeLeft.visible = planeLeft > 1;
-  worldEdgeRight.visible = planeRight < width - 1;
-  worldEdgeFade.visible = worldEdgeLeft.visible || worldEdgeRight.visible;
-
-  worldEdgeLeft.position.set(planeLeft - 1, horizonY);
-  worldEdgeLeft.width = edgeWidth;
-  worldEdgeLeft.height = height - horizonY + 4;
-  worldEdgeRight.position.set(planeRight - edgeWidth + 1, horizonY);
-  worldEdgeRight.width = edgeWidth;
-  worldEdgeRight.height = height - horizonY + 4;
-}
-layoutWorldEdgeFade();
 
 (window as any).__layers = { world, cityMarkersContainer, labelLayer, biomeLayer, buildingLayer, simLayer };
 (window as any).__anim = () => ({ tiles: animatingTiles.size, buildings: animatingBuildingTiles.size, biome: animatingBiomeTiles.size, easeFrames: +easeFrames.toFixed(2), ease15: +ease(0.15).toFixed(3) });
@@ -6770,10 +6757,6 @@ app.ticker.add((ticker) => {
   if (oceanApron) oceanApron.alpha = planetary;
   sceneryWaterGfx.alpha = planetary;
   sceneryLandGfx.alpha = planetary;
-  worldEdgeFade.alpha = planetary;
-  const edgeColor = atmos.horizonColor();
-  worldEdgeLeft.tint = edgeColor;
-  worldEdgeRight.tint = edgeColor;
   // Scenery land and the in-flight biome crossfade tiles follow the same
   // seasonal/blight land tint as the cached biomeLayer — otherwise a changed
   // tile renders at full brightness and reads as a bright spot at night.
@@ -7110,7 +7093,12 @@ app.ticker.add((ticker) => {
 app.ticker.add(() => {
   measureFps();
   updateFpsLabel();
-  if (!(window as any).__skipRT) app.renderer.render({ container: world, target: worldRT, clear: true });
+  if (!(window as any).__skipRT) {
+    app.renderer.render({ container: world, target: worldRT, clear: true });
+    if (worldNeedsEdgeErase()) {
+      app.renderer.render({ container: worldEdgeEraser, target: worldRT, clear: false });
+    }
+  }
 });
 
 // --- HUD ---
@@ -8062,7 +8050,6 @@ window.addEventListener('resize', () => {
   centerWorld();
   layoutAtmosphere();
   atmos.layout(window.innerWidth, window.innerHeight);
-  layoutWorldEdgeFade();
 });
 
 function colorsWithin(a: number, b: number, tol: number): boolean {
