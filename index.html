@@ -2,19 +2,55 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/svg+xml" href="/land-mark.svg" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="canonical" href="https://www.theland.world/" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#d9cfb8" />
-    <meta name="description" content="A living deep-time diorama for your second screen. Civilizations rise, cross oceans, make war, and disappear." />
+    <meta name="theme-color" content="#202721" />
+    <meta name="description" content="A living world for your second screen. Civilizations settle, cross oceans, make war, build wonders, and disappear." />
+    <meta name="author" content="Lawrence Yang" />
+    <meta name="application-name" content="The Land" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="The Land" />
     <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://www.theland.world/" />
+    <meta property="og:site_name" content="The Land" />
     <meta property="og:title" content="The Land" />
-    <meta property="og:description" content="A living deep-time diorama. There is nothing to win; only a world to watch." />
-    <meta name="twitter:card" content="summary" />
+    <meta property="og:description" content="A living world for your second screen. There is nothing to win; only a world to watch." />
+    <meta property="og:image" content="https://www.theland.world/social-card.png" />
+    <meta property="og:image:alt" content="The Land: a small world unfolding across land and sea" />
+    <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="The Land" />
-    <meta name="twitter:description" content="A living deep-time diorama. There is nothing to win; only a world to watch." />
-    <title>The Land - a living deep-time diorama</title>
+    <meta name="twitter:description" content="A living world for your second screen. There is nothing to win; only a world to watch." />
+    <meta name="twitter:image" content="https://www.theland.world/social-card.png" />
+    <title>The Land — a living world for your second screen</title>
+    <style>
+      .site-about {
+        position: fixed;
+        z-index: 25;
+        left: 14px;
+        bottom: 12px;
+        color: rgba(238, 231, 211, 0.58);
+        font: 10px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        letter-spacing: 0.08em;
+        text-decoration: none;
+        text-transform: lowercase;
+        transition: color 160ms ease;
+      }
+      .site-about:hover,
+      .site-about:focus-visible { color: rgba(255, 249, 230, 0.95); }
+      @media (max-width: 640px) { .site-about { display: none; } }
+    </style>
   </head>
   <body>
+    <a class="site-about" href="/about/">about</a>
     <script type="module" src="/src/main.ts"></script>
+    <script>
+      if ('serviceWorker' in navigator && location.protocol === 'https:') {
+        window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js'));
+      }
+    </script>
   </body>
 </html>
