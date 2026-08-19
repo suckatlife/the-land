@@ -15,6 +15,7 @@ const WONDER_RADIUS: Record<NaturalWonderKind, number> = {
 import { drawTile, drawStateOverlayPersistent, redrawOverlay, redrawBiomeTile, lerpColor, gridToScreen, rgbToHsl, hslToRgb } from './iso';
 import { createSimWorld, step, tileOverlayColor, seedInitialCivs, applyCatastrophe, setVolcanoes, eruptVolcanoesNow, setWonderSites, iceDepthAt, SIM, CATASTROPHE, CITY, nearestCityDist, type SimWorld, type Civ, type CivCity, type SimEvent, type Era, type TileOverlay, type BiomeChange, type CatastropheType } from './sim';
 import { createAtmosphere, ATMOS } from './atmosphere';
+import { initializeAnalytics, trackEvent } from './analytics';
 import {
   WORLD_ENDINGS,
   createWorldHistory,
@@ -26,6 +27,8 @@ import {
   type WorldFate,
   type WorldHistory,
 } from './endings';
+
+initializeAnalytics();
 
 const GRID_SIZE = 96;
 const ticksPerSecond = 30;
@@ -6627,6 +6630,7 @@ function beginWorldEnding() {
   const outcome = resolveWorldEnding(simWorld, biomeMap, currentWorldHistory, currentWorldFate);
   accumulator = 0;
   resetWorld(randomSeed(), outcome.kind, outcome);
+  trackEvent('world_generated', { source: 'automatic' });
   blackout = 1; blackoutHold = BLACKOUT_HOLD;
 }
 
@@ -7349,9 +7353,16 @@ updateClock();
 setInterval(updateClock, 1000);
 
 // --- Public viewer controls ---
-function toggleFullscreen() {
-  if (!document.fullscreenElement) document.documentElement.requestFullscreen?.().catch(() => {});
-  else document.exitFullscreen?.();
+async function toggleFullscreen(source: 'control' | 'double_click') {
+  if (!document.fullscreenEnabled) return;
+  const entering = !document.fullscreenElement;
+  try {
+    if (entering) await document.documentElement.requestFullscreen();
+    else await document.exitFullscreen();
+    trackEvent('fullscreen_toggled', { enabled: entering, source });
+  } catch {
+    // A denied fullscreen request is not usage and should not be counted.
+  }
 }
 
 const viewerControls = document.createElement('nav');
@@ -7469,6 +7480,7 @@ chronicleControl.addEventListener('click', () => {
   logPanel.style.display = showLog ? 'block' : 'none';
   toggleLog.textContent = showLog ? 'log: on' : 'log: off';
   chronicleControl.classList.toggle('is-active', showLog);
+  trackEvent('chronicle_toggled', { enabled: showLog });
 });
 
 archiveControl.addEventListener('click', () => {
@@ -7484,6 +7496,7 @@ renderWorldArchive();
 
 viewerControls.querySelector('[data-control="new"]')!.addEventListener('click', () => {
   resetWorld(randomSeed(), 'left_behind');
+  trackEvent('world_generated', { source: 'manual' });
 });
 
 shareControl.addEventListener('click', async () => {
@@ -7496,9 +7509,12 @@ shareControl.addEventListener('click', async () => {
     url: url.toString(),
   };
   try {
-    if (navigator.share) await navigator.share(shareData);
-    else {
+    if (navigator.share) {
+      await navigator.share(shareData);
+      trackEvent('world_shared', { method: 'native' });
+    } else {
       await navigator.clipboard.writeText(url.toString());
+      trackEvent('world_shared', { method: 'clipboard' });
       shareControl.textContent = 'copied';
       window.setTimeout(() => { shareControl.textContent = 'share'; }, 1600);
     }
@@ -7535,16 +7551,20 @@ async function syncWakeLock() {
     awakeControl.classList.remove('is-active');
   }
 }
-awakeControl.addEventListener('click', () => {
+awakeControl.addEventListener('click', async () => {
   keepAwake = !keepAwake;
-  syncWakeLock();
+  const requestedState = keepAwake;
+  await syncWakeLock();
+  if (!requestedState || (keepAwake && wakeLock)) {
+    trackEvent('wake_lock_toggled', { enabled: requestedState });
+  }
 });
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && keepAwake && !wakeLock) syncWakeLock();
 });
 
-viewerControls.querySelector('[data-control="fullscreen"]')!.addEventListener('click', toggleFullscreen);
-document.addEventListener('dblclick', toggleFullscreen);
+viewerControls.querySelector('[data-control="fullscreen"]')!.addEventListener('click', () => toggleFullscreen('control'));
+document.addEventListener('dblclick', () => toggleFullscreen('double_click'));
 
 // A passive field guide: hover the curved world to identify what is visible
 // without selecting it or turning observation into a game mechanic.

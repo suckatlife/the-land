@@ -140,6 +140,12 @@ p { margin: 0 0 22px; }
   background: #d5c48d;
 }
 
+.feedback-link {
+  margin-top: 18px;
+  color: var(--muted);
+  font-size: 15px;
+}
+
 .facts {
   margin: 30px 0 0;
   padding: 0;
