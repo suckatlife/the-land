@@ -10,6 +10,8 @@ A living deep-time diorama for a second screen, an idle display, or a few minute
 - Cycle between 1x, 2x, and 4x speed.
 - Toggle ambient sound.
 - Open the chronicle of world events.
+- Revisit up to ten remembered worlds in the local archive.
+- Recognize and share each seeded world by its deterministic name.
 - Begin a new world.
 - Share the current seed as a stable URL.
 - Opt in to keeping the display awake.
