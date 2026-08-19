@@ -124,7 +124,7 @@ export const ATMOS = {
 
   glitter: {
     dayAlpha:   0.45,   // band strength under full sun
-    nightAlpha: 0.30,   // moon path strength
+    nightAlpha: 0.50,   // 20% peak after the moon's 0.40 intensity multiplier
     dayWidthFrac:   0.30, // band width as fraction of the world's width
     nightWidthFrac: 0.13, // the moon path is narrower
     twinkleSpeed: 1.4,  // glint crossfade rate (cycles/second)
@@ -467,6 +467,7 @@ export interface Atmosphere {
   nameConstellation(): boolean;              // join bright stars into a figure (max 6)
   clearConstellations(): void;
   setGlitterStrength(v: number): void;       // multiplier on the band alpha
+  setGlitterSteady(v: boolean): void;        // hold glints still at high playback speeds
   setStarBrightness(v: number): void;        // multiplier on star alpha
   setCurvature(v: number): void;   // 0..1, live scrub
   setPerspective(v: number): void; // 0..1, live scrub
@@ -1021,6 +1022,7 @@ export function createAtmosphere(): Atmosphere {
   let lightAzOverride: number | null = null;
   let lightAltOverride: number | null = null;
   let glitterStrengthMult = 1;
+  let glitterSteady = false;
   let starBrightnessMult = 1;
   let curLight: CelestialLight = { azimuth: 0.5, altitude: 1, color: 0xfff3dc, intensity: 1, isDay: true, nightness: 0 };
 
@@ -1204,9 +1206,11 @@ export function createAtmosphere(): Atmosphere {
 
     // Water glitter / moon path: the band slides with the light's azimuth,
     // glint variants crossfade for twinkle. Intensity passes through zero at
-    // twilight, so the day/night width and alpha changes never pop.
+    // twilight, so the day/night width and alpha changes never pop. At high
+    // playback speeds the glints hold at their average brightness instead of
+    // turning the accelerated twinkle into a rapid flash.
     const gl = ATMOS.glitter;
-    twinklePhase += dt * gl.twinkleSpeed * Math.PI * 2;
+    if (!glitterSteady) twinklePhase += dt * gl.twinkleSpeed * Math.PI * 2;
     const bandAlpha = (L.isDay ? gl.dayAlpha : gl.nightAlpha) * L.intensity * glitterStrengthMult;
     const bandWidth = (L.isDay ? gl.dayWidthFrac : gl.nightWidthFrac) * 3200;
     const bandX = -1600 + L.azimuth * 3200;
@@ -1217,8 +1221,10 @@ export function createAtmosphere(): Atmosphere {
       sp.height = 1720;
     }
     glitterBase.alpha = bandAlpha * 0.5;
-    glintA.alpha = bandAlpha * (0.55 + 0.45 * Math.sin(twinklePhase));
-    glintB.alpha = bandAlpha * (0.55 + 0.45 * Math.cos(twinklePhase));
+    const glintAAlpha = glitterSteady ? 0.55 : 0.55 + 0.45 * Math.sin(twinklePhase);
+    const glintBAlpha = glitterSteady ? 0.55 : 0.55 + 0.45 * Math.cos(twinklePhase);
+    glintA.alpha = bandAlpha * glintAAlpha;
+    glintB.alpha = bandAlpha * glintBAlpha;
 
     // Land directional response: an additive gradient from the light's side.
     // Fades to nothing at noon (no direction) and at twilight (no light).
@@ -1548,6 +1554,7 @@ export function createAtmosphere(): Atmosphere {
     nameConstellation,
     clearConstellations: () => { constellationGfx.clear(); constellationCount = 0; },
     setGlitterStrength: (v: number) => { glitterStrengthMult = Math.max(0, v); },
+    setGlitterSteady: (v: boolean) => { glitterSteady = v; },
     setStarBrightness: (v: number) => { starBrightnessMult = Math.max(0, v); },
     setCurvature: (v: number) => { curCurvature = Math.max(0, Math.min(1, v)); applyCurve(); layoutLimb(); },
     setPerspective: (v: number) => { curPerspective = Math.max(0, Math.min(1, v)); applyCurve(); },

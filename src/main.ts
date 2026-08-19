@@ -6464,7 +6464,7 @@ app.ticker.add((ticker) => {
   // The speed control used to multiply the history accumulator alone, so 4x
   // raced the centuries while the sun, seasons and weather stayed at 1x — the
   // same split Turn 02 fixed for slow frame rates, still present on the button.
-  // Scaling here instead means 2x/4x compresses the whole diorama honestly.
+  // Scaling here instead means 2x/4x/8x compresses the whole diorama honestly.
   const worldSeconds = (frameMS / 1000) * timeScale;
   worldClock += worldSeconds;
   accumulator += worldSeconds;
@@ -7246,11 +7246,13 @@ pauseControl.addEventListener('click', () => {
   pauseControl.classList.toggle('is-active', !running);
 });
 
-const SPEEDS = [1, 2, 4];
+const SPEEDS = [1, 2, 4, 8];
 speedControl.addEventListener('click', () => {
   timeScale = SPEEDS[(SPEEDS.indexOf(timeScale) + 1) % SPEEDS.length];
   speedControl.textContent = `${timeScale}x`;
   speedControl.classList.toggle('is-active', timeScale !== 1);
+  // Accelerated twinkle reads as flashing; hold both reflections at mean brightness.
+  atmos.setGlitterSteady(timeScale >= 4);
 });
 
 function syncSoundControls() {
