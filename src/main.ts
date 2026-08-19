@@ -1531,7 +1531,7 @@ saveSeed(currentSeed);
 
 // --- World state ---
 let { biomes: biomeMap, elevation: elevationMap } = generateBiomeMap(GRID_SIZE, GRID_SIZE, currentSeed);
-let simWorld: SimWorld = createSimWorld(GRID_SIZE, GRID_SIZE);
+let simWorld: SimWorld = createSimWorld(GRID_SIZE, GRID_SIZE, currentSeed);
 let currentWorldFate: WorldFate = worldFateForSeed(currentSeed, SIM.worldCycleTicks);
 let currentWorldHistory: WorldHistory = createWorldHistory(biomeMap);
 seedInitialCivs(simWorld, biomeMap, 1);
@@ -6360,7 +6360,7 @@ function resetWorld(newSeed: string, archiveEnding?: WorldEnding, outcome?: Reso
   saveSeed(newSeed);
   ({ biomes: biomeMap, elevation: elevationMap } = generateBiomeMap(GRID_SIZE, GRID_SIZE, newSeed));
   rebuildNaturalWonders();
-  simWorld = createSimWorld(GRID_SIZE, GRID_SIZE);
+  simWorld = createSimWorld(GRID_SIZE, GRID_SIZE, currentSeed);
   displayedEraRank = 0;   // a new world starts at the beginning again
   currentWorldFate = worldFateForSeed(newSeed, SIM.worldCycleTicks);
   currentWorldHistory = createWorldHistory(biomeMap);
@@ -6395,7 +6395,7 @@ function resetWorld(newSeed: string, archiveEnding?: WorldEnding, outcome?: Reso
 }
 
 function resetSimOnly() {
-  simWorld = createSimWorld(GRID_SIZE, GRID_SIZE);
+  simWorld = createSimWorld(GRID_SIZE, GRID_SIZE, currentSeed);
   displayedEraRank = 0;   // same world, fresh history: the age starts over too
   seedInitialCivs(simWorld, biomeMap, 1);
   (window as any).__sim = simWorld;

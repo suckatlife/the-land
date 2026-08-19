@@ -1,5 +1,5 @@
-import { type Biome, SEA_LEVEL, SHORE_LEVEL } from './biomes';
-import { generateName, evolveName } from './names';
+import { type Biome, SEA_LEVEL, SHORE_LEVEL, mulberry32 } from './biomes';
+import { generateName, evolveName, resetNameRandom } from './names';
 
 export type TileState = 'wild' | 'cleared' | 'built' | 'ruin';
 export type CivPhase = 'rising' | 'stable' | 'declining' | 'dead';
@@ -478,7 +478,28 @@ export interface SimWorld {
   } | null;
 }
 
-export function createSimWorld(width: number, height: number): SimWorld {
+// --- Determinism ---------------------------------------------------------
+// The terrain has always been seeded, but history was not: every roll in this
+// file used Math.random, so the same seed grew the same coastlines and then a
+// completely different civilisation on them. Two consequences, one for each
+// audience — a shared seed only ever shared the map, and no before/after
+// comparison in the agent loop could attribute a difference to the change
+// rather than to the dice. Both are fixed by drawing history from the seed too.
+//
+// Reset per world. Given the same seed and the same number of ticks, a world
+// now replays exactly; a renderer-driven event (the debug menu, a forced
+// catastrophe) perturbs the stream, which is expected.
+let simRand: () => number = Math.random;
+export function resetSimRandom(seed: string) {
+  simRand = mulberry32(seed + ':history');
+  resetNameRandom(seed);   // names are history too
+}
+function rand(): number {
+  return simRand();
+}
+
+export function createSimWorld(width: number, height: number, seed?: string): SimWorld {
+  resetSimRandom(seed ?? 'default');
   const tiles: SimTile[][] = [];
   for (let row = 0; row < height; row++) {
     tiles[row] = [];
@@ -582,8 +603,8 @@ function pickCivSpawnTile(
   const candidates: Array<{ row: number; col: number; ruinScore: number; influence: number }> = [];
 
   for (let attempt = 0; attempt < 120; attempt++) {
-    const row = Math.floor(Math.random() * world.height);
-    const col = Math.floor(Math.random() * world.width);
+    const row = Math.floor(rand() * world.height);
+    const col = Math.floor(rand() * world.width);
     if (biomes[row][col] === 'water' || biomes[row][col] === 'rock') continue; // no founding on sea or peak
     const st = world.tiles[row][col].state;
     if (st !== 'wild' && st !== 'ruin') continue;
@@ -627,7 +648,7 @@ function pickCivSpawnTile(
   // top — blessed ground attracts, the volcano's reach discourages.
   const weights = candidates.map((c) => Math.max(0.05, 1 + c.ruinScore * 3 + c.influence));
   const total = weights.reduce((a, b) => a + b, 0);
-  let r = Math.random() * total;
+  let r = rand() * total;
   for (let i = 0; i < candidates.length; i++) {
     r -= weights[i];
     if (r <= 0) return { row: candidates[i].row, col: candidates[i].col };
@@ -668,7 +689,7 @@ function inheritedEraFor(world: SimWorld, row: number, col: number): Era {
   for (let i = ERAS_ORDERED.length - 1; i >= 0; i--) {
     const era = ERAS_ORDERED[i];
     if (counts[era] >= SIM.eraInheritanceThreshold) {
-      localRank = (Math.random() < SIM.eraAdvanceChance && i < ERAS_ORDERED.length - 1) ? i + 1 : i;
+      localRank = (rand() < SIM.eraAdvanceChance && i < ERAS_ORDERED.length - 1) ? i + 1 : i;
       break;
     }
   }
@@ -703,10 +724,10 @@ function nameForNewCiv(world: SimWorld, row: number, col: number, era: Era): str
 }
 
 function spawnCiv(world: SimWorld, row: number, col: number): Civ {
-  const constitution = 0.6 + Math.random() * 0.6;
+  const constitution = 0.6 + rand() * 0.6;
   const era = inheritedEraFor(world, row, col);
   const name = nameForNewCiv(world, row, col, era);
-  const ambitionRoll = Math.pow(Math.random(), SIM.ambitionSkew);
+  const ambitionRoll = Math.pow(rand(), SIM.ambitionSkew);
   const maxSize = Math.round(SIM.minAmbition + ambitionRoll * (SIM.maxAmbition - SIM.minAmbition));
   const civ: Civ = {
     id: world.nextCivId++,
@@ -745,8 +766,8 @@ export function rollPhaseDuration(phase: CivPhase): number {
     : phase === 'declining' ? SIM.decliningDuration
     : Infinity;
   if (base === Infinity) return Infinity;
-  let d = base * (1 + (Math.random() * 2 - 1) * SIM.phaseVariation);
-  if (phase === 'stable' && Math.random() < SIM.stableLongTailChance) {
+  let d = base * (1 + (rand() * 2 - 1) * SIM.phaseVariation);
+  if (phase === 'stable' && rand() < SIM.stableLongTailChance) {
     d *= SIM.stableLongTailMult;
   }
   return d;
@@ -789,7 +810,7 @@ function advanceCivPhase(civ: Civ, tileCount: number) {
 }
 
 function advanceCivFortune(civ: Civ) {
-  const drift = (Math.random() * 2 - 1) * SIM.fortuneStep;
+  const drift = (rand() * 2 - 1) * SIM.fortuneStep;
   const pullback = -civ.fortune * SIM.fortuneRevert;
   civ.fortune += drift + pullback;
   if (civ.fortune > SIM.fortuneMax) civ.fortune = SIM.fortuneMax;
@@ -837,7 +858,7 @@ function findCoastalTile(
     }
   }
   if (coastal.length === 0) return null;
-  return coastal[Math.floor(Math.random() * coastal.length)];
+  return coastal[Math.floor(rand() * coastal.length)];
 }
 
 function chooseExpeditionDirection(
@@ -868,10 +889,10 @@ function maybeLaunchExpeditions(world: SimWorld, biomes: Biome[][], tileCounts: 
     let desperate = false;
     if (effectiveStrength(civ) >= SIM.expeditionMinVitality) {
       if ((tileCounts.get(civ.id) || 0) < SIM.expeditionMinSize) continue;
-      if (Math.random() > SIM.expeditionLaunchChance) continue;
+      if (rand() > SIM.expeditionLaunchChance) continue;
     } else if (civ.phase === 'declining' && !civ.hasFled) {
       if ((tileCounts.get(civ.id) || 0) < SIM.lastFlightMinSize) continue;
-      if (Math.random() > SIM.lastFlightChance) continue;
+      if (rand() > SIM.lastFlightChance) continue;
       desperate = true;
     } else {
       continue;
@@ -915,7 +936,7 @@ function advanceExpeditions(world: SimWorld, biomes: Biome[][], changed: Array<{
 
     if (ir < 0 || ir >= world.height || ic < 0 || ic >= world.width) continue;
     if (exp.age > SIM.expeditionMaxAge) continue;
-    if (Math.random() < SIM.expeditionLossBase * (1 + exp.age / 30)) continue;
+    if (rand() < SIM.expeditionLossBase * (1 + exp.age / 30)) continue;
 
     exp.trail.push({ row: ir, col: ic });
     if (exp.trail.length > 12) exp.trail.shift();
@@ -945,10 +966,10 @@ function advanceExpeditions(world: SimWorld, biomes: Biome[][], changed: Array<{
               phaseAge: 0,
               phaseDuration: rollPhaseDuration('rising'),
               color: CIV_COLORS[(newId - 2 + CIV_COLORS.length * 100) % CIV_COLORS.length],
-              constitution: 0.6 + Math.random() * 0.6,
+              constitution: 0.6 + rand() * 0.6,
               fortune: 0,
               era: civ.era,
-              maxSize: Math.round(SIM.minAmbition + Math.pow(Math.random(), SIM.ambitionSkew) * (SIM.maxAmbition - SIM.minAmbition)),
+              maxSize: Math.round(SIM.minAmbition + Math.pow(rand(), SIM.ambitionSkew) * (SIM.maxAmbition - SIM.minAmbition)),
               name: evolveName(civ.name, civ.era),
               cities: [{ row: tr, col: tc, prominence: 0.5, name: generateName(civ.era), foundedTick: world.tick }],
               hasRallied: false,
@@ -1042,7 +1063,7 @@ function maybeBreakaway(world: SimWorld, changed: Array<{ row: number; col: numb
 
       const weakParent = effectiveStrength(civ) < 0.5;
       const chance = SIM.breakawayChance * (weakParent ? SIM.breakawayWeakParentBonus : 1);
-      if (Math.random() > chance) continue;
+      if (rand() > chance) continue;
 
       let cap = exclave[0];
       let capDist = -1;
@@ -1063,10 +1084,10 @@ function maybeBreakaway(world: SimWorld, changed: Array<{ row: number; col: numb
         phaseAge: 0,
         phaseDuration: rollPhaseDuration('rising'),
         color: CIV_COLORS[(newId - 2 + CIV_COLORS.length * 100) % CIV_COLORS.length],
-        constitution: 0.6 + Math.random() * 0.6,
+        constitution: 0.6 + rand() * 0.6,
         fortune: 0,
         era: civ.era,
-        maxSize: Math.round(SIM.minAmbition + Math.pow(Math.random(), SIM.ambitionSkew) * (SIM.maxAmbition - SIM.minAmbition)),
+        maxSize: Math.round(SIM.minAmbition + Math.pow(rand(), SIM.ambitionSkew) * (SIM.maxAmbition - SIM.minAmbition)),
         name: newName,
         cities: [{ row: cap.row, col: cap.col, prominence: 0.6, name: generateName(civ.era), foundedTick: world.tick }],
         hasRallied: false,
@@ -1180,11 +1201,11 @@ function maybefoundCities(world: SimWorld, tileCounts: Map<number, number>) {
 
 function rollCatastropheSeverity(): number {
   // Skewed distribution — mostly low, rarely high.
-  return Math.pow(Math.random(), CATASTROPHE.severitySkew);
+  return Math.pow(rand(), CATASTROPHE.severitySkew);
 }
 
 function rollCatastropheType(): CatastropheType {
-  const roll = Math.random();
+  const roll = rand();
   return roll < 0.2 ? 'plague' : roll < 0.4 ? 'asteroid' : roll < 0.6 ? 'flood'
     : roll < 0.8 ? 'earthquake' : 'volcano';
 }
@@ -1257,7 +1278,7 @@ function stepVolcanoes(
       v.erupting--;
       if (v.erupting <= 0) {
         v.erupting = 0; v.intensity = 0; v.didDamage = false;
-        v.cooldown = VOLCANO.restTicks + Math.floor(Math.random() * VOLCANO.restJitterTicks);
+        v.cooldown = VOLCANO.restTicks + Math.floor(rand() * VOLCANO.restJitterTicks);
       }
     } else if (v.cooldown > 0) {
       v.cooldown--;
@@ -1366,16 +1387,16 @@ export function applyCatastrophe(
   world.lastCatastropheTick = world.tick;
   if (builtTiles.length === 0) return;
 
-  let center = builtTiles[Math.floor(Math.random() * builtTiles.length)];
+  let center = builtTiles[Math.floor(rand() * builtTiles.length)];
   if (catastropheType === 'volcano') {
     // Volcanoes erupt from high rock, preferring peaks that menace settlement.
     let best: { row: number; col: number } | null = null;
     let bestScore = -1;
     for (let tries = 0; tries < 160; tries++) {
-      const r = Math.floor(Math.random() * world.height);
-      const c = Math.floor(Math.random() * world.width);
+      const r = Math.floor(rand() * world.height);
+      const c = Math.floor(rand() * world.width);
       if (biomes[r][c] !== 'rock') continue;
-      let score = Math.random();
+      let score = rand();
       for (const bt of builtTiles) {
         const dr = bt.row - r, dc = bt.col - c;
         if (dr * dr + dc * dc <= CATASTROPHE.regionRadius * CATASTROPHE.regionRadius) score += 1;
@@ -1449,7 +1470,7 @@ export function applyCatastrophe(
     // Rifting: the land tears along a line through the center; the sea pours
     // in over the following ticks (progressive terraform). The existing
     // breakaway machinery handles whatever the tear severs.
-    const ang = Math.random() * Math.PI;
+    const ang = rand() * Math.PI;
     const ux = Math.cos(ang), uy = Math.sin(ang);
     const queue: Array<{ row: number; col: number; targetElev: number }> = [];
     const pushedT = new Set<number>();
@@ -1469,7 +1490,7 @@ export function applyCatastrophe(
           const k = r * world.width + c;
           if (pushedT.has(k)) continue;
           pushedT.add(k);
-          queue.push({ row: r, col: c, targetElev: SEA_LEVEL - 0.06 - Math.random() * 0.04 });
+          queue.push({ row: r, col: c, targetElev: SEA_LEVEL - 0.06 - rand() * 0.04 });
         }
       }
     }
@@ -1480,8 +1501,8 @@ export function applyCatastrophe(
     events.push({ kind: 'rift_opened', row: centerRow, col: centerCol });
   } else if (catastropheType === 'earthquake') {
     // Sine-wave elevation perturbation: some land sinks below SEA_LEVEL, some sea floor rises.
-    const phase1 = Math.random() * Math.PI * 2;
-    const phase2 = Math.random() * Math.PI * 2;
+    const phase1 = rand() * Math.PI * 2;
+    const phase2 = rand() * Math.PI * 2;
     for (let r = Math.max(0, centerRow - radius); r <= Math.min(world.height - 1, centerRow + radius); r++) {
       for (let c = Math.max(0, centerCol - radius); c <= Math.min(world.width - 1, centerCol + radius); c++) {
         const dr = r - centerRow, dc = c - centerCol;
@@ -1540,7 +1561,7 @@ export function applyCatastrophe(
         if (cid != null && safeIds.has(cid)) continue;
         if (dist <= burnR && (tile.state === 'built' || tile.state === 'cleared')) {
           const falloff = dist <= 3 ? 1 : Math.pow((burnR - dist) / (burnR - 3), 1.4);
-          if (Math.random() < falloff) {
+          if (rand() < falloff) {
             const ownerCiv = cid != null ? world.civs.get(cid) : null;
             tile.state = isSevere ? 'wild' : 'ruin';
             tile.ruinEra = isSevere ? null : (ownerCiv ? ownerCiv.era : tile.ruinEra);
@@ -1586,7 +1607,7 @@ export function applyCatastrophe(
               (radius - dist) / (radius - CATASTROPHE.asteroidCoreRadius),
               CATASTROPHE.asteroidFalloffFactor
             );
-            if (Math.random() > falloff) continue;
+            if (rand() > falloff) continue;
           }
         }
 
@@ -1725,14 +1746,14 @@ export function step(
     // Rally: a declining civ with the wind at its back can pull out of the
     // dive — once. The viewer should never be certain a decline is fatal.
     if (civ.phase === 'declining' && !civ.hasRallied
-        && civ.fortune >= SIM.rallyMinFortune && Math.random() < SIM.rallyChance) {
+        && civ.fortune >= SIM.rallyMinFortune && rand() < SIM.rallyChance) {
       civ.hasRallied = true;
       enterPhase(civ, 'stable');
       events.push({ kind: 'rally', civId: civ.id });
     }
     // Wonders: a golden age leaves a monument.
     if (civ.phase === 'stable' && !civ.wonder && tileCount >= SIM.wonderMinSize
-        && civ.fortune > SIM.wonderMinFortune && Math.random() < SIM.wonderChance) {
+        && civ.fortune > SIM.wonderMinFortune && rand() < SIM.wonderChance) {
       civ.wonder = { row: civ.originRow, col: civ.originCol };
       events.push({ kind: 'wonder_built', civId: civ.id, row: civ.originRow, col: civ.originCol });
     }
@@ -1747,7 +1768,7 @@ export function step(
       const snap = snapshot[row][col];
 
       if (snap.state === 'cleared') {
-        if (Math.random() < SIM.clearedToBuilt) {
+        if (rand() < SIM.clearedToBuilt) {
           tile.state = 'built';
           tile.lastChangedTick = world.tick;
           changed.push({ row, col });
@@ -1808,7 +1829,7 @@ export function step(
             * distanceFactor * isolationFactor * deathPeripheryAmp * deadDamp
             * ventFearAt(world, row, col) * coldFactor;
 
-          if (Math.random() < decayP) {
+          if (rand() < decayP) {
             const list = decayCandidates.get(civ.id) || [];
             list.push({ row, col, severity: decayP });
             decayCandidates.set(civ.id, list);
@@ -1838,7 +1859,7 @@ export function step(
               : Math.max(0.3, 1 + infl * 0.16);
 
             if (neighborSnap.state === 'wild') {
-              if (Math.random() < spreadP * wonderMult && neighborTile.state === 'wild') {
+              if (rand() < spreadP * wonderMult && neighborTile.state === 'wild') {
                 neighborTile.state = 'cleared';
                 neighborTile.civId = civ.id;
                 neighborTile.ruinEra = null;
@@ -1850,7 +1871,7 @@ export function step(
 
             if (neighborSnap.state === 'ruin') {
               const ruinSpreadP = spreadP * SIM.spreadIntoRuinFactor * wonderMult;
-              if (Math.random() < ruinSpreadP && neighborTile.state === 'ruin') {
+              if (rand() < ruinSpreadP && neighborTile.state === 'ruin') {
                 neighborTile.state = 'cleared';
                 neighborTile.civId = civ.id;
                 neighborTile.ruinEra = null;
@@ -1875,8 +1896,8 @@ export function step(
                     attackerBonus = 1 + CITY.attackerProximityWeight * Math.max(0, 1 - ad);
                   }
                   const conquestP = SIM.conquestBase * myStrength * (strengthRatio - 1) * defenderVulnerability * attackerBonus;
-                  if (Math.random() < conquestP) {
-                    if (Math.random() < 0.6) {
+                  if (rand() < conquestP) {
+                    if (rand() < 0.6) {
                       neighborTile.state = 'cleared';
                       neighborTile.civId = civ.id;
                       neighborTile.ruinEra = null;
@@ -1899,7 +1920,7 @@ export function step(
 
       if (snap.state === 'ruin') {
         const age = world.tick - tile.lastChangedTick;
-        if (age > SIM.ruinReclaimTicks && Math.random() < SIM.ruinReclaimChance) {
+        if (age > SIM.ruinReclaimTicks && rand() < SIM.ruinReclaimChance) {
           tile.state = 'wild';
           tile.ruinEra = null;
           tile.lastChangedTick = world.tick;
@@ -1946,7 +1967,7 @@ export function step(
   // Catastrophe pressure accumulates each tick; fires when threshold is crossed.
   // The build rate is modulated by a slow random walk so cadence isn't a
   // metronome — stretches of calm, then a quickening.
-  world.pressureNoise += (Math.random() * 2 - 1) * CATASTROPHE.pressureNoiseStep
+  world.pressureNoise += (rand() * 2 - 1) * CATASTROPHE.pressureNoiseStep
     - (world.pressureNoise - 1) * CATASTROPHE.pressureNoiseRevert;
   if (world.pressureNoise < 1 - CATASTROPHE.pressureNoiseMax) world.pressureNoise = 1 - CATASTROPHE.pressureNoiseMax;
   if (world.pressureNoise > 1 + CATASTROPHE.pressureNoiseMax) world.pressureNoise = 1 + CATASTROPHE.pressureNoiseMax;
@@ -2015,7 +2036,7 @@ export function step(
   // Births arrive as visible migrations: the spawn roll starts a band
   // walking; the civ exists only when it settles.
   if (livingCivCount(world) < SIM.maxLivingCivs && world.pendingSettlements.length < 2) {
-    if (Math.random() < SIM.baseCivSpawnChance) {
+    if (rand() < SIM.baseCivSpawnChance) {
       const spot = pickCivSpawnTile(world, biomes);
       if (spot) {
         world.pendingSettlements.push({ row: spot.row, col: spot.col, ticksLeft: SIM.migrationTicks });
@@ -2081,12 +2102,12 @@ export function step(
     }
   } else {
     // Rare spontaneous geology (one process at a time).
-    const geoRoll = Math.random();
+    const geoRoll = rand();
     if (geoRoll < 0.000025) {
       // An island rises in open water: shoal, then sand, then a rock cone.
       for (let tries = 0; tries < 30; tries++) {
-        const r = 8 + Math.floor(Math.random() * (world.height - 16));
-        const c = 8 + Math.floor(Math.random() * (world.width - 16));
+        const r = 8 + Math.floor(rand() * (world.height - 16));
+        const c = 8 + Math.floor(rand() * (world.width - 16));
         if (biomes[r][c] !== 'water') continue;
         let nearLand = false;
         for (let dr = -6; dr <= 6 && !nearLand; dr++) {
@@ -2117,8 +2138,8 @@ export function step(
       // A land bridge lifts across a narrow strait.
       outer:
       for (let tries = 0; tries < 40; tries++) {
-        const r = 4 + Math.floor(Math.random() * (world.height - 8));
-        const c = 4 + Math.floor(Math.random() * (world.width - 8));
+        const r = 4 + Math.floor(rand() * (world.height - 8));
+        const c = 4 + Math.floor(rand() * (world.width - 8));
         if (biomes[r][c] !== 'water') continue;
         for (const [dr, dc] of [[1, 0], [0, 1]] as const) {
           // Walk both ways to find land at each end with 3-7 water between.
@@ -2165,20 +2186,20 @@ function stepLandDynamics(
   const effSea = SEA_LEVEL + seaDelta, effShore = SHORE_LEVEL + seaDelta;
   const H = world.height, W = world.width;
   for (let a = 0; a < L.attemptsPerTick; a++) {
-    const r = (Math.random() * H) | 0, c = (Math.random() * W) | 0;
+    const r = (rand() * H) | 0, c = (rand() * W) | 0;
     const tile = world.tiles[r][c];
     if (tile.state !== 'wild' && tile.state !== 'ruin') continue; // only unclaimed land breathes
     const b = biomes[r][c];
 
     // --- Coastline: the shallows flip as the sea breathes in and out ---
     if (b === 'water') {
-      if (elevation[r][c] >= effSea && Math.random() < L.coastFlipChance) {
+      if (elevation[r][c] >= effSea && rand() < L.coastFlipChance) {
         biomes[r][c] = elevation[r][c] >= effShore ? 'grass' : 'sand';
         biomeChanges.push({ row: r, col: c });
       }
       continue;
     }
-    if (b === 'sand' && elevation[r][c] < effSea && Math.random() < L.coastFlipChance) {
+    if (b === 'sand' && elevation[r][c] < effSea && rand() < L.coastFlipChance) {
       biomes[r][c] = 'water';
       tile.state = 'wild'; tile.civId = null; tile.ruinEra = null; tile.lastChangedTick = world.tick;
       changed.push({ row: r, col: c });
@@ -2204,17 +2225,17 @@ function stepLandDynamics(
       if (tile.state === 'ruin') { tile.state = 'wild'; tile.ruinEra = null; tile.lastChangedTick = world.tick; changed.push({ row: r, col: c }); }
     };
     if (b === 'grass' || b === 'fertile') {
-      if (fN > 0 && Math.random() < L.vegFlipChance * wet * Math.min(1, fN / 3)) {
+      if (fN > 0 && rand() < L.vegFlipChance * wet * Math.min(1, fN / 3)) {
         biomes[r][c] = 'forest'; biomeChanges.push({ row: r, col: c }); reclaim(); // woods creep in when wet
-      } else if (sN > 0 && Math.random() < L.vegFlipChance * (1 - wet) * Math.min(1, sN / 3)) {
+      } else if (sN > 0 && rand() < L.vegFlipChance * (1 - wet) * Math.min(1, sN / 3)) {
         biomes[r][c] = 'sand'; biomeChanges.push({ row: r, col: c }); // arid ground spreads when dry
       }
     } else if (b === 'forest') {
-      if (fN < 5 && Math.random() < L.vegFlipChance * (1 - wet) * 0.6) {
+      if (fN < 5 && rand() < L.vegFlipChance * (1 - wet) * 0.6) {
         biomes[r][c] = 'grass'; biomeChanges.push({ row: r, col: c }); // woods thin back at dry edges
       }
     } else if (b === 'sand') {
-      if (gN + fN > 0 && Math.random() < L.vegFlipChance * wet * 0.8) {
+      if (gN + fN > 0 && rand() < L.vegFlipChance * wet * 0.8) {
         biomes[r][c] = 'grass'; biomeChanges.push({ row: r, col: c }); reclaim(); // desert greens when wet
       }
     }

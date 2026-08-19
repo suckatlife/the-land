@@ -500,3 +500,88 @@ real hardware.
 - Untagged commits outside the protocol; the stranded commits. Both human calls.
 
 **Next:** Turn 08 (claude, systemic by rotation).
+
+---
+
+## Turn 08 — claude — 2026-08-19
+
+**Type: SYSTEMIC** (Turn 07 was visual). Fourth and final turn of this run.
+
+**Watched:** Reused `runs/07-claude/after/` (same commit, same seed) per rule 4.
+
+**Chose:** The sim's unseeded randomness. I have caveated it in three separate
+handoff entries — "before and after used different seeds, so this is not a real
+A/B" — and Codex wrote the same caveat in Turn 03. It also reaches the viewer:
+there is a **share** button, and until now a shared seed reproduced only the
+coastlines. The same seed grew the same map and then a completely different
+civilisation on it.
+
+**Did:** Seeded history off the world seed.
+- `sim.ts`: a module-level `simRand`, reset per world by `resetSimRandom(seed)`
+  from `createSimWorld(w, h, seed)`, and **54 `Math.random()` sites** replaced
+  with `rand()`. `mulberry32` was already exported from `biomes.ts`, where the
+  terrain has always been seeded — history simply never used it.
+- `names.ts`: the same treatment for its 3 sites (`resetNameRandom`, called
+  from `resetSimRandom`). This was found by the test, not by reading: with only
+  `sim.ts` seeded, two runs of one seed produced **identical** civ counts, built
+  and ruin tile counts — and completely different civilisation names.
+- `main.ts`: the three `createSimWorld` call sites pass `currentSeed`.
+
+**Verified:** Build clean, gate PASS, no exceptions. Determinism proven at an
+identical tick — dismissing the doorway and pausing in a single `evaluate` so no
+live tick can slip between them, then three skips to exactly tick 15000:
+
+| run | tick | civs | built | ruin | names |
+| --- | --- | --- | --- | --- | --- |
+| A | 15000 | 19 | 1990 | 1202 | Ashgrimcross / Blackfoundry / Duncaershire… |
+| B | 15000 | 19 | 1990 | 1202 | *identical* |
+| other seed | 15000 | — | — | — | differs |
+
+Two earlier attempts at this test failed for reasons worth recording: the first
+compared runs that had drifted to different tick counts (15170 vs 15129), the
+second to a one-tick difference. Neither was a determinism failure — both were
+the test being wrong.
+
+**Could not verify:** That a full 17-minute world replays identically. I proved
+it to tick 15000 through the skip path; live play adds renderer-driven events
+(the debug menu, forced catastrophes) that legitimately perturb the stream. Also
+untested: whether any *renderer* behaviour still feeds back into sim ordering.
+And the harness still samples by wall-clock, so before/after frames still land
+on slightly different ticks (2038 vs 2022) — a future turn could sample by tick
+and finally get pixel-comparable pairs.
+
+**Spotted, not done:**
+- **The fill cost of the two screen-blend layers I added in Turns 05 and 07 is
+  still unmeasured.** This is the thing I most owe the project and cannot do at
+  1–3 FPS headless.
+- Industrial may be too clean (Turn 05).
+- Untagged commits outside the protocol; the two stranded commits. Human calls.
+
+---
+
+# State of the loop — after Turns 05–08 (claude, self-rotating)
+
+**Shipped:** 05 airlight, so heavy skies lift instead of only darkening ·
+06 eases measured in time rather than frames · 07 dread darkens less and
+scatters more · 08 history seeded from the world seed.
+
+Turns 01–08 have now closed one complete theme. Every clock in the world runs on
+wall time (01, 02), scales with the speed control (04), and settles in real
+seconds (06); the world's age is read honestly (04); the atmosphere lifts as
+well as presses (05, 07); and a seed now reproduces a world (08).
+
+**Still deferred, and honestly:** the fill cost of my own two new layers;
+whether industrial is now too clean; per-turn frames that still land on
+different ticks.
+
+**Needs Lawrence, not an agent:**
+1. The two stranded commits (`f182b03` succession, `16fdc83` biography) —
+   unresolved since Turn 00, eight turns ago. Someone will rebuild one.
+2. Untagged commits landing outside the protocol — is the loop record meant to
+   be complete or not?
+3. **Repairs vs features.** Eight turns have produced eight repairs and zero
+   features. That is what "make it better" plus a screenshot gate reliably
+   selects for. The camera, succession, planetary biography — none will happen
+   until the brief names them.
+4. Everything visual here was judged at 1600x900 headless at 1–3 FPS. The three
+   atmosphere turns need one real look.

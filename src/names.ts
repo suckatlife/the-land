@@ -1,4 +1,15 @@
 import { type Era } from './sim';
+import { mulberry32 } from './biomes';
+
+// Names are part of a world's history, so they come off the world's seed like
+// everything else. Without this the simulation replayed identically from a seed
+// while every civilisation in it was called something different — which is a
+// strange thing for a shared seed to do, and it was the last thing standing
+// between a seed and a reproducible world.
+let nameRand: () => number = Math.random;
+export function resetNameRandom(seed: string) {
+  nameRand = mulberry32(seed + ':names');
+}
 
 // Syllable pools per era. Each name = 1-3 syllables depending on era.
 const SYLLABLES: Record<Era, { parts: string[]; suffixes: string[]; minParts: number; maxParts: number }> = {
@@ -39,13 +50,13 @@ function capitalize(s: string): string {
 }
 
 function pick<T>(arr: T[]): T {
-  return arr[Math.floor(Math.random() * arr.length)];
+  return arr[Math.floor(nameRand() * arr.length)];
 }
 
 // Generate a fresh name for a given era.
 export function generateName(era: Era): string {
   const pool = SYLLABLES[era];
-  const nParts = pool.minParts + Math.floor(Math.random() * (pool.maxParts - pool.minParts + 1));
+  const nParts = pool.minParts + Math.floor(nameRand() * (pool.maxParts - pool.minParts + 1));
   let name = '';
   for (let i = 0; i < nParts; i++) {
     name += pick(pool.parts);
@@ -59,12 +70,12 @@ export function generateName(era: Era): string {
 // its identity but the name shifts with the new era.
 export function evolveName(oldName: string, newEra: Era): string {
   // Take the root: first 2-4 letters of the old name, lowercased.
-  const rootLen = 2 + Math.floor(Math.random() * 3);
+  const rootLen = 2 + Math.floor(nameRand() * 3);
   const root = oldName.slice(0, Math.min(rootLen, oldName.length)).toLowerCase();
   const pool = SYLLABLES[newEra];
 
   // Three evolution strategies, picked at random:
-  const strategy = Math.floor(Math.random() * 3);
+  const strategy = Math.floor(nameRand() * 3);
   let name: string;
   if (strategy === 0) {
     // Root + era suffix: "Ur" -> "Urmark"
