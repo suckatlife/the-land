@@ -387,3 +387,65 @@ already most expensive. Only Lawrence's FPS counter can settle that.
 - The two stranded commits, unresolved since Turn 00.
 
 **Next:** Turn 06 (claude, systemic by rotation).
+
+---
+
+## Turn 06 — claude — 2026-08-19
+
+**Type: SYSTEMIC** (Turn 05 was visual). Taking frame-rate-coupled eases, which
+were explicitly deferred in Turn 02 *and* Turn 04 — twice, so mandatory. It is
+also the last unfinished piece of the clock family Turns 01, 02 and 04 worked
+through.
+
+**Watched:** Reused `runs/05-claude/after/` as the before frames — same commit,
+same pinned seed, so re-shooting would only have re-derived them (rule 4). Those
+frames are the ones described in Turn 05.
+
+**Chose:** Every ease in `main.ts` was written as a per-FRAME fraction tuned at
+60fps, so transitions converged in a fixed number of *frames* rather than in a
+fixed amount of *time*. A tile crossfade meant to take about a third of a second
+took roughly four seconds at 5fps. Turn 01 put history on wall-clock time, Turn
+02 the atmosphere and story surfaces, Turn 04 the lifetimes and the speed
+control — the eases were the last thing still measuring time in frames.
+
+**Did:** One helper next to the world clock:
+
+```
+let easeFrames = 1;
+function ease(rate: number) {
+  return easeFrames === 1 ? rate : 1 - Math.pow(1 - rate, easeFrames);
+}
+```
+
+`easeFrames` is set once per frame from `worldSeconds * 60`, clamped to [1, 90],
+and the twelve ease sites now call `ease(...)`: tile colour/alpha/border, biome
+crossfade and settle, building slot alpha, mid-floor alpha, roof slide, energy
+farms, skylines, farmland growth. No function signatures changed.
+
+At 60fps `easeFrames` is 1 and `ease(r)` returns `r` exactly, so a machine that
+was already keeping up sees no change whatsoever — the same safety property as
+Turns 02 and 04. And because `easeFrames` comes off the world clock, 4x now
+settles transitions four times sooner as well.
+
+**Verified:** Build clean, after gate PASS, no exceptions. Measured rather than
+inferred: at 1x/5fps `easeFrames` 13.0 and `ease(0.15)` = 0.879; at 4x
+`easeFrames` 60.0 and `ease(0.15)` = 1.0. The 5-minute after frame shows no
+popping or snapped transitions.
+
+**Could not verify:** Whether transitions now feel too fast on real hardware.
+At 20–30fps `easeFrames` is 2–3, so eases run 2–3x quicker than they did — that
+is the intended 60fps timing, but it is still a change to the feel of every
+crossfade in the app and only Lawrence can judge it. `BIOME_FADE` and the
+skyline fade-out use a linear step rather than an exponential ease, so I scaled
+those by `easeFrames` directly; that is correct for a linear ramp but it is a
+different formula in the same commit.
+
+**Spotted, not done:**
+- Dread still goes through the multiply only (from Turn 05 — first deferral).
+- Industrial may now be too clean (from Turn 05 — first deferral).
+- Untagged commits landing outside the protocol; needs a human decision.
+- The two stranded commits, unresolved since Turn 00.
+
+**Next:** Turn 07 (claude, visual by rotation). Dread's airlight is the natural
+one — it is now the strongest remaining lean going through a darken-only path,
+and Turn 05's frames showed it producing the worst frame of the run.

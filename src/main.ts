@@ -1061,7 +1061,7 @@ function tileToSky(row: number, col: number): { x: number; y: number } {
   return atmos.project(t.x, t.y);
 }
 (window as any).__layers = { world, cityMarkersContainer, labelLayer, biomeLayer, buildingLayer, simLayer };
-(window as any).__anim = () => ({ tiles: animatingTiles.size, buildings: animatingBuildingTiles.size, biome: animatingBiomeTiles.size });
+(window as any).__anim = () => ({ tiles: animatingTiles.size, buildings: animatingBuildingTiles.size, biome: animatingBiomeTiles.size, easeFrames: +easeFrames.toFixed(2), ease15: +ease(0.15).toFixed(3) });
 (window as any).__rt = () => ({ res: worldRT.source.resolution, w: worldRT.source.pixelWidth, h: worldRT.source.pixelHeight, bound: worldPlane.texture === worldRT, tickerFPS: Math.round(app.ticker.FPS) });
 (window as any).__perf = { sky: atmos.skyLayer, plane: worldPlane, set skipRT(v: boolean) { (window as any).__skipRT = v; } };
 // Live scrubbers for the visual-hierarchy pass — mutate a field, call the
@@ -1580,6 +1580,18 @@ let timeScale = 1;
 // against this rather than performance.now(), so the speed control moves the
 // whole world and a paused world is genuinely still.
 let worldClock = 0;
+// Every ease in this file was tuned as a per-FRAME fraction at 60fps, which
+// means they converge in a fixed number of frames rather than in a fixed
+// amount of time: at 3fps a tile crossfade tuned for one second took twenty.
+// This converts a 60fps-tuned rate to the equivalent for the frame actually
+// rendered, so transitions settle in the same WALL-CLOCK time on any machine —
+// and, because easeFrames comes off the world clock, 4x settles them 4x sooner
+// too. At 60fps easeFrames is 1 and ease(r) returns r exactly, so nothing
+// changes on a machine that was already keeping up.
+let easeFrames = 1;
+function ease(rate: number): number {
+  return easeFrames === 1 ? rate : 1 - Math.pow(1 - rate, easeFrames);
+}
 
 const fadedDeadCivs = new Set<number>();
 
@@ -2225,7 +2237,7 @@ function enrollBiomeTrans(row: number, col: number) {
 function updateBiomeTrans() {
   for (const tr of biomeTrans.values()) {
     if (tr.committed) continue;
-    tr.alpha = Math.min(1, tr.alpha + BIOME_FADE);
+    tr.alpha = Math.min(1, tr.alpha + BIOME_FADE * easeFrames);
     tr.g.alpha = tr.alpha;
     if (tr.alpha >= 1) { refreshBiomeTile(tr.row, tr.col); tr.committed = true; } // fold into the cache
   }
@@ -4173,7 +4185,7 @@ function drawEnergyFarms(nowSec: number, night: number) {
   for (let i = energyFarms.length - 1; i >= 0; i--) {
     const f = energyFarms[i];
     const target = f.dying ? 0 : 1;
-    f.a += (target - f.a) * ENERGY_FADE;
+    f.a += (target - f.a) * ease(ENERGY_FADE);
     if (f.dying && f.a < 0.02) { energyFarms.splice(i, 1); continue; }
     if (f.a < 0.01) continue;
     const { x, y } = gridToScreen(f.col, f.row);
@@ -4628,14 +4640,14 @@ function drawEraSkylines(nowSec: number, night: number) {
     seen.add(civ.id);
     const { x, y } = gridToScreen(hub.col, hub.row);
     const st = skylineState.get(civ.id) ?? { a: 0, x, y, era: civ.era, color: civ.color };
-    st.a += (1 - st.a) * SKYLINE_FADE; st.x = x; st.y = y; st.era = civ.era; st.color = civ.color;
+    st.a += (1 - st.a) * ease(SKYLINE_FADE); st.x = x; st.y = y; st.era = civ.era; st.color = civ.color;
     skylineState.set(civ.id, st);
     drawEraTell(skylineGfx, x, y, civ.era, st.a, nowSec, night, civ.color);
   }
   // Fade out any tell whose civ no longer qualifies, at its last-known spot.
   for (const [id, st] of skylineState) {
     if (seen.has(id)) continue;
-    st.a -= st.a * SKYLINE_FADE + 0.004;
+    st.a -= st.a * ease(SKYLINE_FADE) + 0.004 * easeFrames;
     if (st.a <= 0.01) { skylineState.delete(id); continue; }
     drawEraTell(skylineGfx, st.x, st.y, st.era, st.a, nowSec, night, st.color);
   }
@@ -6164,7 +6176,7 @@ function updateFarmGrowth(tick: number) {
   if (growingFarm.size > 0) {
     farmGrowGfx.clear();
     for (const [key, a] of growingFarm) {
-      const na = a < 1 ? Math.min(1, a + (1 - a) * FARM_GROW_SPEED) : 1;
+      const na = a < 1 ? Math.min(1, a + (1 - a) * ease(FARM_GROW_SPEED)) : 1;
       if (na !== a) growingFarm.set(key, na);
       drawFarmTile(farmGrowGfx, (key / GRID_SIZE) | 0, key % GRID_SIZE, na);
     }
@@ -6470,6 +6482,10 @@ app.ticker.add((ticker) => {
   // Scaling here instead means 2x/4x/8x compresses the whole diorama honestly.
   const worldSeconds = (frameMS / 1000) * timeScale;
   worldClock += worldSeconds;
+  // Clamped so a long stall completes a transition rather than doing something
+  // undefined with a huge exponent; at 90 frames (1.5s) any of these eases is
+  // finished anyway.
+  easeFrames = Math.max(1, Math.min(90, worldSeconds * 60));
   accumulator += worldSeconds;
   const tickInterval = 1 / ticksPerSecond;
   const frameEvents: SimEvent[] = [];
@@ -6699,9 +6715,10 @@ app.ticker.add((ticker) => {
     const tv = tileVisuals[r][c];
     if (!tv) { done.push(key); continue; }
 
-    tv.curColor = lerpColor(tv.curColor, tv.targetColor, EASE);
-    tv.curAlpha += (tv.targetAlpha - tv.curAlpha) * EASE;
-    tv.curBorderColor = lerpColor(tv.curBorderColor, tv.targetBorderColor, EASE);
+    const e = ease(EASE);
+    tv.curColor = lerpColor(tv.curColor, tv.targetColor, e);
+    tv.curAlpha += (tv.targetAlpha - tv.curAlpha) * e;
+    tv.curBorderColor = lerpColor(tv.curBorderColor, tv.targetBorderColor, e);
     tv.curBorderAlpha += (tv.targetBorderAlpha - tv.curBorderAlpha) * EASE;
     tv.curBorderWidth += (tv.targetBorderWidth - tv.curBorderWidth) * EASE;
 
@@ -6744,7 +6761,7 @@ app.ticker.add((ticker) => {
     const [r, c] = key.split(',').map(Number);
     const btv = biomeTileVisuals[r][c];
     if (!btv) { biomeDone.push(key); continue; }
-    btv.curColor = lerpColor(btv.curColor, btv.targetColor, BIOME_EASE);
+    btv.curColor = lerpColor(btv.curColor, btv.targetColor, ease(BIOME_EASE));
     redrawBiomeTile(btv.g, btv.curColor);
     if (colorsWithin(btv.curColor, btv.targetColor, 2)) {
       btv.curColor = btv.targetColor;
@@ -6772,7 +6789,7 @@ app.ticker.add((ticker) => {
       if (!bts.floor1[s] && bts.targetAlphas[s] === 0 && bts.curAlphas[s] === 0) continue;
 
       // Building visibility (density driver)
-      bts.curAlphas[s] += (bts.targetAlphas[s] - bts.curAlphas[s]) * DENSITY.easeSpeed;
+      bts.curAlphas[s] += (bts.targetAlphas[s] - bts.curAlphas[s]) * ease(DENSITY.easeSpeed);
       const slotNotSettled = Math.abs(bts.curAlphas[s] - bts.targetAlphas[s]) > 0.01;
       if (slotNotSettled) settled = false; else bts.curAlphas[s] = bts.targetAlphas[s];
       const a = bts.curAlphas[s];
@@ -6834,7 +6851,7 @@ app.ticker.add((ticker) => {
         }
         for (let i = mfs.length - 1; i >= 0; i--) {
           const mf = mfs[i];
-          mf.curAlpha += (mf.targetAlpha - mf.curAlpha) * MID_FLOOR_EASE;
+          mf.curAlpha += (mf.targetAlpha - mf.curAlpha) * ease(MID_FLOOR_EASE);
           const mfNotSettled = Math.abs(mf.curAlpha - mf.targetAlpha) > 0.01;
           if (mfNotSettled) settled = false; else mf.curAlpha = mf.targetAlpha;
           mf.sprite.alpha = a * mf.curAlpha;
@@ -6845,7 +6862,7 @@ app.ticker.add((ticker) => {
           }
         }
         if (bts.roof[s]) {
-          bts.roofCurY[s] += (bts.roofTargetY[s] - bts.roofCurY[s]) * ROOF_EASE;
+          bts.roofCurY[s] += (bts.roofTargetY[s] - bts.roofCurY[s]) * ease(ROOF_EASE);
           if (Math.abs(bts.roofCurY[s] - bts.roofTargetY[s]) > 0.1) settled = false;
           else bts.roofCurY[s] = bts.roofTargetY[s];
           bts.roof[s]!.y = bts.roofCurY[s];
