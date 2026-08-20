@@ -550,7 +550,7 @@ export type Temperament = 'cold' | 'wet' | 'dry' | 'volcanic' | 'fertile' | 'res
 // axis you register in the first two seconds of looking — a thousand islands
 // and one supercontinent do not need a caption to tell them apart.
 export type WorldForm =
-  | 'archipelago' | 'continent' | 'highlands' | 'drowned' | 'verdant' | 'barren' | 'shattered';
+  | 'archipelago' | 'continent' | 'highlands' | 'drowned' | 'verdant' | 'barren';
 
 const DEFAULT_CIV: CivBehaviour = { spread: 1, expedition: 1, ambition: 1, maxCivs: 10, conquest: 1 };
 
@@ -564,7 +564,6 @@ const FORM_CIV: Record<WorldForm, Partial<CivBehaviour>> = {
   drowned:     { spread: 0.80, expedition: 2.0,  ambition: 0.60, maxCivs: 13, conquest: 1.1 },
   verdant:     { spread: 1.25, expedition: 0.9,  ambition: 1.15, maxCivs: 10, conquest: 0.95 },
   barren:      { spread: 0.72, expedition: 1.0,  ambition: 0.80, maxCivs: 8,  conquest: 1.0 },
-  shattered:   { spread: 0.95, expedition: 1.7,  ambition: 0.85, maxCivs: 12, conquest: 1.05 },
 };
 
 const FORMS: Record<WorldForm, Partial<TerrainProfile>> = {
@@ -583,8 +582,6 @@ const FORMS: Record<WorldForm, Partial<TerrainProfile>> = {
   verdant:     { moistureBias: 0.14, moistureScale: 0.055, elevationOffset: 0.04, continentalScale: 0.018 },
   // dry open country, low relief
   barren:      { moistureBias: -0.17, reliefGain: 0.78, elevationOffset: 0.03 },
-  // ragged fractal coastline, land torn into fingers and inlets
-  shattered:   { continentalWeight: 0.33, detailScale: 0.17, reliefGain: 1.15, outerGapTiles: 0, landReach: 0.92, edgeSoftness: 0.08 },
 };
 export type LifeArc = 'warming' | 'cooling' | 'drying' | 'greening' | 'destabilizing' | 'settling';
 

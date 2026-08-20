@@ -73,7 +73,6 @@ const FOOTPRINT: Record<NaturalWonderKind, { radius: number; minLand: number; ma
 const FORM_WONDERS: Record<string, NaturalWonderKind[]> = {
   archipelago: ['volcano', 'karst_spires', 'crater_lake', 'atoll'],
   drowned:     ['volcano', 'karst_spires', 'atoll'],
-  shattered:   ['volcano', 'karst_spires', 'crater_lake', 'rainbow_hills', 'atoll'],
   continent:   ['volcano', 'crater_lake', 'monolith', 'rainbow_hills', 'karst_spires', 'salt_flat', 'canyon'],
   highlands:   ['volcano', 'crater_lake', 'rainbow_hills', 'karst_spires', 'canyon'],
   barren:      ['volcano', 'monolith', 'rainbow_hills', 'salt_flat', 'canyon', 'dune_sea'],
