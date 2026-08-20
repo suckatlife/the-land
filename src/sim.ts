@@ -557,7 +557,7 @@ const FORMS: Record<WorldForm, Partial<TerrainProfile>> = {
   // island ending in coastline, so settlement can never reach a cut edge. What
   // varies is the SHAPE of that land and how much sea surrounds it.
   // scattered small islands: high-frequency land, weak continental layer
-  archipelago: { continentalScale: 0.055, detailScale: 0.13, continentalWeight: 0.45, reliefGain: 0.85, elevationOffset: -0.02, outerGapTiles: 0, landReach: 0.94, edgeSoftness: 0.07 },
+  archipelago: { continentalScale: 0.055, detailScale: 0.13, continentalWeight: 0.45, reliefGain: 0.85, elevationOffset: -0.055, outerGapTiles: 0, landReach: 0.94, edgeSoftness: 0.07 },
   // one dominant landmass filling most of the diamond, with a narrow coast
   continent:   { continentalScale: 0.013, continentalWeight: 0.82, elevationOffset: 0.08, landReach: 0.78, edgeSoftness: 0.15, outerGapTiles: 7 },
   // range country: the same map, lifted, so far more of it clears rock level

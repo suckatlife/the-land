@@ -2170,11 +2170,16 @@ function drawSuccession(force = false) {
       if (abandonTick[k] < 0 && soilMark[k] <= 0.01) continue;
       const biome = biomeMap[r][c];
       if (biome === 'water') continue;
+      const state = simWorld.tiles[r][c].state;
       const { x, y } = gridToScreen(c, r);
 
       // Altered soil: the longest-lived trace, and the one a later civilisation
-      // is unknowingly drawn back to.
-      const soil = soilMark[k];
+      // is unknowingly drawn back to. Only on ground people have LEFT — painting
+      // it under living settlement tinted every occupied tile brown, which read
+      // as the land being shaded in as it was settled rather than as a memory of
+      // anyone having been there.
+      const occupied = state === 'built' || state === 'cleared';
+      const soil = occupied ? 0 : soilMark[k];
       if (soil > 0.01) {
         successionGfx.poly([x, y - 8, x + 16, y, x, y + 8, x - 16, y])
           .fill({ color: SUCCESSION.soilColor, alpha: SUCCESSION.soilAlpha * soil });
@@ -2182,7 +2187,7 @@ function drawSuccession(force = false) {
       }
 
       const t = successionStage(k);
-      if (t < SUCCESSION.scrubFrom || simWorld.tiles[r][c].state === 'built') continue;
+      if (t < SUCCESSION.scrubFrom || occupied) continue;
       const rnd = (s: number) => tileRand(r, c, s);
 
       if (t < SUCCESSION.saplingFrom) {
@@ -3552,7 +3557,7 @@ function drawLighthouses(nowSec: number, night: number) {
 // it smokes always and erupts on a slow cycle, reusing the lava visual idiom.
 let naturalWonders: NaturalWonder[] = [];
 function rebuildNaturalWonders() {
-  naturalWonders = placeNaturalWonders(biomeMap, elevationMap, currentSeed);
+  naturalWonders = placeNaturalWonders(biomeMap, elevationMap, currentSeed, rollCharacter(currentSeed).form);
 }
 // Hand the natural wonders to the sim: volcano locations (the sim owns the
 // eruption cycle — timing, scarring, vitality) and every wonder's settlement

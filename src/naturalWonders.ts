@@ -39,6 +39,46 @@ const NAME_POOLS: Record<NaturalWonderKind, string[]> = {
 const MIN_SPACING = 14;
 const EDGE_MARGIN = 8;
 
+// How much land each kind needs under it. Suitability only ever judged the one
+// tile a wonder sits on, while the renderer draws it across a radius — so on an
+// archipelago a salt flat would land on a three-tile island and spill into the
+// sea. These are the drawn radii from main.ts, with the share of that footprint
+// that has to be dry ground.
+const FOOTPRINT: Record<NaturalWonderKind, { radius: number; minLand: number }> = {
+  volcano:       { radius: 4, minLand: 0.55 },  // a cone can rise straight out of the sea
+  crater_lake:   { radius: 6, minLand: 0.70 },
+  monolith:      { radius: 6, minLand: 0.80 },  // wants real ground around it
+  rainbow_hills: { radius: 5, minLand: 0.80 },
+  karst_spires:  { radius: 5, minLand: 0.30 },  // towers stand IN the water by design
+  salt_flat:     { radius: 5, minLand: 0.85 },  // a pan is flat inland ground or nothing
+};
+
+// Which wonders belong on which kind of world. A world of small islands has no
+// business hosting a salt pan or a lone desert monolith; a drowned world is
+// even more restricted. Forms not listed here get everything.
+const FORM_WONDERS: Record<string, NaturalWonderKind[]> = {
+  archipelago: ['volcano', 'karst_spires', 'crater_lake'],
+  drowned:     ['volcano', 'karst_spires'],
+  shattered:   ['volcano', 'karst_spires', 'crater_lake', 'rainbow_hills'],
+};
+
+// Share of a wonder's drawn footprint that is dry land.
+function footprintLand(kind: NaturalWonderKind, row: number, col: number, biomes: Biome[][]): number {
+  const { radius } = FOOTPRINT[kind];
+  const h = biomes.length, w = biomes[0].length;
+  let land = 0, total = 0;
+  for (let dr = -radius; dr <= radius; dr++) {
+    for (let dc = -radius; dc <= radius; dc++) {
+      if (dr * dr + dc * dc > radius * radius) continue;
+      const r = row + dr, c = col + dc;
+      total++;
+      if (r < 0 || r >= h || c < 0 || c >= w) continue;
+      if (isLand(biomes[r][c])) land++;
+    }
+  }
+  return total ? land / total : 0;
+}
+
 function isLand(b: Biome): boolean {
   return b !== 'water';
 }
@@ -101,15 +141,18 @@ export function placeNaturalWonders(
   biomes: Biome[][],
   elevation: number[][],
   seed: string,
+  form?: string,
 ): NaturalWonder[] {
   const rand = mulberry32(seed + ':naturalwonders');
   const h = biomes.length, w = biomes[0].length;
   const placed: NaturalWonder[] = [];
 
   // Volcano first (it's the showpiece and wants the best peak), then the rest.
-  const order: NaturalWonderKind[] = [
+  const all: NaturalWonderKind[] = [
     'volcano', 'crater_lake', 'monolith', 'rainbow_hills', 'karst_spires', 'salt_flat',
   ];
+  const allowed = form && FORM_WONDERS[form] ? FORM_WONDERS[form] : all;
+  const order = all.filter((k) => allowed.includes(k));
 
   for (const kind of order) {
     // Sample candidate tiles, keep the best-scoring that clears spacing/edge.
@@ -121,6 +164,8 @@ export function placeNaturalWonders(
       const coastal = isCoastal(row, col, biomes);
       const score = suitability(kind, row, col, biomes, elevation, coastal);
       if (score < 0) continue;
+      // Enough ground to actually stand on, not just a suitable centre tile.
+      if (footprintLand(kind, row, col, biomes) < FOOTPRINT[kind].minLand) continue;
       // Spacing: keep every wonder clear of the others.
       let tooClose = false;
       for (const p of placed) {
