@@ -69,6 +69,8 @@ export interface TerrainProfile {
   edgeSoftness: number;       // width of the coastal fade at landReach
   outerGapTiles: number;      // ocean margin beyond the grid before land resumes
   outerGapSoftness: number;   // how sharply that outer land comes back
+  outerGapWobble: number;     // +/- tiles of irregularity in that margin
+  outerLandLift: number;      // raises land beyond the grid so the planet keeps going
 }
 
 export const DEFAULT_TERRAIN: TerrainProfile = {
@@ -81,8 +83,10 @@ export const DEFAULT_TERRAIN: TerrainProfile = {
   moistureBias: 0,
   landReach: 0.82,
   edgeSoftness: 0.16,
-  outerGapTiles: 16,
-  outerGapSoftness: 10,
+  outerGapTiles: 6,
+  outerGapSoftness: 8,
+  outerGapWobble: 4.5,
+  outerLandLift: 0.09,
 };
 
 // ONE elevation function, valid at any coordinate — inside the grid or far
@@ -120,16 +124,27 @@ export function makeTerrain(
       const f = Math.max(0, Math.min(1, t));
       return f * f * (3 - 2 * f);
     }
-    // Outside: open water for outerGapTiles, then the world picks up again.
+    // Outside: a channel of open sea, then the world picks up again. The width
+    // of that channel WOBBLES with the terrain noise, because a margin of
+    // constant width is just a diamond drawn in ocean — the thing we are trying
+    // not to have. Varying it reads as a strait between a coast and the land
+    // beyond, which is what it should look like.
     const tilesOut = (d - 1) * cx;
-    const g = Math.max(0, Math.min(1, (tilesOut - profile.outerGapTiles) / profile.outerGapSoftness));
+    const wobble = continentalNoise(col * 0.02, row * 0.02) * profile.outerGapWobble;
+    const gap = Math.max(1, profile.outerGapTiles + wobble);
+    const g = Math.max(0, Math.min(1, (tilesOut - gap) / profile.outerGapSoftness));
     return g * g * (3 - 2 * g);
   };
   const elevationAt = (row: number, col: number): number => {
     const continental = continentalNoise(col * profile.continentalScale, row * profile.continentalScale);
     const detail = detailNoise(col * profile.detailScale, row * profile.detailScale);
+    const beyond = row < 0 || row >= height || col < 0 || col >= width;
+    // Beyond the grid the land is lifted a little. The simulated region can be a
+    // drowned world without the entire planet having to be drowned too, and
+    // without the lift a low-lying form leaves its surroundings empty ocean —
+    // which makes the played area read as an island floating in nothing.
     const raw = (continental * profile.continentalWeight + detail * detailWeight) * profile.reliefGain
-      + profile.elevationOffset;
+      + profile.elevationOffset + (beyond ? profile.outerLandLift : 0);
     const ease = shoreEase(row, col);
     return raw * ease - (1 - ease) * EDGE_DEPTH;
   };
