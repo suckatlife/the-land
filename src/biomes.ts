@@ -70,6 +70,7 @@ export interface TerrainProfile {
   outerGapTiles: number;      // ocean margin beyond the grid before land resumes
   outerGapSoftness: number;   // how sharply that outer land comes back
   outerGapWobble: number;     // +/- tiles of irregularity in that margin
+  shoreRuffle: number;        // how far the falloff contour is pushed around, in normalised distance
   outerLandLift: number;      // raises land beyond the grid so the planet keeps going
 }
 
@@ -86,6 +87,7 @@ export const DEFAULT_TERRAIN: TerrainProfile = {
   outerGapTiles: 6,
   outerGapSoftness: 8,
   outerGapWobble: 4.5,
+  shoreRuffle: 0.13,
   outerLandLift: 0.09,
 };
 
@@ -118,20 +120,23 @@ export function makeTerrain(
   // puts cities against an invisible wall and, for island worlds, it wiped the
   // outer land out entirely.
   const shoreEase = (row: number, col: number): number => {
-    const d = Math.max(Math.abs(col - cx) / cx, Math.abs(row - cy) / cy);
+    // Distance is Chebyshev in GRID space, which on screen is a diamond — so a
+    // contour of constant d is a straight, diamond-aligned line, and any
+    // coastline the falloff produces runs parallel to the world's edge. That is
+    // what makes the boundary legible even when there is land on both sides of
+    // it. Ruffling the distance itself, at a frequency that turns over every
+    // dozen tiles or so, gives the falloff a ragged coast instead of a border.
+    const ruffle = detailNoise(col * 0.055, row * 0.055) * profile.shoreRuffle;
+    const d = Math.max(Math.abs(col - cx) / cx, Math.abs(row - cy) / cy) + ruffle;
     if (d <= 1) {
       const t = (profile.landReach + profile.edgeSoftness - d) / profile.edgeSoftness;
       const f = Math.max(0, Math.min(1, t));
       return f * f * (3 - 2 * f);
     }
-    // Outside: a channel of open sea, then the world picks up again. The width
-    // of that channel WOBBLES with the terrain noise, because a margin of
-    // constant width is just a diamond drawn in ocean — the thing we are trying
-    // not to have. Varying it reads as a strait between a coast and the land
-    // beyond, which is what it should look like.
     const tilesOut = (d - 1) * cx;
     const wobble = continentalNoise(col * 0.02, row * 0.02) * profile.outerGapWobble;
-    const gap = Math.max(1, profile.outerGapTiles + wobble);
+    const gap = Math.max(0, profile.outerGapTiles + wobble);
+    if (gap <= 0.001) return 1;   // island forms simply carry on past the rim
     const g = Math.max(0, Math.min(1, (tilesOut - gap) / profile.outerGapSoftness));
     return g * g * (3 - 2 * g);
   };

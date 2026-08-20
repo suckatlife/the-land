@@ -557,19 +557,19 @@ const FORMS: Record<WorldForm, Partial<TerrainProfile>> = {
   // island ending in coastline, so settlement can never reach a cut edge. What
   // varies is the SHAPE of that land and how much sea surrounds it.
   // scattered small islands: high-frequency land, weak continental layer
-  archipelago: { continentalScale: 0.055, detailScale: 0.13, continentalWeight: 0.45, reliefGain: 0.85, elevationOffset: -0.02, outerGapTiles: 5 },
+  archipelago: { continentalScale: 0.055, detailScale: 0.13, continentalWeight: 0.45, reliefGain: 0.85, elevationOffset: -0.02, outerGapTiles: 0, landReach: 0.94, edgeSoftness: 0.07 },
   // one dominant landmass filling most of the diamond, with a narrow coast
-  continent:   { continentalScale: 0.013, continentalWeight: 0.82, elevationOffset: 0.08, landReach: 0.86, edgeSoftness: 0.13, outerGapTiles: 9 },
+  continent:   { continentalScale: 0.013, continentalWeight: 0.82, elevationOffset: 0.08, landReach: 0.78, edgeSoftness: 0.15, outerGapTiles: 7 },
   // range country: the same map, lifted, so far more of it clears rock level
   highlands:   { reliefGain: 1.60, elevationOffset: 0.05, continentalScale: 0.021 },
   // mostly ocean, a few stubborn shores
-  drowned:     { elevationOffset: -0.11, landReach: 0.68, continentalScale: 0.034, outerGapTiles: 5 },
+  drowned:     { elevationOffset: -0.11, landReach: 0.90, edgeSoftness: 0.09, continentalScale: 0.034, outerGapTiles: 0 },
   // broad wet continents under heavy forest
   verdant:     { moistureBias: 0.14, moistureScale: 0.055, elevationOffset: 0.04, continentalScale: 0.018 },
   // dry open country, low relief
   barren:      { moistureBias: -0.17, reliefGain: 0.78, elevationOffset: 0.03 },
   // ragged fractal coastline, land torn into fingers and inlets
-  shattered:   { continentalWeight: 0.33, detailScale: 0.17, reliefGain: 1.15 },
+  shattered:   { continentalWeight: 0.33, detailScale: 0.17, reliefGain: 1.15, outerGapTiles: 0, landReach: 0.92, edgeSoftness: 0.08 },
 };
 export type LifeArc = 'warming' | 'cooling' | 'drying' | 'greening' | 'destabilizing' | 'settling';
 
