@@ -523,7 +523,7 @@ export function createSimWorld(width: number, height: number, seed?: string): Si
     lastCatastropheTick: 0,
     pressureNoise: 1.0,
     brewing: null,
-    eraProgress: 0,
+    eraProgress: rollCharacter(seed ?? 'default').startEra,
     iceExtent: 0,
     iceMax: 0,
     character: rollCharacter(seed ?? 'default'),
@@ -552,6 +552,21 @@ export type Temperament = 'cold' | 'wet' | 'dry' | 'volcanic' | 'fertile' | 'res
 export type WorldForm =
   | 'archipelago' | 'continent' | 'highlands' | 'drowned' | 'verdant' | 'barren' | 'shattered';
 
+const DEFAULT_CIV: CivBehaviour = { spread: 1, expedition: 1, ambition: 1, maxCivs: 10, conquest: 1 };
+
+// Geography as culture. An archipelago is a world of many small seafaring
+// peoples; a continent is a world of a few large land empires; highlands keep
+// their valleys apart for a long time.
+const FORM_CIV: Record<WorldForm, Partial<CivBehaviour>> = {
+  archipelago: { spread: 0.85, expedition: 2.4, ambition: 0.65, maxCivs: 15, conquest: 1.15 },
+  continent:   { spread: 1.18, expedition: 0.55, ambition: 1.45, maxCivs: 7,  conquest: 0.85 },
+  highlands:   { spread: 0.70, expedition: 0.8,  ambition: 0.95, maxCivs: 9,  conquest: 1.25 },
+  drowned:     { spread: 0.80, expedition: 2.0,  ambition: 0.60, maxCivs: 13, conquest: 1.1 },
+  verdant:     { spread: 1.25, expedition: 0.9,  ambition: 1.15, maxCivs: 10, conquest: 0.95 },
+  barren:      { spread: 0.72, expedition: 1.0,  ambition: 0.80, maxCivs: 8,  conquest: 1.0 },
+  shattered:   { spread: 0.95, expedition: 1.7,  ambition: 0.85, maxCivs: 12, conquest: 1.05 },
+};
+
 const FORMS: Record<WorldForm, Partial<TerrainProfile>> = {
   // Every form keeps landReach below the rim: the played world is always an
   // island ending in coastline, so settlement can never reach a cut edge. What
@@ -573,11 +588,30 @@ const FORMS: Record<WorldForm, Partial<TerrainProfile>> = {
 };
 export type LifeArc = 'warming' | 'cooling' | 'drying' | 'greening' | 'destabilizing' | 'settling';
 
+// How a world's GEOGRAPHY shapes the people on it. Form already decided where
+// civilisations could live; this decides how they live there. The effect was
+// already arriving by accident — an archipelago produced 45 civilisations to a
+// continent's 19, purely because fragmented land breeds many small societies —
+// so this makes that deliberate rather than incidental.
+export interface CivBehaviour {
+  spread: number;      // multiplier on how fast territory grows
+  expedition: number;  // appetite for crossing open water
+  ambition: number;    // multiplier on how large a civ wants to become
+  maxCivs: number;     // how many civilisations the world supports at once
+  conquest: number;    // >1 = takes more strength to conquer, so fewer wars won
+}
+
 export interface WorldCharacter {
   temperament: Temperament;
   arc: LifeArc;
   form: WorldForm;
   terrain: TerrainProfile;
+  civ: CivBehaviour;
+  // The era a world OPENS in. Most begin in the stone age; a few begin already
+  // industrial, which changes the whole vocabulary from the first minute —
+  // rails instead of trails, smoke, armour instead of spears — and tells a
+  // different story: a world that starts high and falls, rather than climbs.
+  startEra: number;
   ice: number;          // multiplier on glacial extent
   storm: number;        // storm frequency
   fire: number;         // wildfire ignition
@@ -589,7 +623,7 @@ export interface WorldCharacter {
   moistureBias: number; // terrain generation: green continents vs. tan ones
 }
 
-type TemperamentRates = Omit<WorldCharacter, 'temperament' | 'arc' | 'form' | 'terrain'>;
+type TemperamentRates = Omit<WorldCharacter, 'temperament' | 'arc' | 'form' | 'terrain' | 'civ' | 'startEra'>;
 const TEMPERAMENTS: Record<Temperament, TemperamentRates> = {
   //            ice   storm  fire  drought flood  volcano fertility pressure moisture
   cold:     { ice: 2.1, storm: 1.3, fire: 0.4, drought: 0.5, flood: 0.8, volcano: 0.7, fertility: 0.7, pressure: 1.0, moistureBias:  0.02 },
@@ -631,10 +665,16 @@ export function rollCharacter(seed: string): WorldCharacter {
   const form = forms[hashSeed(seed + ':form') % forms.length];
   const base = TEMPERAMENTS[temperament];
   const terrain: TerrainProfile = { ...DEFAULT_TERRAIN, ...FORMS[form] };
+  const civ: CivBehaviour = { ...DEFAULT_CIV, ...FORM_CIV[form] };
+  // Most worlds still begin at the beginning: skipping the rise skips a lot of
+  // what is worth watching. Roughly one in five opens later, and never so late
+  // that there is no arc left to climb.
+  const eraRoll = hashSeed(seed + ':era-start') / 0xffffffff;
+  const startEra = eraRoll > 0.80 ? 1 + Math.floor((eraRoll - 0.80) / 0.20 * 3.999) : 0;
   // Temperament's moisture leans the form's own bias rather than replacing it:
   // a wet barren world is still barren, just less so.
   terrain.moistureBias += base.moistureBias;
-  return { temperament, arc, form, terrain, ...base };
+  return { temperament, arc, form, terrain, civ, startEra, ...base };
 }
 
 // The arc bends the temperament across the world's life: a drying world is wet
@@ -861,7 +901,7 @@ function spawnCiv(world: SimWorld, row: number, col: number): Civ {
   const era = inheritedEraFor(world, row, col);
   const name = nameForNewCiv(world, row, col, era);
   const ambitionRoll = Math.pow(rand(), SIM.ambitionSkew);
-  const maxSize = Math.round(SIM.minAmbition + ambitionRoll * (SIM.maxAmbition - SIM.minAmbition));
+  const maxSize = Math.round((SIM.minAmbition + ambitionRoll * (SIM.maxAmbition - SIM.minAmbition)) * characterOf(world).civ.ambition);
   const civ: Civ = {
     id: world.nextCivId++,
     originRow: row,
@@ -1022,7 +1062,7 @@ function maybeLaunchExpeditions(world: SimWorld, biomes: Biome[][], tileCounts: 
     let desperate = false;
     if (effectiveStrength(civ) >= SIM.expeditionMinVitality) {
       if ((tileCounts.get(civ.id) || 0) < SIM.expeditionMinSize) continue;
-      if (rand() > SIM.expeditionLaunchChance) continue;
+      if (rand() > SIM.expeditionLaunchChance * characterOf(world).civ.expedition) continue;
     } else if (civ.phase === 'declining' && !civ.hasFled) {
       if ((tileCounts.get(civ.id) || 0) < SIM.lastFlightMinSize) continue;
       if (rand() > SIM.lastFlightChance) continue;
@@ -1102,7 +1142,7 @@ function advanceExpeditions(world: SimWorld, biomes: Biome[][], changed: Array<{
               constitution: 0.6 + rand() * 0.6,
               fortune: 0,
               era: civ.era,
-              maxSize: Math.round(SIM.minAmbition + Math.pow(rand(), SIM.ambitionSkew) * (SIM.maxAmbition - SIM.minAmbition)),
+              maxSize: Math.round((SIM.minAmbition + Math.pow(rand(), SIM.ambitionSkew) * (SIM.maxAmbition - SIM.minAmbition)) * characterOf(world).civ.ambition),
               name: evolveName(civ.name, civ.era),
               cities: [{ row: tr, col: tc, prominence: 0.5, name: generateName(civ.era), foundedTick: world.tick }],
               hasRallied: false,
@@ -1220,7 +1260,7 @@ function maybeBreakaway(world: SimWorld, changed: Array<{ row: number; col: numb
         constitution: 0.6 + rand() * 0.6,
         fortune: 0,
         era: civ.era,
-        maxSize: Math.round(SIM.minAmbition + Math.pow(rand(), SIM.ambitionSkew) * (SIM.maxAmbition - SIM.minAmbition)),
+        maxSize: Math.round((SIM.minAmbition + Math.pow(rand(), SIM.ambitionSkew) * (SIM.maxAmbition - SIM.minAmbition)) * characterOf(world).civ.ambition),
         name: newName,
         cities: [{ row: cap.row, col: cap.col, prominence: 0.6, name: generateName(civ.era), foundedTick: world.tick }],
         hasRallied: false,
@@ -1986,7 +2026,7 @@ export function step(
           const myStrength = effectiveStrength(civ);
           // Fertility is the temperament's most legible consequence: a rich
           // world fills up, a barren one stays sparse for its whole life.
-          const spreadP = SIM.spreadBase * myStrength * ch.fertility;
+          const spreadP = SIM.spreadBase * myStrength * ch.fertility * ch.civ.spread;
           const neighbors = [[row - 1, col], [row + 1, col], [row, col - 1], [row, col + 1]];
           for (const [r, c] of neighbors) {
             if (r < 0 || r >= world.height || c < 0 || c >= world.width) continue;
@@ -2034,7 +2074,7 @@ export function step(
               if (otherCiv && otherCiv.phase !== 'dead' && neighborSnap.state === 'built') {
                 const otherStrength = Math.max(0.1, effectiveStrength(otherCiv));
                 const strengthRatio = myStrength / otherStrength;
-                if (strengthRatio > 1.15) {
+                if (strengthRatio > 1.15 * ch.civ.conquest) {
                   const defenderDistFromCapital = nearestCityDist(otherCiv, r, c);
                   const defenderDistNorm = defenderDistFromCapital / SIM.coreRadius;
                   const defenderVulnerability = 1 + Math.pow(Math.max(0, defenderDistNorm - 1), 2) * SIM.peripheryDecayMultiplier * 0.5;
@@ -2183,7 +2223,7 @@ export function step(
 
   // Births arrive as visible migrations: the spawn roll starts a band
   // walking; the civ exists only when it settles.
-  if (livingCivCount(world) < SIM.maxLivingCivs && world.pendingSettlements.length < 2) {
+  if (livingCivCount(world) < characterOf(world).civ.maxCivs && world.pendingSettlements.length < 2) {
     if (rand() < SIM.baseCivSpawnChance) {
       const spot = pickCivSpawnTile(world, biomes);
       if (spot) {
@@ -2198,7 +2238,7 @@ export function step(
     if (p.ticksLeft > 0) continue;
     world.pendingSettlements.splice(i, 1);
     const t = world.tiles[p.row][p.col];
-    if (livingCivCount(world) >= SIM.maxLivingCivs) continue;
+    if (livingCivCount(world) >= characterOf(world).civ.maxCivs) continue;
     if (biomes[p.row][p.col] === 'water' || (t.state !== 'wild' && t.state !== 'ruin')) continue;
     const newCiv = spawnCiv(world, p.row, p.col);
     changed.push({ row: p.row, col: p.col });
