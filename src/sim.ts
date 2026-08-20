@@ -1,4 +1,4 @@
-import { type Biome, SEA_LEVEL, SHORE_LEVEL, mulberry32 } from './biomes';
+import { type Biome, type TerrainProfile, DEFAULT_TERRAIN, SEA_LEVEL, SHORE_LEVEL, mulberry32 } from './biomes';
 import { generateName, evolveName, resetNameRandom } from './names';
 
 export type TileState = 'wild' | 'cleared' | 'built' | 'ruin';
@@ -544,11 +544,37 @@ export function createSimWorld(width: number, height: number, seed?: string): Si
 // "this world is subtly drier" — it's that one world is legibly a particular
 // place inside its own seventeen minutes.
 export type Temperament = 'cold' | 'wet' | 'dry' | 'volcanic' | 'fertile' | 'restless' | 'placid';
+
+// The world's FORM: its physical shape, as opposed to its weather. Temperament
+// decides what happens to a world; form decides what the world is. This is the
+// axis you register in the first two seconds of looking — a thousand islands
+// and one supercontinent do not need a caption to tell them apart.
+export type WorldForm =
+  | 'archipelago' | 'continent' | 'highlands' | 'drowned' | 'verdant' | 'barren' | 'shattered';
+
+const FORMS: Record<WorldForm, Partial<TerrainProfile>> = {
+  // scattered small islands: high-frequency land, weak continental layer
+  archipelago: { continentalScale: 0.055, detailScale: 0.13, continentalWeight: 0.45, reliefGain: 0.85, elevationOffset: -0.02 },
+  // one landmass, running off the edge of the frame rather than sitting in it
+  continent:   { continentalScale: 0.013, continentalWeight: 0.82, elevationOffset: 0.07, landReach: 1.30, edgeSoftness: 0.34 },
+  // range country: the same map, lifted, so far more of it clears rock level
+  highlands:   { reliefGain: 1.60, elevationOffset: 0.05, continentalScale: 0.021 },
+  // mostly ocean, a few stubborn shores
+  drowned:     { elevationOffset: -0.11, landReach: 0.70, continentalScale: 0.034 },
+  // broad wet continents under heavy forest
+  verdant:     { moistureBias: 0.14, moistureScale: 0.055, elevationOffset: 0.04, continentalScale: 0.018 },
+  // dry open country, low relief
+  barren:      { moistureBias: -0.17, reliefGain: 0.78, elevationOffset: 0.03 },
+  // ragged fractal coastline, land torn into fingers and inlets
+  shattered:   { continentalWeight: 0.33, detailScale: 0.17, reliefGain: 1.15 },
+};
 export type LifeArc = 'warming' | 'cooling' | 'drying' | 'greening' | 'destabilizing' | 'settling';
 
 export interface WorldCharacter {
   temperament: Temperament;
   arc: LifeArc;
+  form: WorldForm;
+  terrain: TerrainProfile;
   ice: number;          // multiplier on glacial extent
   storm: number;        // storm frequency
   fire: number;         // wildfire ignition
@@ -560,7 +586,8 @@ export interface WorldCharacter {
   moistureBias: number; // terrain generation: green continents vs. tan ones
 }
 
-const TEMPERAMENTS: Record<Temperament, Omit<WorldCharacter, 'temperament' | 'arc'>> = {
+type TemperamentRates = Omit<WorldCharacter, 'temperament' | 'arc' | 'form' | 'terrain'>;
+const TEMPERAMENTS: Record<Temperament, TemperamentRates> = {
   //            ice   storm  fire  drought flood  volcano fertility pressure moisture
   cold:     { ice: 2.1, storm: 1.3, fire: 0.4, drought: 0.5, flood: 0.8, volcano: 0.7, fertility: 0.7, pressure: 1.0, moistureBias:  0.02 },
   wet:      { ice: 1.0, storm: 2.2, fire: 0.25, drought: 0.2, flood: 2.6, volcano: 0.8, fertility: 1.2, pressure: 1.0, moistureBias:  0.12 },
@@ -595,7 +622,16 @@ export function rollCharacter(seed: string): WorldCharacter {
   const temperament = kinds[h % kinds.length];
   const arcs = ARCS_FOR[temperament];
   const arc = arcs[(h >>> 8) % arcs.length];
-  return { temperament, arc, ...TEMPERAMENTS[temperament] };
+  const forms = Object.keys(FORMS) as WorldForm[];
+  // A separate hash: form and temperament should vary independently, so a cold
+  // world is sometimes an archipelago and sometimes a single frozen continent.
+  const form = forms[hashSeed(seed + ':form') % forms.length];
+  const base = TEMPERAMENTS[temperament];
+  const terrain: TerrainProfile = { ...DEFAULT_TERRAIN, ...FORMS[form] };
+  // Temperament's moisture leans the form's own bias rather than replacing it:
+  // a wet barren world is still barren, just less so.
+  terrain.moistureBias += base.moistureBias;
+  return { temperament, arc, form, terrain, ...base };
 }
 
 // The arc bends the temperament across the world's life: a drying world is wet

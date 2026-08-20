@@ -1,4 +1,4 @@
-import { createNoise2D, type NoiseFunction2D } from 'simplex-noise';
+import { createNoise2D } from 'simplex-noise';
 
 // A tiny deterministic PRNG. Takes a string seed, returns a function that
 // produces numbers in [0, 1). Same seed = same sequence.
@@ -38,7 +38,6 @@ const MOUNTAIN_LEVEL = 0.65; // above this is rock
 const CONTINENTAL_SCALE  = 0.025; // frequency of the big land-mass layer; smaller = broader continents
 const DETAIL_SCALE       = 0.09;  // frequency of the coastline/island detail layer
 const CONTINENTAL_WEIGHT = 0.65;  // how much the continental layer drives elevation
-const DETAIL_WEIGHT      = 0.35;  // how much the detail layer contributes (weights should sum to 1)
 
 const MOISTURE_SCALE = 0.09; // smaller = larger climate zones
 
@@ -46,27 +45,98 @@ const MOISTURE_SCALE = 0.09; // smaller = larger climate zones
 // the outer EDGE_FALLOFF tiles, so every landmass ends in natural coastline
 // (no terrain sliced along the old diamond edge) and boundary water matches
 // the deep ocean apron beyond it.
-const EDGE_FALLOFF = 7;
 const EDGE_DEPTH = 0.3; // how far below zero the very edge is pushed
 
-// Continuous terrain sampler — the same noise the grid uses, usable beyond
-// the grid bounds. Lets the renderer draw scenery terrain to the horizon
-// (the sim never sees it).
-export function makeTerrainSampler(seed: string): {
-  elevationAt(row: number, col: number): number;
-  moistureAt(row: number, col: number): number;
-} {
+// --- World form -------------------------------------------------------------
+// Every world used to be generated from one fixed set of constants, so the only
+// thing that changed between worlds was where the coastlines fell. These are
+// those constants, per world, so a seed can produce a thousand islands, one
+// supercontinent, a drowned world or a range-covered one.
+//
+// Sea level is deliberately NOT here: SEA_LEVEL is a fixed threshold that
+// sim.ts compares against in a dozen places (floods, rifts, deltas, land
+// bridges). Raising the land instead of lowering the sea gets the same worlds
+// without touching any of that.
+export interface TerrainProfile {
+  continentalScale: number;   // smaller = broader landmasses; larger = scattered islands
+  detailScale: number;        // coastline roughness
+  continentalWeight: number;  // 0..1; the detail layer takes the remainder
+  reliefGain: number;         // amplitude — higher lifts peaks AND deepens ocean
+  elevationOffset: number;    // raises or drowns the whole world
+  moistureScale: number;      // smaller = larger climate zones
+  moistureBias: number;       // wetter (forest) or drier (open ground)
+  landReach: number;          // how far land holds out, 1 = the grid's own edge
+  edgeSoftness: number;       // width of the fade past landReach
+}
+
+export const DEFAULT_TERRAIN: TerrainProfile = {
+  continentalScale: CONTINENTAL_SCALE,
+  detailScale: DETAIL_SCALE,
+  continentalWeight: CONTINENTAL_WEIGHT,
+  reliefGain: 1,
+  elevationOffset: 0,
+  moistureScale: MOISTURE_SCALE,
+  moistureBias: 0,
+  landReach: 0.85,
+  edgeSoftness: 0.15,
+};
+
+// ONE elevation function, valid at any coordinate — inside the grid or far
+// beyond it. This is what keeps the played area from announcing itself: the
+// simulated diamond and the scenery around it are literally the same function,
+// so there is no boundary to blend and no moat to hide. The land fades out
+// where landReach says it does, which for a continental world can be past the
+// edge of the frame entirely.
+export function makeTerrain(
+  seed: string,
+  width: number,
+  height: number,
+  profile: TerrainProfile = DEFAULT_TERRAIN,
+) {
   const continentalNoise = createNoise2D(mulberry32(seed + ':continental'));
   const detailNoise = createNoise2D(mulberry32(seed + ':detail'));
   const moistureNoise = createNoise2D(mulberry32(seed + ':moisture'));
-  return {
-    elevationAt: (row, col) =>
-      continentalNoise(col * CONTINENTAL_SCALE, row * CONTINENTAL_SCALE) * CONTINENTAL_WEIGHT +
-      detailNoise(col * DETAIL_SCALE, row * DETAIL_SCALE) * DETAIL_WEIGHT,
-    moistureAt: (row, col) => moistureNoise(col * MOISTURE_SCALE, row * MOISTURE_SCALE),
+  const cx = (width - 1) / 2, cy = (height - 1) / 2;
+  const detailWeight = 1 - profile.continentalWeight;
+
+  // 1 in the interior, easing to 0 past landReach. Distance is measured from
+  // the world's centre rather than its edges so the function keeps meaning
+  // outside the grid instead of clamping at the rim.
+  const shoreEase = (row: number, col: number): number => {
+    const d = Math.max(Math.abs(col - cx) / cx, Math.abs(row - cy) / cy);
+    const t = (profile.landReach + profile.edgeSoftness - d) / profile.edgeSoftness;
+    const f = Math.max(0, Math.min(1, t));
+    return f * f * (3 - 2 * f);
   };
+
+  const elevationAt = (row: number, col: number): number => {
+    const continental = continentalNoise(col * profile.continentalScale, row * profile.continentalScale);
+    const detail = detailNoise(col * profile.detailScale, row * profile.detailScale);
+    const raw = (continental * profile.continentalWeight + detail * detailWeight) * profile.reliefGain
+      + profile.elevationOffset;
+    const ease = shoreEase(row, col);
+    return raw * ease - (1 - ease) * EDGE_DEPTH;
+  };
+  const moistureAt = (row: number, col: number): number =>
+    moistureNoise(col * profile.moistureScale, row * profile.moistureScale) + profile.moistureBias;
+
+  return { elevationAt, moistureAt };
 }
 
+// Back-compatible sampler: the renderer's scenery uses this, and it now shares
+// the grid's profile AND its falloff, so beyond-grid terrain has the same
+// character as the world it surrounds.
+export function makeTerrainSampler(
+  seed: string,
+  width = 96,
+  height = 96,
+  profile: TerrainProfile = DEFAULT_TERRAIN,
+): {
+  elevationAt(row: number, col: number): number;
+  moistureAt(row: number, col: number): number;
+} {
+  return makeTerrain(seed, width, height, profile);
+}
 // Map (elevation, moisture) to a biome.
 export function classify(elevation: number, moisture: number): Biome {
   if (elevation < SEA_LEVEL) return 'water';
@@ -145,13 +215,10 @@ export function generateBiomeMap(
   width: number,
   height: number,
   seed: string,
-  // The world's temperament, applied where it shows most: a wet planet grows
-  // green continents, a dry one tan ones, from the same terrain seed.
-  moistureBias = 0,
+  // The world's form and temperament. Defaults reproduce the original world.
+  profile: TerrainProfile = DEFAULT_TERRAIN,
 ): { biomes: Biome[][]; elevation: number[][] } {
-  const continentalNoise: NoiseFunction2D = createNoise2D(mulberry32(seed + ':continental'));
-  const detailNoise: NoiseFunction2D      = createNoise2D(mulberry32(seed + ':detail'));
-  const moistureNoise: NoiseFunction2D    = createNoise2D(mulberry32(seed + ':moisture'));
+  const terrain = makeTerrain(seed, width, height, profile);
 
   const biomes: Biome[][] = [];
   const elevation: number[][] = [];
@@ -159,17 +226,19 @@ export function generateBiomeMap(
     biomes[row] = [];
     elevation[row] = [];
     for (let col = 0; col < width; col++) {
-      const continental = continentalNoise(col * CONTINENTAL_SCALE, row * CONTINENTAL_SCALE);
-      const detail      = detailNoise(col * DETAIL_SCALE, row * DETAIL_SCALE);
-      const edgeD = Math.min(row, col, height - 1 - row, width - 1 - col);
-      const f = Math.min(1, edgeD / EDGE_FALLOFF);
-      const ease = f * f * (3 - 2 * f);
-      const elev = (continental * CONTINENTAL_WEIGHT + detail * DETAIL_WEIGHT) * ease
-        - (1 - ease) * EDGE_DEPTH;
-      const moisture    = moistureNoise(col * MOISTURE_SCALE, row * MOISTURE_SCALE) + moistureBias;
-      biomes[row][col]    = classify(elev, moisture);
+      const elev = terrain.elevationAt(row, col);
+      biomes[row][col] = classify(elev, terrain.moistureAt(row, col));
       elevation[row][col] = elev;
     }
   }
   return { biomes, elevation };
+}
+
+// How much of the world is habitable ground. A form that drowns or freezes the
+// map produces a world where no civilisation can ever spawn — seventeen minutes
+// of nothing happening — so generation checks this and the caller corrects.
+export function landFraction(biomes: Biome[][]): number {
+  let land = 0, total = 0;
+  for (const row of biomes) for (const b of row) { total++; if (b !== 'water') land++; }
+  return total ? land / total : 0;
 }

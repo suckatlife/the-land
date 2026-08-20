@@ -1,6 +1,6 @@
 import { Application, Assets, Container, Graphics, MeshPlane, RenderTexture, Sprite, Text, TextStyle, Texture } from 'pixi.js';
 import './style.css';
-import { generateBiomeMap, generateRivers, makeTerrainSampler, classify, BIOME_COLORS, SEA_LEVEL, type Biome } from './biomes';
+import { generateBiomeMap, generateRivers, makeTerrainSampler, classify, landFraction, DEFAULT_TERRAIN, BIOME_COLORS, SEA_LEVEL, type Biome, type TerrainProfile } from './biomes';
 import { placeNaturalWonders, type NaturalWonder, type NaturalWonderKind } from './naturalWonders';
 
 // How strongly each wonder draws (+) or repels (−) settlement, and over how
@@ -1729,7 +1729,31 @@ let worldArchive = loadWorldArchive();
 saveSeed(currentSeed);
 
 // --- World state ---
-let { biomes: biomeMap, elevation: elevationMap } = generateBiomeMap(GRID_SIZE, GRID_SIZE, currentSeed, rollCharacter(currentSeed).moistureBias);
+
+// Generate a world's terrain from its form, guaranteeing it is habitable. An
+// extreme form can drown the map or lift it clear of the sea, and a world with
+// no land is seventeen minutes of nothing happening — so the land fraction is
+// measured and the whole world nudged up or down until it is somewhere a
+// civilisation could actually start. Deterministic: same seed, same correction.
+const LAND_TARGET = { min: 0.20, max: 0.70, step: 0.02, tries: 12 };
+function generateWorldTerrain(seed: string) {
+  const character = rollCharacter(seed);
+  const profile = { ...character.terrain };
+  let result = generateBiomeMap(GRID_SIZE, GRID_SIZE, seed, profile);
+  for (let i = 0; i < LAND_TARGET.tries; i++) {
+    const land = landFraction(result.biomes);
+    if (land >= LAND_TARGET.min && land <= LAND_TARGET.max) break;
+    profile.elevationOffset += land < LAND_TARGET.min ? LAND_TARGET.step : -LAND_TARGET.step;
+    result = generateBiomeMap(GRID_SIZE, GRID_SIZE, seed, profile);
+  }
+  // The scenery beyond the grid is drawn from this same corrected profile, so
+  // the played area is not a different planet from the one around it.
+  activeTerrainProfile = profile;
+  return result;
+}
+let activeTerrainProfile: TerrainProfile = DEFAULT_TERRAIN;
+
+let { biomes: biomeMap, elevation: elevationMap } = generateWorldTerrain(currentSeed);
 let simWorld: SimWorld = createSimWorld(GRID_SIZE, GRID_SIZE, currentSeed);
 let currentWorldFate: WorldFate = worldFateForSeed(currentSeed, SIM.worldCycleTicks);
 let currentWorldHistory: WorldHistory = createWorldHistory(biomeMap);
@@ -1925,9 +1949,11 @@ function waterColorAt(row: number, col: number): number {
 // it. A sea moat (SCENERY.moatTiles, blending out from the grid's own edge
 // falloff) separates the known world from the distant continents, so
 // civilizations always end at real coastline rather than an invisible wall.
-const SCENERY = {
-  moatTiles: 14,    // sea gap beyond the grid before terrain resumes
-  edgeDepth: 0.3,   // must match EDGE_DEPTH in biomes.ts
+// (The scenery moat is gone: beyond-grid terrain is now the same elevation
+// function as the grid, so there is no gap to bridge — see drawScenery.)
+const SCENERY_TEXTURE = {
+  density: 1.0,     // multiplier on tree count out here vs. on the grid
+  fadeTiles: 46,    // texture thins to nothing this far beyond the grid
 };
 
 // The beyond-the-grid tiles, kept so the ice cap can reach the whole visible
@@ -1938,18 +1964,21 @@ function drawScenery() {
   sceneryWaterGfx.clear();
   sceneryLandGfx.clear();
   sceneryTiles = [];
-  const sampler = makeTerrainSampler(currentSeed);
+  // Same seed, same profile, same falloff as the grid itself — the scenery is a
+  // continuation of the world rather than a different one drawn around it.
+  const sampler = makeTerrainSampler(currentSeed, GRID_SIZE, GRID_SIZE, activeTerrainProfile);
   const { x0, y0, w, h } = WORLD_CAPTURE;
   for (let r = -60; r <= 155; r++) {
     for (let c = -60; c <= 155; c++) {
       if (r >= 0 && r < GRID_SIZE && c >= 0 && c < GRID_SIZE) continue; // real tiles cover this
       const { x, y } = gridToScreen(c, r);
       if (x < x0 - 16 || x > x0 + w + 16 || y < y0 - 8 || y > y0 + h + 8) continue;
-      // Moat blend: grid-edge depth at the boundary, raw terrain beyond.
+      // No moat and no blend: the sampler already carries the world's own
+      // falloff, evaluated past the grid's edge. A continental world therefore
+      // runs its land off the frame instead of ending in a giveaway ring of
+      // ocean around the simulated square.
       const dOut = Math.max(-r, r - (GRID_SIZE - 1), -c, c - (GRID_SIZE - 1), 0);
-      const f = Math.min(1, dOut / SCENERY.moatTiles);
-      const ease = f * f * (3 - 2 * f);
-      const elev = -SCENERY.edgeDepth * (1 - ease) + sampler.elevationAt(r, c) * ease;
+      const elev = sampler.elevationAt(r, c);
       const biome = classify(elev, sampler.moistureAt(r, c));
       const water = biome === 'water';
       const color = water ? waterColorFromElev(elev, r, c) : BIOME_COLORS[biome];
@@ -1958,6 +1987,21 @@ function drawScenery() {
       target.poly([x, y - 8, x + 16, y, x, y + 8, x - 16, y])
         .fill(color)
         .stroke({ color: 0x000000, alpha: 0.08, width: 1 });
+      // Give the outside world the same grain as the inside. Without this the
+      // grid reads as a textured square sitting in flat colour — which on a
+      // continental world, where land fills the frame, is the one remaining
+      // giveaway that only the middle is alive. Sparser than the real thing and
+      // thinning with distance, because this is background and it all bakes
+      // into one cached texture.
+      if (!water && (biome === 'forest' || biome === 'grass' || biome === 'fertile')) {
+        const fade = Math.max(0, 1 - dOut / SCENERY_TEXTURE.fadeTiles);
+        const n = Math.round((biome === 'forest' ? 3 : 1) * SCENERY_TEXTURE.density * fade);
+        for (let i = 0; i < n; i++) {
+          const ox = x + (tileRand(r, c, i * 7 + 61) - 0.5) * 20;
+          const oy = y + (tileRand(r, c, i * 7 + 62) - 0.5) * 8;
+          drawTree(target, ox, oy, 0.55 + tileRand(r, c, i * 7 + 63) * 0.3, tileRand(r, c, i * 7 + 64) < 0.5);
+        }
+      }
     }
   }
   // Static once drawn — collapse the ~20k polys to one cached quad.
@@ -6733,7 +6777,7 @@ function resetWorld(newSeed: string, archiveEnding?: WorldEnding, outcome?: Reso
   currentWorldName = worldNameForSeed(newSeed);
   worldStartedAt = Date.now();
   saveSeed(newSeed);
-  ({ biomes: biomeMap, elevation: elevationMap } = generateBiomeMap(GRID_SIZE, GRID_SIZE, newSeed, rollCharacter(newSeed).moistureBias));
+  ({ biomes: biomeMap, elevation: elevationMap } = generateWorldTerrain(newSeed));
   rebuildNaturalWonders();
   simWorld = createSimWorld(GRID_SIZE, GRID_SIZE, currentSeed);
   displayedEraRank = 0;   // a new world starts at the beginning again
