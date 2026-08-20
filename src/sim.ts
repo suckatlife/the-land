@@ -553,14 +553,17 @@ export type WorldForm =
   | 'archipelago' | 'continent' | 'highlands' | 'drowned' | 'verdant' | 'barren' | 'shattered';
 
 const FORMS: Record<WorldForm, Partial<TerrainProfile>> = {
+  // Every form keeps landReach below the rim: the played world is always an
+  // island ending in coastline, so settlement can never reach a cut edge. What
+  // varies is the SHAPE of that land and how much sea surrounds it.
   // scattered small islands: high-frequency land, weak continental layer
-  archipelago: { continentalScale: 0.055, detailScale: 0.13, continentalWeight: 0.45, reliefGain: 0.85, elevationOffset: -0.02 },
-  // one landmass, running off the edge of the frame rather than sitting in it
-  continent:   { continentalScale: 0.013, continentalWeight: 0.82, elevationOffset: 0.07, landReach: 1.30, edgeSoftness: 0.34 },
+  archipelago: { continentalScale: 0.055, detailScale: 0.13, continentalWeight: 0.45, reliefGain: 0.85, elevationOffset: -0.02, outerGapTiles: 12 },
+  // one dominant landmass filling most of the diamond, with a narrow coast
+  continent:   { continentalScale: 0.013, continentalWeight: 0.82, elevationOffset: 0.08, landReach: 0.86, edgeSoftness: 0.13, outerGapTiles: 20 },
   // range country: the same map, lifted, so far more of it clears rock level
   highlands:   { reliefGain: 1.60, elevationOffset: 0.05, continentalScale: 0.021 },
   // mostly ocean, a few stubborn shores
-  drowned:     { elevationOffset: -0.11, landReach: 0.70, continentalScale: 0.034 },
+  drowned:     { elevationOffset: -0.11, landReach: 0.68, continentalScale: 0.034, outerGapTiles: 10 },
   // broad wet continents under heavy forest
   verdant:     { moistureBias: 0.14, moistureScale: 0.055, elevationOffset: 0.04, continentalScale: 0.018 },
   // dry open country, low relief

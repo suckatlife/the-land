@@ -1248,6 +1248,23 @@ function tileToSky(row: number, col: number): { x: number; y: number } {
 // so a harness can age the world and look at the result immediately.
 // The world's biography — temperament, arc, and the bent values as they stand
 // right now. Nothing announces this in the UI; it's meant to be felt.
+// Terrain probe: sample the world's elevation anywhere, inside the grid or far
+// beyond it, to confirm the island / ocean-gap / outer-land geometry without
+// squinting at screenshots.
+(window as any).__terrain = {
+  profile: () => activeTerrainProfile,
+  rayFromCentre: (steps = 90) => {
+    const t = makeTerrainSampler(currentSeed, GRID_SIZE, GRID_SIZE, activeTerrainProfile);
+    const mid = (GRID_SIZE - 1) / 2;
+    const out: Array<{ col: number; d: number; land: boolean }> = [];
+    for (let i = 0; i <= steps; i++) {
+      const col = mid + i * 1.6;                     // walk east from the centre
+      out.push({ col: Math.round(col), d: +((col - mid) / mid).toFixed(2),
+                 land: t.elevationAt(mid, col) >= SEA_LEVEL });
+    }
+    return out;
+  },
+};
 (window as any).__world = {
   character: () => simWorld.character,
   now: () => characterOf(simWorld),

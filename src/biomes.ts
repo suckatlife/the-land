@@ -65,8 +65,10 @@ export interface TerrainProfile {
   elevationOffset: number;    // raises or drowns the whole world
   moistureScale: number;      // smaller = larger climate zones
   moistureBias: number;       // wetter (forest) or drier (open ground)
-  landReach: number;          // how far land holds out, 1 = the grid's own edge
-  edgeSoftness: number;       // width of the fade past landReach
+  landReach: number;          // how far land holds out inside the grid; 1 = the rim itself
+  edgeSoftness: number;       // width of the coastal fade at landReach
+  outerGapTiles: number;      // ocean margin beyond the grid before land resumes
+  outerGapSoftness: number;   // how sharply that outer land comes back
 }
 
 export const DEFAULT_TERRAIN: TerrainProfile = {
@@ -77,8 +79,10 @@ export const DEFAULT_TERRAIN: TerrainProfile = {
   elevationOffset: 0,
   moistureScale: MOISTURE_SCALE,
   moistureBias: 0,
-  landReach: 0.85,
-  edgeSoftness: 0.15,
+  landReach: 0.82,
+  edgeSoftness: 0.16,
+  outerGapTiles: 16,
+  outerGapSoftness: 10,
 };
 
 // ONE elevation function, valid at any coordinate — inside the grid or far
@@ -99,16 +103,28 @@ export function makeTerrain(
   const cx = (width - 1) / 2, cy = (height - 1) / 2;
   const detailWeight = 1 - profile.continentalWeight;
 
-  // 1 in the interior, easing to 0 past landReach. Distance is measured from
-  // the world's centre rather than its edges so the function keeps meaning
-  // outside the grid instead of clamping at the rim.
+  // The simulated world is an island by design: land fades out before the grid's
+  // rim, so a coastline — not a cut edge — is what bounds the playable area, and
+  // settlement can never reach the boundary because there is no land there.
+  //
+  // Beyond the rim the same land RESUMES after an ocean margin. Those outer
+  // masses are drawn from the identical noise and profile, so they read as more
+  // of the same planet, but a gap of open sea keeps them visibly separate and
+  // unreachable. Continuous land across the boundary was the wrong answer: it
+  // puts cities against an invisible wall and, for island worlds, it wiped the
+  // outer land out entirely.
   const shoreEase = (row: number, col: number): number => {
     const d = Math.max(Math.abs(col - cx) / cx, Math.abs(row - cy) / cy);
-    const t = (profile.landReach + profile.edgeSoftness - d) / profile.edgeSoftness;
-    const f = Math.max(0, Math.min(1, t));
-    return f * f * (3 - 2 * f);
+    if (d <= 1) {
+      const t = (profile.landReach + profile.edgeSoftness - d) / profile.edgeSoftness;
+      const f = Math.max(0, Math.min(1, t));
+      return f * f * (3 - 2 * f);
+    }
+    // Outside: open water for outerGapTiles, then the world picks up again.
+    const tilesOut = (d - 1) * cx;
+    const g = Math.max(0, Math.min(1, (tilesOut - profile.outerGapTiles) / profile.outerGapSoftness));
+    return g * g * (3 - 2 * g);
   };
-
   const elevationAt = (row: number, col: number): number => {
     const continental = continentalNoise(col * profile.continentalScale, row * profile.continentalScale);
     const detail = detailNoise(col * profile.detailScale, row * profile.detailScale);
