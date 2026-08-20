@@ -8,9 +8,13 @@ import { placeNaturalWonders, type NaturalWonder, type NaturalWonderKind } from 
 // sacred/mineral landmarks are sought.
 const WONDER_PULL: Record<NaturalWonderKind, number> = {
   volcano: -4, crater_lake: 3, monolith: 2, rainbow_hills: 1.5, karst_spires: 1.5, salt_flat: 2,
+  // A lagoon is shelter and fishing; a gorge and a sand sea are country you
+  // settle around rather than in.
+  atoll: 3, canyon: -2, dune_sea: -3,
 };
 const WONDER_RADIUS: Record<NaturalWonderKind, number> = {
   volcano: 5, crater_lake: 8, monolith: 7, rainbow_hills: 6, karst_spires: 6, salt_flat: 6,
+  atoll: 6, canyon: 8, dune_sea: 9,
 };
 import { drawTile, drawStateOverlayPersistent, redrawOverlay, redrawBiomeTile, lerpColor, gridToScreen, rgbToHsl, hslToRgb } from './iso';
 import { createSimWorld, rollCharacter, characterOf, step, tileOverlayColor, seedInitialCivs, applyCatastrophe, setVolcanoes, eruptVolcanoesNow, setWonderSites, iceDepthAt, SIM, CATASTROPHE, CITY, nearestCityDist, type SimWorld, type Civ, type CivCity, type SimEvent, type Era, type TileOverlay, type BiomeChange, type CatastropheType } from './sim';
@@ -3596,6 +3600,9 @@ function drawNaturalWonders(nowSec: number, night: number) {
       case 'rainbow_hills':  drawRainbowHills(x, y, w, nowSec, ng); break;
       case 'karst_spires':   drawKarstSpires(x, y, w, ng); break;
       case 'salt_flat':      drawSaltFlat(x, y, w, nowSec, ng); break;
+      case 'atoll':          drawAtoll(x, y, w, ng); break;
+      case 'canyon':         drawCanyon(x, y, w, ng); break;
+      case 'dune_sea':       drawDuneSea(x, y, w, ng); break;
     }
   }
 }
@@ -3872,6 +3879,66 @@ function drawKarstSpires(x: number, y: number, w: NaturalWonder, ng: number) {
   void ng;
 }
 // A flat mineral lake — pale rose crust with a faint shimmer.
+// A reef ring in open water: a pale sand-and-coral rim enclosing a shallow
+// lagoon. Structurally a crater lake turned inside out and moved out to sea —
+// same ring-and-water idiom, but flat, bright, and tropical rather than stone.
+function drawAtoll(x: number, y: number, w: NaturalWonder, ng: number) {
+  // The reef: a broken ring, paler where it breaks the surface.
+  nwFootprint(natWonderGroundGfx, w, 3.4, (dr, dc, dist) => {
+    if (dist < 2.0) return null;              // hollow: the lagoon fills it
+    const h = nwHash(w.row + dr, w.col + dc, 12);
+    if (h < 0.22) return null;                // gaps where the sea breaks through
+    return lerpColor(0xe6d7ac, 0xf2e9cf, h);
+  }, 0.05, true, true);
+  // Lagoon: bright shallow water, palest at the centre where it is shallowest —
+  // the opposite gradient to the open sea, which is what makes it read as a
+  // lagoon rather than a hole in the map.
+  nwFootprint(natWonderWaterGfx, w, 2.25, (_dr, _dc, dist) =>
+    lerpColor(0x8fe0d8, 0x5fc0c4, Math.min(1, dist / 2.4)), 0, false, true);
+  void x; void y; void ng;
+}
+
+// A gorge cut through high country: a winding floor in shadow between two pale
+// rims. The course is a sine of the wonder's own phase, so every canyon bends
+// differently, and it is drawn as ground rather than as a raised form — the
+// land here is missing, not added.
+function drawCanyon(x: number, y: number, w: NaturalWonder, ng: number) {
+  const bend = 3.2, wind = 0.42;
+  nwFootprint(natWonderGroundGfx, w, 6, (dr, dc, dist) => {
+    // A gorge is cut into ground; where the footprint reaches the sea it simply
+    // stops, rather than painting rock over water.
+    if (biomeMap[w.row + dr]?.[w.col + dc] === 'water') return null;
+    const course = Math.sin(dr * wind + w.phase) * bend;   // the gorge's centreline
+    const off = Math.abs(dc - course);
+    const ragged = nwHash(w.row + dr, w.col + dc, 17) * 0.9;
+    if (off < 1.1 + ragged * 0.5) {
+      // Floor: deep shadow, darkest at the middle of the cut.
+      return lerpColor(0x4a3f36, 0x6b5c4d, off / 1.8);
+    }
+    if (off < 2.6 + ragged) {
+      // Rim: sunlit stone breaking away at the lip.
+      return lerpColor(0xb3a692, 0x8e806d, (off - 1.1) / 1.9 + ragged * 0.2);
+    }
+    void dist;
+    return null;
+  }, 0.26, true, false);
+  void x; void y; void ng;
+}
+
+// A sand sea: long wind-driven ridges marching across dry country. Bands run at
+// an angle to the grid so they read as dunes rather than as stripes on tiles.
+function drawDuneSea(x: number, y: number, w: NaturalWonder, ng: number) {
+  nwFootprint(natWonderGroundGfx, w, 6.5, (dr, dc, dist, edge) => {
+    if (biomeMap[w.row + dr]?.[w.col + dc] === 'water') return null;   // sand stops at the shore
+    const ridge = Math.sin((dc * 0.9 + dr * 0.5) + Math.sin(dr * 0.18) * 1.4 + w.phase);
+    const lit = 0.5 + ridge * 0.5;            // crest lit, trough shaded
+    if (edge > 0.85) return null;
+    void dist;
+    return lerpColor(0xcbb083, 0xf0e0b6, lit * 0.85 + nwHash(w.row + dr, w.col + dc, 23) * 0.15);
+  }, 0.1, true, true);
+  void x; void y; void ng;
+}
+
 function drawSaltFlat(x: number, y: number, w: NaturalWonder, nowSec: number, ng: number) {
   // A small, round, dusty mineral pan — a whisper of rose over cream, not hot
   // pink, so it reads as a drying salt basin rather than a sticker.

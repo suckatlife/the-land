@@ -12,7 +12,13 @@ export type NaturalWonderKind =
   | 'monolith'      // a lone red sandstone mass on arid flats (Uluru)
   | 'rainbow_hills' // banded mineral rock (Zhangye Danxia)
   | 'karst_spires'  // vertical limestone towers rising from coastal water
-  | 'salt_flat';    // a flat pink/white mineral lake (Lake Retba)
+  | 'salt_flat'     // a flat pink/white mineral lake (Lake Retba)
+  // Form-native wonders. A world of small islands losing the salt pans and
+  // monoliths it could never host should gain something of its own, or watery
+  // worlds are just poorer rather than different.
+  | 'atoll'         // a reef ring round a shallow lagoon, out in open water
+  | 'canyon'        // a winding gorge cut deep into high ground
+  | 'dune_sea';     // a great field of wind-driven sand ridges
 
 export interface NaturalWonder {
   row: number;
@@ -33,6 +39,9 @@ const NAME_POOLS: Record<NaturalWonderKind, string[]> = {
   rainbow_hills: ['The Painted Hills', 'Dawnbands', 'The Stripe Lands', 'Kindled Rock'],
   karst_spires:  ['The Stone Fleet', 'Drowned Teeth', 'The Risen Spires', 'Sea-Fang Bay'],
   salt_flat:     ['The Rose Mirror', 'Saltbloom', 'The Pink Pan', 'Brightpan'],
+  atoll:         ['The Ring', 'Quietwater', 'The Drowned Crown', 'Lagoon of Glass'],
+  canyon:        ['The Long Cut', 'Deepgash', 'The Riven Country', 'Shadowmouth'],
+  dune_sea:      ['The Sand Sea', 'The Walking Dunes', 'Windrow', 'The Dry Ocean'],
 };
 
 // How far apart wonders must sit (Chebyshev tiles), and how far off the edge.
@@ -44,22 +53,31 @@ const EDGE_MARGIN = 8;
 // archipelago a salt flat would land on a three-tile island and spill into the
 // sea. These are the drawn radii from main.ts, with the share of that footprint
 // that has to be dry ground.
-const FOOTPRINT: Record<NaturalWonderKind, { radius: number; minLand: number }> = {
+const FOOTPRINT: Record<NaturalWonderKind, { radius: number; minLand: number; maxLand?: number }> = {
   volcano:       { radius: 4, minLand: 0.55 },  // a cone can rise straight out of the sea
   crater_lake:   { radius: 6, minLand: 0.70 },
   monolith:      { radius: 6, minLand: 0.80 },  // wants real ground around it
   rainbow_hills: { radius: 5, minLand: 0.80 },
   karst_spires:  { radius: 5, minLand: 0.30 },  // towers stand IN the water by design
   salt_flat:     { radius: 5, minLand: 0.85 },  // a pan is flat inland ground or nothing
+  // maxLand: an atoll is a ring in OPEN WATER. Without an upper bound it would
+  // drift onto a coast and read as a pond.
+  atoll:         { radius: 4, minLand: 0.04, maxLand: 0.40 },
+  canyon:        { radius: 6, minLand: 0.88 },  // needs a whole country to cut through
+  dune_sea:      { radius: 6, minLand: 0.85 },
 };
 
 // Which wonders belong on which kind of world. A world of small islands has no
 // business hosting a salt pan or a lone desert monolith; a drowned world is
 // even more restricted. Forms not listed here get everything.
 const FORM_WONDERS: Record<string, NaturalWonderKind[]> = {
-  archipelago: ['volcano', 'karst_spires', 'crater_lake'],
-  drowned:     ['volcano', 'karst_spires'],
-  shattered:   ['volcano', 'karst_spires', 'crater_lake', 'rainbow_hills'],
+  archipelago: ['volcano', 'karst_spires', 'crater_lake', 'atoll'],
+  drowned:     ['volcano', 'karst_spires', 'atoll'],
+  shattered:   ['volcano', 'karst_spires', 'crater_lake', 'rainbow_hills', 'atoll'],
+  continent:   ['volcano', 'crater_lake', 'monolith', 'rainbow_hills', 'karst_spires', 'salt_flat', 'canyon'],
+  highlands:   ['volcano', 'crater_lake', 'rainbow_hills', 'karst_spires', 'canyon'],
+  barren:      ['volcano', 'monolith', 'rainbow_hills', 'salt_flat', 'canyon', 'dune_sea'],
+  verdant:     ['volcano', 'crater_lake', 'monolith', 'rainbow_hills', 'karst_spires', 'canyon'],
 };
 
 // Share of a wonder's drawn footprint that is dry land.
@@ -115,6 +133,18 @@ function suitability(
     case 'karst_spires':
       // Coastal land — the towers rise where land meets open water.
       return coastal && (b === 'grass' || b === 'forest' || b === 'sand') ? 1 : -1;
+    case 'atoll':
+      // A reef ring wants open water around it: a low coastal islet, the lower
+      // and more surrounded the better.
+      return coastal && e < 0.30 ? 1 - e : -1;
+    case 'canyon':
+      // Cut into raised, dry country — rock or the arid band, well inland.
+      if (coastal) return -1;
+      if (b === 'rock') return 1 + e;
+      return (b === 'sand' || b === 'fertile') && e > 0.30 ? 0.7 + e : -1;
+    case 'dune_sea':
+      // Deep sand, away from the sea, the drier the better.
+      return b === 'sand' && !coastal ? 1 - e : -1;
     case 'salt_flat':
       // A drying mineral pan on low INLAND flats — penalise the coast so it
       // sits in the land rather than spilling into the sea.
@@ -150,6 +180,7 @@ export function placeNaturalWonders(
   // Volcano first (it's the showpiece and wants the best peak), then the rest.
   const all: NaturalWonderKind[] = [
     'volcano', 'crater_lake', 'monolith', 'rainbow_hills', 'karst_spires', 'salt_flat',
+    'atoll', 'canyon', 'dune_sea',
   ];
   const allowed = form && FORM_WONDERS[form] ? FORM_WONDERS[form] : all;
   const order = all.filter((k) => allowed.includes(k));
@@ -165,7 +196,10 @@ export function placeNaturalWonders(
       const score = suitability(kind, row, col, biomes, elevation, coastal);
       if (score < 0) continue;
       // Enough ground to actually stand on, not just a suitable centre tile.
-      if (footprintLand(kind, row, col, biomes) < FOOTPRINT[kind].minLand) continue;
+      const fp = footprintLand(kind, row, col, biomes);
+      if (fp < FOOTPRINT[kind].minLand) continue;
+      const maxLand = FOOTPRINT[kind].maxLand;
+      if (maxLand != null && fp > maxLand) continue;
       // Spacing: keep every wonder clear of the others.
       let tooClose = false;
       for (const p of placed) {
