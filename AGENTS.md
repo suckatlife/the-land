@@ -3,9 +3,13 @@
 Instructions for coding agents working on The Land. Codex looks for this file
 by name; Claude reads `CLAUDE.md`. Both should read both.
 
-- **`CLAUDE.md`** — how the project works, and its non-negotiable invariants.
-- **`STATE_2026-08-09.md`** — current state; supersedes `CLAUDE.md` where they
-  disagree (`CLAUDE.md` describes a much smaller, older version of this project).
+- **`CLAUDE.md`** — the front door: how the project works, and its
+  non-negotiable invariants. Rewritten from source on 2026-08-21, so where it
+  and any older document disagree, **`CLAUDE.md` wins.**
+- **`STATE_2026-08-09.md`** — an August briefing, kept for its design rationale
+  and its list of candidate next features. **Historical: its factual claims and
+  constraints describe 2026-08-09, not today** — the "no analytics" constraint
+  in it has already been overtaken.
 - **`REMOTE.md`** — the rules for working while Lawrence is away. **Read this
   before starting any remote task.**
 - **`HANDOFF.md`** — the running log. Read the last entry; append your own.
