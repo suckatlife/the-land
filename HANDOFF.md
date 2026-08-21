@@ -1279,4 +1279,11 @@ were **visibly moving right up to the boundary**, then held at 541 / 1793 / 6882
 across 15 samples while the tick advanced 397. `__dbg` now exposes the debug
 spawns so this case stays testable.
 
+Two narrator paths survived even that: `maybeGhost` pushes a line about
+shepherds at the ruins, and the celestial-event callback narrates comets,
+eclipses and auroras. Both are gated now — but only their *voices*. The ghost
+name still appears and the comet still crosses the sky, because a remembered
+name and a light moving against the stars are exactly what a silence should
+contain. Act 4 adds no story; it can still be looked at.
+
 **Next:** the copy pass (Lawrence's next brief).

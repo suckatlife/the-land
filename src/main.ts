@@ -6479,7 +6479,11 @@ function maybeGhost(dt: number, nightness: number) {
     ghostStart = now;
     ghostUntil = now + 12;
     if (Math.random() < 0.18) {
-      pushNarration(`Shepherds at the ruins of ${mem.name} say the stones hum.`, { priority: 'low', anchor: { row: mem.row, col: mem.col } });
+      // The ghost text itself is welcome in a silence — a remembered name is
+      // the right thing to see. Its narration line is not: act 4 adds no story.
+      if (!simWorld.ending?.silent) {
+        pushNarration(`Shepherds at the ruins of ${mem.name} say the stones hum.`, { priority: 'low', anchor: { row: mem.row, col: mem.col } });
+      }
     }
     return;
   }
@@ -7146,6 +7150,8 @@ function beginWorldEnding() {
 
 // Rare celestial events get a narrated line — wonder, not warning.
 atmos.onCelestialEvent((kind) => {
+  // A comet still crosses the sky during the silence; nobody narrates it.
+  if (simWorld.ending?.silent) return;
   const lines: Record<string, string[]> = {
     comet: [
       'A comet crosses the night. The wise disagree on what it intends.',
