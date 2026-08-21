@@ -876,6 +876,17 @@ click-through.
 surfaces; whether a festival that now gets its full 45 s of *world* time reads
 well at 4x is a preview judgement. One pre-existing console 404, unrelated.
 
+**A regression this turn introduced, caught in review:** mixing a world-time
+threshold with a wall-time gate re-created the very bug being fixed.
+`checkWarQuiet` fires at 45 *world* seconds, but `pushNarration`'s dedup window
+is `NARRATION_GAP_MS.low` = 6 *wall* seconds — so at 8x the quiet line arrives
+5.6 wall seconds after the last one, is refused, and `warHeat.delete(k)` threw
+the entry away regardless, losing the "border falls quiet" follow-up for good.
+Now the entry is kept and retried when narration is refused, bounded by
+`QUIET_RETRY_UNTIL_SEC` (120) so `warHeat` cannot grow without bound. Worth
+remembering: converting a timer to world time means auditing every wall-time
+gate it talks to.
+
 **Spotted, not done:**
 - **The event log culls on resume.** Pause for longer than 9.5 s and every
   visible narration line vanishes on the first resumed tick — the same

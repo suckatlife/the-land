@@ -4806,6 +4806,9 @@ const warHeat = new Map<string, { a: number; b: number; row: number; col: number
 // World-clock seconds, not wall-clock ms: these gate in-world narration about
 // battles, and battle heat itself (born/lastHit) is already on worldClock.
 const WAR_GLOBAL_GAP_SEC = 60;
+// How long a quiet war is kept alive while its follow-up line keeps being
+// refused by the log's wall-clock dedup window. Bounded so warHeat cannot grow.
+const QUIET_RETRY_UNTIL_SEC = 120;
 // -Infinity so the first war line is not gated by a window that has not opened
 // yet; with Date.now() the epoch made this vacuously true.
 let lastWarNarrationTs = -Infinity;
@@ -4824,7 +4827,7 @@ function noteConquest(ev: { row: number; col: number; attackerId: number; defend
   w.row = ev.row;
   w.col = ev.col;
   // A war earns a line only after sustained fighting, rarely after that, and
-  // no more than one war line every WAR_GLOBAL_GAP_MS across the whole map —
+  // no more than one war line every WAR_GLOBAL_GAP_SEC across the whole map —
   // so a crowded frontier doesn't turn the log into a war bulletin.
   if (w.count >= 14
       && (w.narratedAt === 0 || now - w.narratedAt > 150)
@@ -5089,10 +5092,15 @@ function checkWarQuiet() {
     if (w.narratedAt > 0 && now - w.lastTs > 45) {
       const A = simWorld.civs.get(w.a), B = simWorld.civs.get(w.b);
       if (A && B && A.phase !== 'dead' && B.phase !== 'dead') {
-        pushNarration(colorizeCivNames(pick([
+        const ok = pushNarration(colorizeCivNames(pick([
           `The border between ${A.name} and ${B.name} falls quiet.`,
           `The fighting between ${A.name} and ${B.name} burns itself out.`,
         ])), { priority: 'low', dedupKey: `war:${k}`, anchor: { row: w.row, col: w.col } });
+        // This threshold is world time but pushNarration's dedup window is wall
+        // time (NARRATION_GAP_MS.low, 6s), so at 8x we arrive 5.6 wall seconds
+        // after the last line and the follow-up is refused. Keep the entry and
+        // retry on a later pass rather than dropping the line for good.
+        if (!ok && now - w.lastTs < QUIET_RETRY_UNTIL_SEC) continue;
       }
       warHeat.delete(k);
     } else if (w.narratedAt === 0 && now - w.lastTs > 60) {
