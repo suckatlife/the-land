@@ -752,6 +752,17 @@ sessions and were not re-measured here.
 - `DEPENDENCY_NOTES.md` is 6 lines and predates both PostHog and Playwright
   being added.
 
+**Also, after review:** Codex found that rewriting `CLAUDE.md` was only half
+the job — `AGENTS.md` and `STATE_2026-08-09.md` both still said STATE supersedes
+`CLAUDE.md`, on the grounds that `CLAUDE.md` "describes a much smaller, older
+version", which this turn made false. Worse, STATE lists "no
+telemetry/ads/analytics" as a *hard constraint*, and analytics shipped in PR #3;
+an agent following the documented precedence could have deleted a merged
+feature to satisfy it. Precedence flipped in `AGENTS.md`, historical banner
+added to STATE, the stale constraint annotated rather than rewritten (the file
+is a dated record), and STATE's pointer to `STATE_2026-06-10.md` repaired to its
+new archive path.
+
 **Next:** Turn B — the master plan for shipping publicly and monetizing, now
 that the foundation says true things. Codex's commercial analysis (pricing, the
 soft-launch sequence, the argument against ads) should be an input to it, not
