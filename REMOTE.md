@@ -47,8 +47,8 @@ description claims, and is the evidence real?*
    **draft** PR. Vercel builds a preview automatically.
 3. **Review.** Lawrence taps **Ready for review** on the PR. That is the baton:
    draft means "Claude is still working", ready means "Codex, your turn".
-   With **Automatic reviews** enabled in Codex settings, undrafting is all it
-   takes — Codex reviews without being asked. Otherwise comment `@codex review`.
+   With **Automatic reviews** enabled, undrafting is all it takes — Codex
+   reviews without being asked. Otherwise comment `@codex review`.
    Either way Codex reads the whole diff, does **not** edit, and reports:
    blocking defects / non-blocking concerns / ready or not.
 4. **Repair — once.** If there are blocking findings, Claude gets exactly one
@@ -125,9 +125,18 @@ subscription. Needs Pro/Max and GitHub connected to the Claude account.
 `@codex review` on a PR for a review posted inline.
 
 There is **no automatic handoff between the two agents.** Neither can start the
-other; a human is always the baton. What can be automated is Codex's side:
-enable **Automatic reviews** in Codex's code-review settings for this repo, and
-marking a PR ready for review is enough to summon it. Codex reads the
+other; a human is always the baton. What can be automated is Codex's side.
+
+**Set this up from a desktop browser before leaving** — it lives on a web page,
+not in the ChatGPT mobile app:
+
+1. Connect Codex cloud to `suckatlife/the-land` (ChatGPT → Codex → connect the
+   repository). Needs GitHub push or admin permission on the repo.
+2. Go to **chatgpt.com/codex/settings/code-review**.
+3. Turn on **Code review** for the repository.
+4. Turn on **Automatic reviews**.
+
+Then marking a PR ready for review is enough to summon it. Codex reads the
 `## Code Review Rules` section of `AGENTS.md`, so the criteria in this file
 apply without restating them per PR.
 
