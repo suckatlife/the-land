@@ -955,3 +955,48 @@ gate it talks to.
   future turn should decide whether it is refreshed or archived.
 
 **Next:** Turn B — the shipping/monetization plan, unchanged from #8's entry.
+
+---
+
+## Clean reviews are comments, not reviews — claude — 2026-08-21
+
+Docs only, `REMOTE.md`. A correction to the entry two above, which shipped with
+a bug in its own verification method.
+
+**What went wrong:** I reported PR #10 as unreviewed across four ignored
+`@codex review` requests, escalated it in the PR, and built a theory that
+Codex chokes on large `src/main.ts` diffs. All of it was false. Lawrence caught
+it: Codex had reviewed #10 twice at its exact head and found nothing.
+
+Two counting bugs, both mine:
+
+1. **Codex answers in two places.** With findings it posts a *review* object
+   with inline comments. With none it posts an ordinary *issue comment* —
+   "Codex Review: Didn't find any major issues" — and creates no review object.
+   My confirmation query read `/pulls/<n>/reviews` only, so every clean review
+   read as no review. The rule I had just merged encoded this, which means it
+   would have reported "unreviewed" on every clean PR from then on.
+2. **I counted Codex's answers as my unanswered questions.** I found requests by
+   grepping comment bodies for `@codex review`; Codex's own replies quote that
+   string in their collapsible footer, so its two answers were tallied as two
+   more ignored requests by me.
+
+**Corrected numbers:** 11 explicit requests, **10 answered**. The single failure
+was the first, at 13:32, before the connector was working. The automatic trigger
+remains unreliable — 6 reviews, all inside one 86-minute window — and #9 still
+merged unreviewed, so the ask-and-confirm rule stands. But the "silence
+clusters on one PR / big diffs jam Codex" claim is withdrawn; there is no
+evidence for it.
+
+**Did:** `REMOTE.md` now documents both response shapes with a query for each,
+notes that a review against an earlier commit and the "create an environment for
+this repo" setup message are not answers, and says to filter requests on
+`.user.login` rather than by grepping for the trigger string. Retracted the
+false escalation comment on #10 in place.
+
+**The lesson, which is the same one this file keeps teaching:** I verified
+against my instrument instead of against the thing. The instrument had never
+been checked against a known-clean review, so its silence meant nothing — and I
+reported that silence as fact three times before being corrected.
+
+**Next:** Nothing pending.

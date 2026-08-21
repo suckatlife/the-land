@@ -58,22 +58,39 @@ description claims, and is the evidence real?*
    each repair push, but **not** the draft-opening push, which step 2 makes
    deliberately incomplete — and then
    **confirms the review actually arrived for that commit.** Asking is not the
-   same as being reviewed: requests have been ignored too. Confirmation is one
-   API call:
+   same as being reviewed.
+
+   **Codex answers in two different places, and this has already caused one
+   false alarm.** When it has findings it posts a *review* with inline comments.
+   When it has none it posts an ordinary *issue comment* — "Codex Review: Didn't
+   find any major issues" — and no review object at all. So checking
+   `/pulls/<n>/reviews` alone reports every clean review as no review. Check
+   both:
 
    ```
-   gh api repos/suckatlife/the-land/pulls/<n>/reviews \
-     --jq '.[] | select(.user.login == "chatgpt-codex-connector[bot]")
-                 | "\(.submitted_at) \(.commit_id[0:7])"'
+   PR=<n>; HEAD=$(git rev-parse HEAD)
+   # findings
+   gh api repos/suckatlife/the-land/pulls/$PR/reviews \
+     --jq ".[] | select(.user.login==\"chatgpt-codex-connector[bot]\")
+                 | select(.commit_id==\"$HEAD\") | .submitted_at"
+   # no findings
+   gh api repos/suckatlife/the-land/issues/$PR/comments \
+     --jq ".[] | select(.user.login==\"chatgpt-codex-connector[bot]\")
+                 | select(.body | contains(\"${HEAD:0:10}\")) | .created_at"
    ```
 
-   The `select` is not optional: that endpoint lists **every** review on the PR,
-   so without it a review by Lawrence — or any bot — reads as a Codex review. A
-   review counts only if it is Codex's *and* its `commit_id` is the current
-   head. If nothing has
-   appeared after ~5 minutes, comment again. If a second request also goes
-   unanswered, **say so in the PR and to Lawrence** — an unreviewed PR is a
-   thing to escalate, never a thing to report as done.
+   Either one, matching the current head, means reviewed. Two things that look
+   like answers but are not: a review or comment against an *earlier* commit,
+   and the bot's "To use Codex here, create an environment for this repo"
+   message, which is a setup error.
+
+   Do not count `@codex review` comments by grepping for that string — Codex's
+   own replies quote it in their footer, so its answers get counted as your
+   unanswered questions. Filter on `.user.login` instead.
+
+   If nothing has appeared after ~5 minutes, comment again. If a second request
+   also goes unanswered, **say so in the PR and to Lawrence** — an unreviewed PR
+   is a thing to escalate, never a thing to report as done.
    Codex reads the whole diff, does **not** edit on the first pass, and reports:
    blocking defects / non-blocking concerns / ready or not.
 4. **Repair — once, and this step is deliberately manual.** If there are
@@ -241,25 +258,19 @@ apply without restating them per PR.
 The automatic setting is a bonus when it works, and the whole day's evidence is
 that it works *sometimes*:
 
-Counted from the API across 2026-08-21: **11 reviews from 10 explicit requests
-and an unknown number of pushes.** Five of the ten requests were answered
-(median 3 minutes); the other six reviews arrived automatically, all of them
-between 14:18 and 15:44. Outside that window the automatic trigger produced
-nothing, and **PR #9 lived and merged without a single review.**
+Recounted from the API on 2026-08-21, after an earlier count in this file got
+it wrong: **11 explicit `@codex review` requests, 10 of them answered.** The one
+failure was the very first, at 13:32, before the connector was working; a repeat
+43 minutes later was answered in three. Six further reviews arrived from the
+automatic trigger, all between 14:18 and 15:44 — outside that window it produced
+nothing, and **PR #9 lived and merged without a single review** because nobody
+asked and nobody checked.
 
-The failures are not evenly spread, and this is the part worth knowing:
-
-| PR | requests | answered |
-| --- | --- | --- |
-| #6 | 2 | 1 (the first was ignored, the second answered 43 min later) |
-| #10 | 5 | 1 — four consecutive requests ignored between 16:18 and 16:30 |
-| #11 | 3 | 3, at 16:21, 16:29 and 16:38 |
-
-#10 and #11 were being pushed to in the *same minutes*. So silence is **not**
-simply a global rate limit: one PR can go dark while another is reviewed
-normally. #10 is the only PR touching `src/main.ts`, which is 8.4k lines, so a
-large or slow diff is the better suspect. Either way the operational answer is
-the same — ask, confirm, re-ask, and escalate rather than assume.
+So explicit requests are close to reliable and the automatic trigger is not.
+An earlier version of this section claimed silence was clustering on one PR and
+blamed its large `src/main.ts` diff. That was an artefact of the two counting
+bugs described above, not a real effect. There is no evidence any PR is harder
+for Codex to review than another.
 
 Why it goes quiet is **not** established. An unconnected repository and a silent
 rate limit look identical from GitHub — nothing is posted either way. If reviews
