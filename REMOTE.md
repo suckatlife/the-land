@@ -45,9 +45,12 @@ description claims, and is the evidence real?*
    > Next turn per REMOTE.md. Sim/balance work. Branch `claude/<topic>`, draft PR.
 2. **Build.** Claude works on a `claude/*` branch, one change, and opens a
    **draft** PR. Vercel builds a preview automatically.
-3. **Review.** Lawrence pastes the PR link into Codex, or comments
-   `@codex review` on the PR. Codex reads the whole diff, does **not** edit, and
-   reports: blocking defects / non-blocking concerns / ready or not.
+3. **Review.** Lawrence taps **Ready for review** on the PR. That is the baton:
+   draft means "Claude is still working", ready means "Codex, your turn".
+   With **Automatic reviews** enabled in Codex settings, undrafting is all it
+   takes — Codex reviews without being asked. Otherwise comment `@codex review`.
+   Either way Codex reads the whole diff, does **not** edit, and reports:
+   blocking defects / non-blocking concerns / ready or not.
 4. **Repair — once.** If there are blocking findings, Claude gets exactly one
    follow-up, scoped to those findings. No scope growth. If it needs a second
    repair pass, close it and re-brief; something was wrong with the task.
@@ -90,7 +93,7 @@ description claims, and is the evidence real?*
   force pushes, no deletions, enforced on admins. Neither agent — nor Lawrence
   by accident — can push straight to production.
 - **Agents use `claude/*`, `codex/*` or `agent/*` branches.** Never `main`.
-- **Draft PRs** until the builder considers it finished.
+- **Draft PRs** while the builder is still working. Undrafting is the handoff.
 - **One builder pass, one repair pass.** A phone is a bad place to review a
   400-line diff.
 - **Anchor tags** are the way back: `known-good-2026-08-18` (pre-loop state),
@@ -120,6 +123,17 @@ subscription. Needs Pro/Max and GitHub connected to the Claude account.
 
 **Codex** — the ChatGPT app → Codex, same repo, for full review sessions; or
 `@codex review` on a PR for a review posted inline.
+
+There is **no automatic handoff between the two agents.** Neither can start the
+other; a human is always the baton. What can be automated is Codex's side:
+enable **Automatic reviews** in Codex's code-review settings for this repo, and
+marking a PR ready for review is enough to summon it. Codex reads the
+`## Code Review Rules` section of `AGENTS.md`, so the criteria in this file
+apply without restating them per PR.
+
+If auto-review does not fire on undrafting — the docs do not say whether it
+treats a draft becoming ready as "opening a PR for review" — fall back to the
+`@codex review` comment. Worth testing once before relying on it.
 
 Optional: `.github/workflows/claude.yml` lets `@claude` in a GitHub comment run
 a session on a runner. It needs the Claude GitHub App plus an
