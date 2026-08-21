@@ -17,16 +17,18 @@ const WONDER_RADIUS: Record<NaturalWonderKind, number> = {
   atoll: 6, canyon: 8, dune_sea: 9,
 };
 import { drawTile, drawStateOverlayPersistent, redrawOverlay, redrawBiomeTile, lerpColor, gridToScreen, rgbToHsl, hslToRgb } from './iso';
-import { createSimWorld, rollCharacter, characterOf, step, tileOverlayColor, seedInitialCivs, applyCatastrophe, setVolcanoes, eruptVolcanoesNow, setWonderSites, iceDepthAt, SIM, CATASTROPHE, CITY, nearestCityDist, type SimWorld, type Civ, type CivCity, type SimEvent, type Era, type TileOverlay, type BiomeChange, type CatastropheType } from './sim';
+import { createSimWorld, beginEnding, rollCharacter, characterOf, step, tileOverlayColor, seedInitialCivs, applyCatastrophe, setVolcanoes, eruptVolcanoesNow, setWonderSites, iceDepthAt, SIM, CATASTROPHE, CITY, nearestCityDist, type SimWorld, type Civ, type CivCity, type SimEvent, type Era, type TileOverlay, type BiomeChange, type CatastropheType } from './sim';
 import { createAtmosphere, ATMOS } from './atmosphere';
 import { initializeAnalytics, trackEvent } from './analytics';
 import {
   WORLD_ENDINGS,
   createWorldHistory,
   rememberWorldEvents,
+  commitEndingKind,
   resolveWorldEnding,
   worldFateForSeed,
   type ResolvedWorldEnding,
+  type ApocalypseKind,
   type WorldEndingKind,
   type WorldFate,
   type WorldHistory,
@@ -1777,6 +1779,129 @@ let activeTerrainProfile: TerrainProfile = DEFAULT_TERRAIN;
 let { biomes: biomeMap, elevation: elevationMap } = generateWorldTerrain(currentSeed);
 let simWorld: SimWorld = createSimWorld(GRID_SIZE, GRID_SIZE, currentSeed);
 let currentWorldFate: WorldFate = worldFateForSeed(currentSeed, SIM.worldCycleTicks);
+
+// --- The ending, as a staged sequence rather than a swap ---
+// A world used to be replaced at endTick with 2.5s of black. It now spends its
+// last ~102 world-seconds ending. Durations are world-seconds, so pause and the
+// speed control move them like everything else in the world.
+const ENDING_ACTS = { omen: 40, onset: 12, unmaking: 35, silence: 15 };
+const ENDING_SEQUENCE_TICKS = Math.round(
+  (ENDING_ACTS.omen + ENDING_ACTS.onset + ENDING_ACTS.unmaking + ENDING_ACTS.silence) * ticksPerSecond,
+);
+// Slack so the commit is never racing act 1's first frame.
+const ENDING_COMMIT_MARGIN_TICKS = 300;
+
+// Act boundaries are derived from endTick, not from a fraction of the world's
+// life: lifeFraction bottoms out at 0.58, so the shortest world is 17,400 ticks
+// and a fixed fraction would leave it less time than the sequence needs.
+function endingActTicks(endTick: number) {
+  const omen = endTick - ENDING_SEQUENCE_TICKS;
+  const onset = omen + ENDING_ACTS.omen * ticksPerSecond;
+  const unmaking = onset + ENDING_ACTS.onset * ticksPerSecond;
+  const silence = unmaking + ENDING_ACTS.unmaking * ticksPerSecond;
+  return { omen, onset, unmaking, silence, commit: omen - ENDING_COMMIT_MARGIN_TICKS };
+}
+
+let committedEnding: { apocalypse: ApocalypseKind; ending: WorldEndingKind } | null = null;
+let endingOmenSpoken = false;
+
+// One line as the world realises. Deliberately quiet — the omen is the world
+// getting stranger, not a warning siren.
+const ENDING_OMENS: Record<WorldEndingKind, string> = {
+  drowned: 'The tide comes further inland than the oldest maps allow.',
+  long_winter: 'The frost does not lift at noon any more.',
+  ash: 'There is a taste of iron on the wind, and the birds have gone.',
+  rewilded: 'The roads are quieter each year, and the grass is patient.',
+  world_empire: 'One banner is answered everywhere, and no one remembers the others.',
+  exodus: 'The cities have begun to look upward, and to build for leaving.',
+  garden: 'Nothing is being built that was not asked for.',
+};
+
+// The quiet end is *scheduled*, not merely unforced: ordinary decline takes
+// ~50 world-seconds and may not even have begun, so left alone the silence
+// would open with the lights still on. Smallest civs go first, spread across
+// the unmaking, and the last one falls before the silence. Deterministic —
+// ordered by tile count then id, no RNG, so a seed still replays.
+function buildFadeSchedule(endTick: number): Map<number, number> {
+  const acts = endingActTicks(endTick);
+  const counts = new Map<number, number>();
+  for (let row = 0; row < GRID_SIZE; row++) {
+    for (let col = 0; col < GRID_SIZE; col++) {
+      const id = simWorld.tiles[row][col].civId;
+      if (id != null) counts.set(id, (counts.get(id) ?? 0) + 1);
+    }
+  }
+  const living = [...simWorld.civs.values()]
+    .filter((c) => c.phase !== 'dead')
+    .sort((a, b) => (counts.get(a.id) ?? 0) - (counts.get(b.id) ?? 0) || a.id - b.id);
+
+  const schedule = new Map<number, number>();
+  const span = acts.silence - acts.unmaking;
+  living.forEach((civ, i) => {
+    schedule.set(civ.id, acts.unmaking + Math.round(((i + 1) / (living.length + 1)) * span));
+  });
+  return schedule;
+}
+
+// Debug only: force the title the next commitment will use, so the staged acts
+// can be exercised without hunting for a seed that produces them.
+let forcedEndingKind: WorldEndingKind | null = null;
+(window as any).__forceEnding = (kind: WorldEndingKind | null) => { forcedEndingKind = kind; };
+
+function commitEnding() {
+  committedEnding = commitEndingKind(simWorld, biomeMap, currentWorldHistory, currentWorldFate);
+  if (forcedEndingKind) {
+    committedEnding = { ...committedEnding, ending: forcedEndingKind };
+    forcedEndingKind = null;   // one-shot: it forces the NEXT commitment, not every one
+  }
+  // Phase 1 stages act 3 for `rewilded` only. `garden`, `exodus` and
+  // `world_empire` get the omen and the held silence but keep today's act 3,
+  // because each needs a different gesture and none of them is a death.
+  const fade = committedEnding.ending === 'rewilded'
+    ? buildFadeSchedule(currentWorldFate.endTick)
+    : new Map<number, number>();
+  beginEnding(simWorld, fade);
+}
+
+// The commit, the omen and the turnover. Called after every step() — from the
+// ticker loop and from the skip fast-forward alike. A 5,000-tick skip that
+// crossed these boundaries would otherwise run births and catastrophes straight
+// through the ending window, then commit at or past endTick and replace an
+// over-age world, skipping the whole staged sequence.
+// Returns true if the world turned over, in which case simWorld is a new one
+// and the caller must stop stepping the old.
+function endingCheckpoints(): boolean {
+  const acts = endingActTicks(currentWorldFate.endTick);
+  if (!committedEnding && simWorld.tick >= acts.commit) commitEnding();
+  if (committedEnding && !endingOmenSpoken && simWorld.tick >= acts.omen) {
+    endingOmenSpoken = true;
+    pushNarration(ENDING_OMENS[committedEnding.ending], { priority: 'high' });
+  }
+  if (simWorld.tick >= currentWorldFate.endTick) {
+    beginWorldEnding();
+    return true;
+  }
+  return false;
+}
+
+// Instrument for the ending sequence: what was committed, when each act opens,
+// and whether the sim is holding births and catastrophes. Everything is in
+// ticks so it can be compared against simWorld.tick directly.
+(window as any).__ending = () => {
+  const acts = endingActTicks(currentWorldFate.endTick);
+  return {
+    tick: simWorld.tick,
+    endTick: currentWorldFate.endTick,
+    acts,
+    committed: committedEnding,
+    omenSpoken: endingOmenSpoken,
+    simEnding: simWorld.ending
+      ? { startedTick: simWorld.ending.startedTick, scheduled: simWorld.ending.fade.size }
+      : null,
+    livingCivs: [...simWorld.civs.values()].filter((c) => c.phase !== 'dead').length,
+    pendingSettlements: simWorld.pendingSettlements.length,
+  };
+};
 let currentWorldHistory: WorldHistory = createWorldHistory(biomeMap);
 seedInitialCivs(simWorld, biomeMap, 1);
 (window as any).__sim = simWorld;
@@ -6901,6 +7026,8 @@ function resetWorld(newSeed: string, archiveEnding?: WorldEnding, outcome?: Reso
   displayedEraRank = 0;   // a new world starts at the beginning again
   currentWorldFate = worldFateForSeed(newSeed, SIM.worldCycleTicks);
   currentWorldHistory = createWorldHistory(biomeMap);
+  committedEnding = null;
+  endingOmenSpoken = false;
   seedInitialCivs(simWorld, biomeMap, 1);
   syncSimWonders();
   (window as any).__sim = simWorld;
@@ -6934,6 +7061,12 @@ function resetWorld(newSeed: string, archiveEnding?: WorldEnding, outcome?: Reso
 function resetSimOnly() {
   simWorld = createSimWorld(GRID_SIZE, GRID_SIZE, currentSeed);
   displayedEraRank = 0;   // same world, fresh history: the age starts over too
+  // The new sim has not committed to an ending; leaving the old commitment set
+  // would make endingCheckpoints() skip commitEnding(), so births and
+  // catastrophes would never be held and the turnover would archive the
+  // previous run's title.
+  committedEnding = null;
+  endingOmenSpoken = false;
   seedInitialCivs(simWorld, biomeMap, 1);
   (window as any).__sim = simWorld;
   fadedDeadCivs.clear();
@@ -6991,7 +7124,12 @@ const BARS_REFRESH_FRAMES = 10;  // DOM rebuild for civ bar panel; ~6 Hz at 60fp
 const MAX_SIM_FRAME_MS = 1000;
 
 function beginWorldEnding() {
-  const outcome = resolveWorldEnding(simWorld, biomeMap, currentWorldHistory, currentWorldFate);
+  // The title was committed ~102 world-seconds ago so the ending could be
+  // staged; everything else — epitaph, era, survivors — is measured now, after
+  // it has run, so the archive describes the ending rather than predicting it.
+  const outcome = resolveWorldEnding(
+    simWorld, biomeMap, currentWorldHistory, currentWorldFate, committedEnding?.ending,
+  );
   accumulator = 0;
   resetWorld(randomSeed(), outcome.kind, outcome);
   trackEvent('world_generated', { source: 'automatic' });
@@ -7079,9 +7217,10 @@ app.ticker.add((ticker) => {
         }
       }
     }
-    // Record the ending, then let the next world rise through the blackout.
-    if (simWorld.tick >= currentWorldFate.endTick) {
-      beginWorldEnding();
+    // The ending is staged across the world's last ~102 seconds, so it has to
+    // be chosen well before the turnover, and the next world rises through the
+    // blackout when it arrives.
+    if (endingCheckpoints()) {
       frameEvents.length = 0;
       break;
     }
@@ -8404,7 +8543,12 @@ qualityBtn.addEventListener('click', () => {
 document.getElementById('skip')!.addEventListener('click', () => {
   const wasRunning = running;
   running = false;
-  for (let i = 0; i < SKIP_TICKS; i++) step(simWorld, biomeMap, elevationMap);
+  for (let i = 0; i < SKIP_TICKS; i++) {
+    step(simWorld, biomeMap, elevationMap);
+    // The ending's boundaries live inside the skip as well; crossing one here
+    // and only noticing on the next frame would bypass the whole sequence.
+    if (endingCheckpoints()) break;
+  }
   // Full redraw after skip — terrain may have mutated, so rebuild biome layer first.
   // Scars from skipped ticks weren't rendered; drop any stale ones.
   atmos.clearScars();
