@@ -1322,4 +1322,16 @@ freezing them mid-fade would leave half-drawn tiles standing through the
 aftermath, which looks broken rather than still. Letting a fade finish is not
 the world changing. That is a judgement call and the opposite one is defensible.
 
+**Systems nine, ten and eleven:** the blight ramp (driven by `cycleFrac`, which
+keeps climbing through act 4, so the land kept draining toward grey), the
+ice-memory repaint (`iceMemoryFade()` off `simWorld.tick`, so the pale ground
+kept fading), and `maybeNameConstellations()` — an eighth narrator.
+
+**The honest state of this PR:** eleven systems held across seven review rounds,
+and each round still found more. Everything keyed to `simWorld.tick`,
+`worldClock`, `worldSeconds` or `cycleFrac` is a candidate by construction, and
+there is no list of them. A future turn wanting real confidence should invert
+the approach — a single `worldIsHeld()` consulted by the clocks themselves,
+rather than a growing set of call-site guards found one review at a time.
+
 **Next:** the copy pass (Lawrence's next brief).

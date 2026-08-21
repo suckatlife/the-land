@@ -7264,7 +7264,9 @@ app.ticker.add((ticker) => {
     }
   }
   updateAtmosphere(worldSeconds * 1000);
-  updatePollution();
+  // Blight ramps on cycleFrac, which keeps climbing through act 4, so the land
+  // would keep draining toward grey during the held beat.
+  if (!(simWorld.ending?.silent)) updatePollution();
   // Sky + glaze + weather + scar fades. The sky leans toward the last dread
   // hue while curDread eases, so it releases smoothly after a catastrophe.
   atmos.update(worldSeconds * 1000, curDread, curHue.vignette, dominantEra(simWorld));
@@ -7394,7 +7396,9 @@ app.ticker.add((ticker) => {
     if (!worldHeld && simWorld.tick - lastSuccessionBake >= SUCCESSION.rebakeTicks) { decaySoilMarks(); drawSuccession(); }
     // The ice front is checked on the same cadence; drawIce early-returns
     // unless it has actually moved past ICE.redrawStep, so this is nearly free.
-    drawIce();
+    // Held in act 4: iceMemoryFade() is derived from simWorld.tick, so the pale
+    // ground and moraine would keep fading through the aftermath.
+    if (!worldHeld) drawIce();
     // The wounds heal on the same cadence: the silhouette pulls in, and the
     // building pass below picks up the receding quiet for free.
     if (quietZones.length) drawQuietZones();
@@ -7435,7 +7439,7 @@ app.ticker.add((ticker) => {
     // checkWarQuiet pushes "the border falls quiet" on its own 45-second
     // threshold, which two surviving civs can cross during act 4.
     if (!worldHeld) checkWarQuiet();
-    maybeNameConstellations();
+    if (!worldHeld) maybeNameConstellations();   // narrates a new constellation
   }
   // Animate tile color/alpha toward targets. Capped per frame: a "skip 5k" or
   // catastrophe can flood thousands of tiles into animation at once, and
