@@ -814,3 +814,64 @@ PR was already closed. Check `merged_at` before reporting a push as landed;
   check `merged_at` before calling anything landed.
 
 **Next:** Nothing pending. The trigger work is complete once this merges.
+
+---
+
+## The last Date.now() lifetimes — claude — 2026-08-21
+
+**Type: SYSTEMIC.** Closes the clock family opened in Turn 01.
+
+**Chose:** Not chosen from frames — handed over. Codex found it while reviewing
+the `CLAUDE.md` rewrite (#8): the new front door claimed "a paused world is
+genuinely still", and it was not. The claim was narrowed there and the bug
+recorded; this is the repair.
+
+**Did:** `src/main.ts`. Turn 04 moved twelve `performance.now()` lifetimes onto
+`worldClock`; these were missed because they call `Date.now()` — a different
+function, the same bug, a few lines away. Since the ticker returns early while
+paused, nothing ran *during* a pause; the damage landed on **resume**, when
+`Date.now()` had jumped the full pause and a lifetime was already expired.
+
+Moved, with thresholds converted from ms to world seconds: `maybeGhost` (12s),
+`updateFestival` (45s, and its `Math.sin(now/280)` pulse → `/0.28`), and the
+war-narration block — which turned out to hold **four** coupled timers, not the
+one named in review: `warHeat.lastTs`, `warHeat.narratedAt`,
+`lastWarNarrationTs`, `WAR_GLOBAL_GAP_MS` at 45/60/150s. They had to move as a
+unit or they would disagree with each other, exactly as Turn 04 found.
+
+Two epoch artefacts preserved on purpose: `lastWarNarrationTs` starts at
+`-Infinity` (at 0 on a zero-based clock it would gate the first war line for
+60s), and `narratedAt === 0` stays the never-narrated sentinel.
+
+**Left on `Date.now()` deliberately:** `worldStartedAt`/`observedMs` and the
+archive's `endedAt` — real viewing time and a persisted timestamp. The event
+log's lifetime, dedup window and civ-mention highlight — chrome keyed to the
+reader's attention, not world time. A paused world should still let a line
+finish fading while someone reads it.
+
+**Verified:** Build clean. Measured headless against the built bundle through a
+new `__clocks()` handle — running 3s → world +3.08s / wall +3125ms; **paused
+6s → world +0.27s / wall +6345ms**; resumed 2s → world +2.02s / wall +2296ms.
+World time is frozen across the pause; the 0.27s is the frames between the
+reading and the click landing. Speed-control compression follows by
+construction (`worldSeconds *= timeScale`) and was measured in Turn 04.
+
+The harness needed the no-sudo WSL recipe again: `apt-get download libnspr4
+libnss3 libasound2t64` into `/tmp/pwlibs`, `dpkg -x`, then run with
+`LD_LIBRARY_PATH=/tmp/pwlibs/extract/usr/lib/x86_64-linux-gnu`. Ephemeral — it
+needs redoing after a reboot, and it is what blocked Codex's analytics
+click-through.
+
+**Could not verify:** Anything visual. The festival and ghost are night
+surfaces; whether a festival that now gets its full 45 s of *world* time reads
+well at 4x is a preview judgement. One pre-existing console 404, unrelated.
+
+**Spotted, not done:**
+- The verification was a throwaway script. This project has now had four clock
+  bugs (Turns 01, 02, 04, this one) and each was verified ad hoc. A permanent
+  `scripts/verify-clocks.mjs` would be proportionate; left out to keep this
+  diff to one change.
+- `STATE_2026-08-09.md` is now demoted but still lists candidate features; a
+  future turn should decide whether it is refreshed or archived.
+
+**Next:** Turn B — the shipping/monetization plan, unchanged from #8's entry.
