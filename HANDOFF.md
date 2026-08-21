@@ -1126,3 +1126,76 @@ during implementation than to keep enumerating on paper.
 thinking about. Every round's fixes surfaced the next layer, because the plan
 kept proposing to reuse machinery that was written to do something else. That is
 a property of this codebase's ending path, not of the reviewer.
+
+---
+
+## Phase 1 — the ending becomes a sequence — claude — 2026-08-21
+
+Implements phase 1 of `docs/plans/world-endings.md`. `sim.ts`, `endings.ts`,
+`main.ts`.
+
+**Before:** at `endTick` the world was *replaced* — classify retrospectively,
+swap, 0.7s black, 1.8s fade. 2.5 seconds, and nothing was ever unmade.
+
+**Did.** A world now spends its last ~102 world-seconds ending, in acts derived
+from `endTick` rather than a life fraction (`lifeFraction` bottoms out at 0.58,
+so the shortest world is 17,400 ticks and a fixed fraction would leave it less
+time than the sequence needs):
+
+| act | opens at | length |
+| --- | --- | --- |
+| commit | `endTick − 3360` | — |
+| omen | `endTick − 3060` | 40s |
+| onset | | 12s |
+| unmaking | | 35s |
+| silence | `endTick − 450` | 15s |
+
+- **`sim.ts`** gains one field, `ending: EndingState | null`, and one exported
+  function, `beginEnding()`. While it is set the sim holds everything that would
+  make the world bigger or busier: all four birth paths (spawn roll, pending
+  settlements, `maybeBreakaway`, desperate refuge founding), both in-cycle
+  catastrophe systems (`brewing`/`applyCatastrophe` and `stepVolcanoes`), and
+  the rally. Scheduled falls emit `civ_died` themselves, because the phase loop
+  has already run by then and the event would otherwise never fire — taking the
+  narration, the history count and the `fadedDeadCivs` repaint with it.
+- **`endings.ts`** splits `commitEndingKind()` (scoring only, at the commit
+  tick) from `resolveWorldEnding()` (at the true end, taking the committed
+  title). The epitaph, era and survivor counts are therefore measured *after*
+  the ending, so the archive describes it instead of predicting it. Adds
+  `ApocalypseKind` — the title vocabulary cannot select a sequence, since `ash`
+  is two different causes and four titles share `quiet` — with its own seeded
+  affinity, an `APOCALYPSE_ENDINGS` legality map, a `SHIPPED_APOCALYPSES` gate
+  so a committed cause always has something to run, and the missing earthquake
+  counter in `WorldHistory`.
+- **`main.ts`** stages the acts, speaks one omen line per ending, and builds the
+  `rewilded` fade schedule: living civs ordered smallest-first and given death
+  ticks spread across the unmaking, deterministic (tile count then id, no RNG).
+
+**Verified** headless against the built bundle, via a new `__ending()` handle:
+
+- Acts land where they should — `endTick` 18092 → omen 15032, silence 17642,
+  commit 14732.
+- **Nothing is born after the commit**: civ count never rose, and
+  `pendingSettlements` stayed 0.
+- **The fade completes before the silence**: 15 civs at commit, all 15
+  scheduled, last pending death at tick 21868 against a silence opening at
+  21949 — and `livingCivs` was **0 across every sample of the silence**. The
+  held beat now holds a world that has actually ended.
+- **Determinism**: the same seed twice committed to the same
+  `{apocalypse, ending}`.
+- No page exceptions in any run.
+
+**Could not verify:** anything visual. Whether 15 seconds of an empty world
+reads as weight or as dead air is the open question from the plan and only the
+preview can answer it. Also unmeasured: frame cost, though this phase adds no
+new render layer.
+
+**Known gap, by design:** phase 1 stages act 3 for `rewilded` only. A `garden`
+run observed civs falling 7 → 3 during its ending through ordinary decline,
+which contradicts *"an age learned how to remain"* — `advanceCivPhase()` still
+kills regardless. Phase 2 owns that, along with `exodus`'s launches and
+`world_empire`'s consolidation.
+
+**Next:** Lawrence watches a turnover on the preview. If the shape reads, phase
+2 is the cheap apocalypses (supervolcano, long winter) plus the three remaining
+quiet gestures.

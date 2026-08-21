@@ -439,6 +439,20 @@ export interface WonderSite {
   radius: number; // tiles over which the pull fades to zero
 }
 
+// --- The ending -----------------------------------------------------------
+// The sim owns only the *truth* of a world's ending: that one is running, and
+// which civs are scheduled to fall during it. Which ending it is, what it is
+// called and how it is staged all live in endings.ts and main.ts — the sim has
+// no opinion. While `ending` is set, every system that would make the world
+// bigger or busier is held: births of all four kinds, the in-cycle catastrophe
+// systems, and the rally. The ending is the only thing happening.
+export interface EndingState {
+  startedTick: number;
+  // civId -> the tick it falls. Scheduled falls bypass the decline timer, so
+  // the lights go out inside the act where they can be seen.
+  fade: Map<number, number>;
+}
+
 export interface SimWorld {
   width: number;
   height: number;
@@ -454,6 +468,8 @@ export interface SimWorld {
   lastCatastropheTick: number;
   pressureNoise: number;
   brewing: BrewingCatastrophe | null;
+  // Non-null once the world has committed to its ending. See EndingState.
+  ending: EndingState | null;
   // Deep-time era floor: 0 (neolithic) .. 5 (post), float; floor() is the
   // minimum era a new civ is born into. Climbs over a world's life, resets on
   // reroll/cataclysm (a fresh SimWorld starts at 0).
@@ -520,6 +536,7 @@ export function createSimWorld(width: number, height: number, seed?: string): Si
     nameMemory: [],
     expeditions: [],
     catastrophePressure: 0,
+    ending: null,
     lastCatastropheTick: 0,
     pressureNoise: 1.0,
     brewing: null,
@@ -928,6 +945,17 @@ function spawnCiv(world: SimWorld, row: number, col: number): Civ {
   return civ;
 }
 
+// --- The ending ---
+
+// Commit the world to its ending. `fade` maps civId -> the tick it falls; pass
+// an empty map for endings where nothing dies. Clears the brewing catastrophe
+// and any nomad bands still walking, so nothing unrelated arrives afterwards.
+export function beginEnding(world: SimWorld, fade: Map<number, number>) {
+  world.ending = { startedTick: world.tick, fade };
+  world.brewing = null;
+  world.pendingSettlements.length = 0;
+}
+
 // --- Phase + fortune transitions ---
 
 export function rollPhaseDuration(phase: CivPhase): number {
@@ -1123,6 +1151,9 @@ function advanceExpeditions(world: SimWorld, biomes: Biome[][], changed: Array<{
         const target = world.tiles[tr][tc];
         if (target.civId !== exp.civId && (target.state === 'wild' || target.state === 'ruin')) {
           if (civ.phase === 'dead' && exp.desperate) {
+            // Not during the ending: a civ founded in the last act is in no
+            // schedule and would still be lit through the silence.
+            if (world.ending) break;
             // Landfall after the homeland died: the refugees found a successor
             // nation carrying the old name forward.
             const newId = world.nextCivId++;
@@ -1928,7 +1959,7 @@ export function step(
     }
     // Rally: a declining civ with the wind at its back can pull out of the
     // dive — once. The viewer should never be certain a decline is fatal.
-    if (civ.phase === 'declining' && !civ.hasRallied
+    if (civ.phase === 'declining' && !civ.hasRallied && !world.ending
         && civ.fortune >= SIM.rallyMinFortune && rand() < SIM.rallyChance) {
       civ.hasRallied = true;
       enterPhase(civ, 'stable');
@@ -1939,6 +1970,22 @@ export function step(
         && civ.fortune > SIM.wonderMinFortune && rand() < SIM.wonderChance) {
       civ.wonder = { row: civ.originRow, col: civ.originCol };
       events.push({ kind: 'wonder_built', civId: civ.id, row: civ.originRow, col: civ.originCol });
+    }
+  }
+
+  // Scheduled falls. These have to emit `civ_died` themselves: the phase loop
+  // above already ran this tick with its own prevPhase, so by the next tick the
+  // civ reads as having always been dead and the event would never fire —
+  // taking the narration line, the history count and the fadedDeadCivs repaint
+  // with it.
+  if (world.ending && world.ending.fade.size > 0) {
+    for (const [civId, atTick] of [...world.ending.fade]) {
+      if (world.tick < atTick) continue;
+      world.ending.fade.delete(civId);
+      const civ = world.civs.get(civId);
+      if (!civ || civ.phase === 'dead') continue;
+      enterPhase(civ, 'dead');
+      events.push({ kind: 'civ_died', civId });
     }
   }
 
@@ -2133,12 +2180,15 @@ export function step(
     }
   }
 
-  // Ocean routes.
-  maybeLaunchExpeditions(world, biomes, civTileCounts, events);
+  // Ocean routes. No new voyages once the world has committed to its ending;
+  // those already at sea still make landfall.
+  if (!world.ending) maybeLaunchExpeditions(world, biomes, civTileCounts, events);
   advanceExpeditions(world, biomes, changed, events);
 
-  // Breakaway check — only every 15 ticks to limit flood-fill cost.
-  if (world.tick % 15 === 0) {
+  // Breakaway check — only every 15 ticks to limit flood-fill cost. This is a
+  // fourth birth path, separate from migrations, settlements and expeditions,
+  // and it inserts a rising civ directly — so it is held during the ending too.
+  if (!world.ending && world.tick % 15 === 0) {
     maybeBreakaway(world, changed, events);
   }
 
@@ -2210,17 +2260,19 @@ export function step(
       }
     }
   }
-  if (world.catastrophePressure >= CATASTROPHE.pressureFireThreshold) {
+  if (!world.ending && world.catastrophePressure >= CATASTROPHE.pressureFireThreshold) {
     applyCatastrophe(world, biomes, elevation, changed, biomeChanges, events);
   }
 
   // Standing volcanoes erupt on their own slow cycle, independent of the
-  // pressure-driven roving catastrophe above.
-  stepVolcanoes(world, biomes, changed, events);
+  // pressure-driven roving catastrophe above. Both are held during the ending:
+  // an ordinary eruption arriving mid-apocalypse would stage a second,
+  // unrelated disaster with its own omens.
+  if (!world.ending) stepVolcanoes(world, biomes, changed, events);
 
   // Births arrive as visible migrations: the spawn roll starts a band
-  // walking; the civ exists only when it settles.
-  if (livingCivCount(world) < characterOf(world).civ.maxCivs && world.pendingSettlements.length < 2) {
+  // walking; the civ exists only when it settles. Held during the ending.
+  if (!world.ending && livingCivCount(world) < characterOf(world).civ.maxCivs && world.pendingSettlements.length < 2) {
     if (rand() < SIM.baseCivSpawnChance) {
       const spot = pickCivSpawnTile(world, biomes);
       if (spot) {
