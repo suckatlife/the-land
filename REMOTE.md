@@ -43,8 +43,13 @@ description claims, and is the evidence real?*
 1. **Brief.** Lawrence opens Claude → Code, picks the repo, states one task.
    Prompts live in the repo, so the brief can be one line:
    > Next turn per REMOTE.md. Sim/balance work. Branch `claude/<topic>`, draft PR.
-2. **Build.** Claude works on a `claude/*` branch, one change, and opens a
-   **draft** PR. Vercel builds a preview automatically.
+2. **Build.** Claude works on a `claude/*` branch, one change, and opens the
+   **draft** PR *early* — from the first commit, before the work is finished —
+   then lands the completed change on it. **The PR has to exist before the push
+   you want reviewed:** the trigger is a push to an *open* PR, so a push that
+   merely creates the branch has nothing to trigger on, and opening a draft was
+   not observed to trigger a review either. Vercel builds a preview
+   automatically.
 3. **Review — automatic.** With Codex set to review **on every push**, it
    reviews as soon as Claude pushes, and again after any repair push. Lawrence
    does nothing. `@codex review` remains available to force a re-review.
@@ -115,9 +120,28 @@ push notifications are what actually close the loop — check they are on.
 - **Agents use `claude/*`, `codex/*` or `agent/*` branches.** Never `main`.
 - **Draft PRs** while the builder is still working — a signal to the human, not
   to Codex, which (on *On every push*) reviews pushes regardless of draft
-  state. So: build, then push once.
+  state. So: open the draft PR first, then land the finished change on it in
+  **one** push. Not "build, then push once at the end" — that push would have
+  no open PR to trigger on. If the first review still does not arrive,
+  `@codex review`.
 - **One builder pass, one repair pass.** A phone is a bad place to review a
   400-line diff.
+- **One agent per working copy.** Two sessions sharing a checkout produced the
+  worst confusion this repo has seen. On 2026-08-21 one session committed while
+  the other had switched the branch underneath it, so the commit landed on the
+  *other* session's branch; the first session then read its own commit in a
+  diff, concluded the other PR "already contained" the fix, and reported that
+  twice before the branch refs were checked. Nothing was lost, but the status
+  reports were wrong both times. If two agents must run at once give each its
+  own clone or `git worktree`, and never assume the branch you checked out is
+  still the branch you are on — re-read `git rev-parse --abbrev-ref HEAD`
+  before you commit.
+- **Confirm a push actually landed.** `git push` exiting 0 is not proof your
+  commit reached the PR: it may have pushed a different branch. Check
+  `git rev-parse origin/<branch>` afterwards. And check the PR's `merged_at`
+  before reporting anything as landed — on a merged PR `updated_at` equals the
+  merge time and reads exactly like a fresh update, which is how a fix once got
+  pushed to a PR that had closed 18 minutes earlier.
 - **Anchor tags** are the way back: `known-good-2026-08-18` (pre-loop state),
   `live-2026-08-18` (what was live then). `git reset --hard <tag>` on a branch,
   or revert the merge commit from the GitHub UI.
