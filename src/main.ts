@@ -4803,8 +4803,15 @@ function drawPowerLines(dt: number, night: number) {
 const warHeat = new Map<string, { a: number; b: number; row: number; col: number; count: number; lastTs: number; narratedAt: number }>();
 // At most one war line per minute across the whole map, so a crowded frontier
 // stays a minority beat rather than a war bulletin (war was ~40% of the log).
-const WAR_GLOBAL_GAP_MS = 60000;
-let lastWarNarrationTs = 0;
+// World-clock seconds, not wall-clock ms: these gate in-world narration about
+// battles, and battle heat itself (born/lastHit) is already on worldClock.
+const WAR_GLOBAL_GAP_SEC = 60;
+// How long a quiet war is kept alive while its follow-up line keeps being
+// refused by the log's wall-clock dedup window. Bounded so warHeat cannot grow.
+const QUIET_RETRY_UNTIL_SEC = 120;
+// -Infinity so the first war line is not gated by a window that has not opened
+// yet; with Date.now() the epoch made this vacuously true.
+let lastWarNarrationTs = -Infinity;
 interface ConflictFlash { x: number; y: number; age: number }
 const conflictFlashes: ConflictFlash[] = [];
 
@@ -4812,7 +4819,7 @@ function noteConquest(ev: { row: number; col: number; attackerId: number; defend
   const [a, b] = ev.attackerId < ev.defenderId
     ? [ev.attackerId, ev.defenderId] : [ev.defenderId, ev.attackerId];
   const k = `${a}:${b}`;
-  const now = Date.now();
+  const now = worldClock;
   let w = warHeat.get(k);
   if (!w) { w = { a, b, row: ev.row, col: ev.col, count: 0, lastTs: now, narratedAt: 0 }; warHeat.set(k, w); }
   w.count++;
@@ -4820,9 +4827,11 @@ function noteConquest(ev: { row: number; col: number; attackerId: number; defend
   w.row = ev.row;
   w.col = ev.col;
   // A war earns a line only after sustained fighting, rarely after that, and
-  // no more than one war line every WAR_GLOBAL_GAP_MS across the whole map —
+  // no more than one war line every WAR_GLOBAL_GAP_SEC across the whole map —
   // so a crowded frontier doesn't turn the log into a war bulletin.
-  if (w.count >= 14 && now - w.narratedAt > 150000 && now - lastWarNarrationTs > WAR_GLOBAL_GAP_MS) {
+  if (w.count >= 14
+      && (w.narratedAt === 0 || now - w.narratedAt > 150)
+      && now - lastWarNarrationTs > WAR_GLOBAL_GAP_SEC) {
     const A = simWorld.civs.get(a), B = simWorld.civs.get(b);
     if (A && B) {
       const ok = pushNarration(colorizeCivNames(pick([
@@ -5078,18 +5087,23 @@ function drawOneBattle(warGfx: Graphics, b: Battle, nowSec: number) {
 }
 
 function checkWarQuiet() {
-  const now = Date.now();
+  const now = worldClock;
   for (const [k, w] of warHeat) {
-    if (w.narratedAt > 0 && now - w.lastTs > 45000) {
+    if (w.narratedAt > 0 && now - w.lastTs > 45) {
       const A = simWorld.civs.get(w.a), B = simWorld.civs.get(w.b);
       if (A && B && A.phase !== 'dead' && B.phase !== 'dead') {
-        pushNarration(colorizeCivNames(pick([
+        const ok = pushNarration(colorizeCivNames(pick([
           `The border between ${A.name} and ${B.name} falls quiet.`,
           `The fighting between ${A.name} and ${B.name} burns itself out.`,
         ])), { priority: 'low', dedupKey: `war:${k}`, anchor: { row: w.row, col: w.col } });
+        // This threshold is world time but pushNarration's dedup window is wall
+        // time (NARRATION_GAP_MS.low, 6s), so at 8x we arrive 5.6 wall seconds
+        // after the last line and the follow-up is refused. Keep the entry and
+        // retry on a later pass rather than dropping the line for good.
+        if (!ok && now - w.lastTs < QUIET_RETRY_UNTIL_SEC) continue;
       }
       warHeat.delete(k);
-    } else if (w.narratedAt === 0 && now - w.lastTs > 60000) {
+    } else if (w.narratedAt === 0 && now - w.lastTs > 60) {
       warHeat.delete(k);
     }
   }
@@ -6302,7 +6316,7 @@ let ghostUntil = 0;
 let ghostBaseY = 0;
 
 function maybeGhost(dt: number, nightness: number) {
-  const now = Date.now();
+  const now = worldClock;
   if (ghostUntil > now) {
     const u = (now - ghostStart) / (ghostUntil - ghostStart);
     ghostText.alpha = Math.sin(Math.PI * u) * 0.30;
@@ -6333,7 +6347,7 @@ function maybeGhost(dt: number, nightness: number) {
     ghostText.x = x;
     ghostBaseY = y - 6;
     ghostStart = now;
-    ghostUntil = now + 12000;
+    ghostUntil = now + 12;
     if (Math.random() < 0.18) {
       pushNarration(`Shepherds at the ruins of ${mem.name} say the stones hum.`, { priority: 'low', anchor: { row: mem.row, col: mem.col } });
     }
@@ -6361,21 +6375,36 @@ function queueFestivals() {
 }
 
 function updateFestival(nightness: number) {
-  const now = Date.now();
+  const now = worldClock;
   if (!activeFestival && pendingFestivals.length > 0 && nightness > 0.5) {
     const f = pendingFestivals.shift()!;
-    activeFestival = { x: f.x, y: f.y, start: now, until: now + 45000 };
+    activeFestival = { x: f.x, y: f.y, start: now, until: now + 45 };
     pushNarration(`In ${f.name}, the lamps burn all night.`, { priority: 'normal', anchor: { row: f.row, col: f.col } });
   }
   if (!activeFestival) { festivalGfx.clear(); return; }
   if (now > activeFestival.until) { activeFestival = null; festivalGfx.clear(); return; }
   const u = (now - activeFestival.start) / (activeFestival.until - activeFestival.start);
   const env = Math.sin(Math.PI * u);
-  const pulse = 1 + 0.25 * Math.sin(now / 280);
+  const pulse = 1 + 0.25 * Math.sin(now / 0.28);   // was now/280 in ms; same rate in seconds
   festivalGfx.clear();
   festivalGfx.circle(activeFestival.x, activeFestival.y, 13 * pulse).fill({ color: 0xffc878, alpha: 0.20 * env * nightness });
   festivalGfx.circle(activeFestival.x, activeFestival.y, 6 * pulse).fill({ color: 0xffe2b0, alpha: 0.28 * env * nightness });
 }
+
+// Instrument for the lifetimes that used to run on Date.now(). Every value here
+// is world-clock seconds, so all of them freeze when paused and compress with
+// the speed control; `wall` is the wall clock for comparison.
+(window as any).__clocks = () => ({
+  worldClock: +worldClock.toFixed(2),
+  wall: Date.now(),
+  ghostUntil: +ghostUntil.toFixed(2),
+  festivalUntil: activeFestival ? +activeFestival.until.toFixed(2) : null,
+  wars: [...warHeat.values()].map((w) => ({
+    lastTs: +w.lastTs.toFixed(2),
+    narratedAt: +w.narratedAt.toFixed(2),
+    quietIn: +(45 - (worldClock - w.lastTs)).toFixed(2),
+  })),
+});
 
 // Constellations: the first civilization of each era past the neolithic
 // names a figure in the stars. The sky accumulates history.

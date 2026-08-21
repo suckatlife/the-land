@@ -866,3 +866,92 @@ tells Lawrence to check for a review against the commit he is merging.
 
 **Next:** Nothing pending. If the automatic trigger becomes reliable the rule
 costs one redundant comment per push, which is the right side to err on.
+
+---
+
+## The last Date.now() lifetimes — claude — 2026-08-21
+
+**Type: SYSTEMIC.** Closes the clock family opened in Turn 01.
+
+**Chose:** Not chosen from frames — handed over. Codex found it while reviewing
+the `CLAUDE.md` rewrite (#8): the new front door claimed "a paused world is
+genuinely still", and it was not. The claim was narrowed there and the bug
+recorded; this is the repair.
+
+**Did:** `src/main.ts`. Turn 04 moved twelve `performance.now()` lifetimes onto
+`worldClock`; these were missed because they call `Date.now()` — a different
+function, the same bug, a few lines away. Since the ticker returns early while
+paused, nothing ran *during* a pause; the damage landed on **resume**, when
+`Date.now()` had jumped the full pause and a lifetime was already expired.
+
+Moved, with thresholds converted from ms to world seconds: `maybeGhost` (12s),
+`updateFestival` (45s, and its `Math.sin(now/280)` pulse → `/0.28`), and the
+war-narration block — which turned out to hold **four** coupled timers, not the
+one named in review: `warHeat.lastTs`, `warHeat.narratedAt`,
+`lastWarNarrationTs`, `WAR_GLOBAL_GAP_MS` at 45/60/150s. They had to move as a
+unit or they would disagree with each other, exactly as Turn 04 found.
+
+Two epoch artefacts preserved on purpose: `lastWarNarrationTs` starts at
+`-Infinity` (at 0 on a zero-based clock it would gate the first war line for
+60s), and `narratedAt === 0` stays the never-narrated sentinel.
+
+**Left on `Date.now()` deliberately:** `worldStartedAt`/`observedMs` and the
+archive's `endedAt` — real viewing time and a persisted timestamp. The event
+log's lifetime, dedup window and civ-mention highlight stay on the wall clock
+too, but for a narrower reason than I first wrote: the dedup window governs how
+often a *person* sees a repeated line, and at 8x a world-clock lifetime would
+cull a line after 1.2 wall seconds, which is unreadable.
+
+**A correction to that rationale, found in review:** I first justified it as
+"a paused world should still let a line finish fading while someone reads it".
+That is false. `updateEventLog()` and `updateBars()` are called at
+`src/main.ts:7453-7454`, *after* the `if (!running) return` at 7017, so during
+a pause the log does not fade — it freezes, and the first resumed tick culls
+everything older than `LOG_LIFETIME_MS` (9.5 s) at once. The wall clock is
+still the right choice for readability at speed, but the pause behaviour is
+freeze-then-cull, not graceful fade.
+
+**Verified:** Build clean. Measured headless against the built bundle through a
+new `__clocks()` handle — running 3s → world +3.08s / wall +3125ms; **paused
+6s → world +0.27s / wall +6345ms**; resumed 2s → world +2.02s / wall +2296ms.
+World time is frozen across the pause; the 0.27s is the frames between the
+reading and the click landing. Speed-control compression follows by
+construction (`worldSeconds *= timeScale`) and was measured in Turn 04.
+
+The harness needed the no-sudo WSL recipe again: `apt-get download libnspr4
+libnss3 libasound2t64` into `/tmp/pwlibs`, `dpkg -x`, then run with
+`LD_LIBRARY_PATH=/tmp/pwlibs/extract/usr/lib/x86_64-linux-gnu`. Ephemeral — it
+needs redoing after a reboot, and it is what blocked Codex's analytics
+click-through.
+
+**Could not verify:** Anything visual. The festival and ghost are night
+surfaces; whether a festival that now gets its full 45 s of *world* time reads
+well at 4x is a preview judgement. One pre-existing console 404, unrelated.
+
+**A regression this turn introduced, caught in review:** mixing a world-time
+threshold with a wall-time gate re-created the very bug being fixed.
+`checkWarQuiet` fires at 45 *world* seconds, but `pushNarration`'s dedup window
+is `NARRATION_GAP_MS.low` = 6 *wall* seconds — so at 8x the quiet line arrives
+5.6 wall seconds after the last one, is refused, and `warHeat.delete(k)` threw
+the entry away regardless, losing the "border falls quiet" follow-up for good.
+Now the entry is kept and retried when narration is refused, bounded by
+`QUIET_RETRY_UNTIL_SEC` (120) so `warHeat` cannot grow without bound. Worth
+remembering: converting a timer to world time means auditing every wall-time
+gate it talks to.
+
+**Spotted, not done:**
+- **The event log culls on resume.** Pause for longer than 9.5 s and every
+  visible narration line vanishes on the first resumed tick — the same
+  freeze-then-expire shape this turn fixed elsewhere. Three ways out and they
+  are a taste call, not an obvious truth, so I left it: move it to `worldClock`
+  (pause holds, but at 8x lines last 1.2 wall seconds); drive the chrome from
+  an *ungated* ticker so it fades normally even while paused (probably the
+  right answer, and the largest change); or accept it. Lawrence's call.
+- The verification was a throwaway script. This project has now had four clock
+  bugs (Turns 01, 02, 04, this one) and each was verified ad hoc. A permanent
+  `scripts/verify-clocks.mjs` would be proportionate; left out to keep this
+  diff to one change.
+- `STATE_2026-08-09.md` is now demoted but still lists candidate features; a
+  future turn should decide whether it is refreshed or archived.
+
+**Next:** Turn B — the shipping/monetization plan, unchanged from #8's entry.
