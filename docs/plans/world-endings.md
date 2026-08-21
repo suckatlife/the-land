@@ -149,6 +149,15 @@ terminal path:
 3. **A terminal transition, not a faster decline.** A civ reduced below a tile
    threshold by the apocalypse goes to `dead` directly, so the deaths land
    inside act 3 where they can be seen, instead of trickling through act 4.
+   **It must emit `civ_died` itself.** `step()` captures `prevPhase` and emits
+   that event around `advanceCivPhase()` (`sim.ts:1920-1927`), which runs
+   *before* catastrophes (`:2213-2215`) — so a phase set to `dead` inside
+   `applyCatastrophe()` is already `dead` when the next tick looks, and the
+   event never fires. Silently: no narration line, no history increment, and no
+   `fadedDeadCivs` repaint — which `CLAUDE.md` names as an invariant, so the
+   civ's tiles would keep their living colour through the silence. Every death
+   the ending causes has to emit the event and reset the dead-phase state
+   explicitly.
 4. **The ember guarantee has to become a parameter.** `applyCatastrophe()` pads
    `safeIds` up to `CATASTROPHE.emberCount` (`sim.ts:1600-1615`), and safe civs
    are skipped by *both* tile destruction and vitality damage. With one or two
@@ -248,7 +257,16 @@ crops fail ahead of the front; the sun dims for the rest of the world's life.
 tinting, blight.
 *Distinct because:* the **kill is indirect** — the ash starves the world rather
 than smashing it, so civs die of cold and hunger far from the volcano.
-*Cost:* lowest of the four — most of this machinery exists.
+*But the indirect kill does not exist and cannot be reused.* There is no
+food-failure path in the sim; `applyCatastrophe()` converts the **outer ash
+ring to fertile terrain** (`sim.ts:1752-1757`) — volcanic soil, a nice touch
+that works against us here; and vitality damage lands only on civs that
+actually lost tiles (`sim.ts:1848-1858`). So a civ across the map is untouched
+by definition. Supervolcano needs a genuine global effect — an ash coverage
+scalar that suppresses growth and drains vitality everywhere, decaying with
+distance from the caldera — or it collapses into "a big volcano", which is the
+one thing that would make it indistinguishable from an in-cycle eruption.
+*Cost:* **re-rated to medium.** The eruption FX exist; the starvation does not.
 *Risk:* overlaps visually with Impact's ash sky. They must not look the same;
 the differentiator is the origin (a mountain, not the sky) and the pacing.
 
@@ -267,12 +285,26 @@ and the calm test suffers. **The quiet ending is what makes the loud ones land.*
 decline cannot deliver it: a `rising` or `stable` civ may not enter decline for
 minutes, and `decliningDuration` then adds ~50 world-seconds, so act 4 would
 begin with cities still lit — the one thing the quiet end promises not to do.
-Proposal: at `commitTick` the quiet end takes a **fade schedule** — surviving
-civs are ordered (smallest first, or furthest from the last capital) and given
-death ticks spread across act 3, so the lights go out one by one and the last
-goes out before the silence. Rallies suppressed for the same window, and the
-birth paths frozen per §5a.5 — otherwise a civ born during act 3 is unscheduled
-and outlives the ending. The quiet
+**But "quiet" is not one behaviour, and a single extinction schedule is wrong
+for three of the four titles it covers.** `garden` means *"an age learned how to
+remain"* and its score explicitly rewards living civs (`endings.ts:222-223`);
+killing everything to reach it is a contradiction. `exodus` is a departure, not
+a death. `world_empire` ends with one banner standing, not none. Only
+`rewilded` is an extinction.
+
+So act 3 of a quiet ending is per-title:
+
+| title | act 3 |
+| --- | --- |
+| `rewilded` | **Fade schedule.** Surviving civs ordered (smallest first, or furthest from the last capital) and given death ticks spread across act 3, so the lights go out one by one and the last before the silence. |
+| `garden` | **Nothing dies.** Construction stops, roads soften, wild returns at the edges of settlement. The world gets quieter, not emptier — act 4 holds a living world at rest. |
+| `exodus` | **Departure.** Cities go dark in sequence as launches leave; the tiles stay built, not ruined. Dark ≠ dead, and the archive should not count these as deaths. |
+| `world_empire` | **Consolidation.** The last rivals are absorbed rather than killed; act 4 holds one colour across the map. |
+
+Rallies are suppressed for the whole window, and the birth paths are frozen per
+§5a.5 — otherwise a civ born during act 3 is unscheduled and outlives the
+ending. Note that only the `rewilded` row needs the terminal death path at all;
+the other three need act-3 *gestures*, which is a different and cheaper problem. The quiet
 end is *scheduled*, not merely *unforced* — otherwise it is indistinguishable
 from the anticlimax we are trying to fix.
 
@@ -488,6 +520,10 @@ working structure; if it doesn't, we learn that before building four disasters.
 10. §5a.4 gives each apocalypse a persistent survivor set chosen from its own
    geometry. Is "who is standing on high ground" the right selector for the
    Deluge, or should survival be scored on something less literal?
+12. Three of the four quiet titles now need bespoke act-3 gestures (garden's
+   softening, exodus's launches, empire's consolidation). Is that worth
+   building, or should phase 1 ship only `rewilded`'s fade and leave the other
+   three ending as they do today?
 11. §5a.6 silences the in-cycle catastrophe systems for the whole 102-second
    sequence. Is a world where nothing else can happen for a hundred seconds
    correct, or should ordinary disasters still be able to interleave?
