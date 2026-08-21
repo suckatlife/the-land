@@ -1286,4 +1286,18 @@ name still appears and the comet still crosses the sky, because a remembered
 name and a light moving against the stars are exactly what a silence should
 contain. Act 4 adds no story; it can still be looked at.
 
+Three more, and the first is the same lesson a fourth time: **succession is
+tick-driven.** `decaySoilMarks()` and `drawSuccession()` run off `simWorld.tick`,
+which deliberately keeps advancing through act 4, so ruins were sprouting and
+soil marks fading several times during the held snapshot. Gated. Also: the
+post-skip omen replay could fire *inside* the silence, and a world the viewer
+abandoned mid-ending (`left_behind`) was being archived with an apocalypse that
+never ran — the cause is now persisted only for an ending that actually
+resolved.
+
+**The pattern across all of them:** "hold the world" is not one switch. The sim,
+the renderer's world systems, the narrators, and the tick-derived land systems
+are four separate populations, and each had to be found on its own. Anything
+keyed to `simWorld.tick` is suspect during act 4 by construction.
+
 **Next:** the copy pass (Lawrence's next brief).

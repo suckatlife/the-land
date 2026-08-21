@@ -7010,9 +7010,10 @@ function archiveCurrentWorld(ending: WorldEnding, outcome?: ResolvedWorldEnding)
     name: currentWorldName,
     endedAt: Date.now(),
     ending,
-    // Read directly: this runs at the top of resetWorld(), before the
-    // commitment is cleared.
-    apocalypse: committedEnding?.apocalypse,
+    // Only for a world that actually resolved. A viewer who hits "new" mid-
+    // ending gets `left_behind` and no outcome, and that world did not have an
+    // apocalypse — it was walked away from before one ran.
+    apocalypse: outcome ? committedEnding?.apocalypse : undefined,
     ticksLived: simWorld.tick,
     civilizations,
     survivingCivilizations,
@@ -7384,7 +7385,10 @@ app.ticker.add((ticker) => {
     atmos.setStormRate(characterOf(simWorld).storm);
     // Reclamation creeps on its own slow cadence (drawSuccession early-returns
     // between bakes), and the soil marks age with it.
-    if (simWorld.tick - lastSuccessionBake >= SUCCESSION.rebakeTicks) { decaySoilMarks(); drawSuccession(); }
+    // Succession growth is derived from simWorld.tick, which deliberately keeps
+    // advancing through act 4 — so without this the ruins would sprout and the
+    // soil marks fade several times during the held snapshot.
+    if (!worldHeld && simWorld.tick - lastSuccessionBake >= SUCCESSION.rebakeTicks) { decaySoilMarks(); drawSuccession(); }
     // The ice front is checked on the same cadence; drawIce early-returns
     // unless it has actually moved past ICE.redrawStep, so this is nearly free.
     drawIce();
@@ -8613,7 +8617,10 @@ document.getElementById('skip')!.addEventListener('click', () => {
   // The reset above clears the log, which would swallow an omen the skip had
   // just spoken — and `endingOmenSpoken` is latched, so it would never be said
   // again. If the skip landed inside the ending, say it now instead.
-  if (committedEnding && endingOmenSpoken && simWorld.tick < currentWorldFate.endTick) {
+  // ...but not once act 4 has opened: the silence adds no story, including a
+  // replayed one.
+  if (committedEnding && endingOmenSpoken
+      && simWorld.tick < endingActTicks(currentWorldFate.endTick).silence) {
     pushNarration(ENDING_OMENS[committedEnding.ending], { priority: 'high' });
   }
   accumulator = 0;
