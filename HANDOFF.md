@@ -1034,4 +1034,23 @@ for 15 seconds is the best second in the sequence or just dead air.
 Making every ending spectacular would turn spectacle into wallpaper and cost
 the calm test, so the plan keeps a quiet end.
 
+**Two P1s from review, both real holes in the design, both verified in source
+before accepting:**
+
+1. *Civs do not die just because you hit them.* `sim.ts:1853` clamps every
+   catastrophe to a 0.05 vitality floor, `decliningDuration` is 1500 ticks
+   (~50 world-seconds, longer than acts 3 and 4 together), and a declining civ
+   can rally. So reusing the catastrophe path would have produced an apocalypse
+   that visibly destroys the land while every civ survives it. New §5a gives
+   the apocalypse a terminal path — and states that the goal is not "everything
+   dies" but "whatever deaths it causes complete before act 4".
+2. *Locking the kind early would corrupt the archive.* Moving the
+   `resolveWorldEnding()` call to 85% would snapshot `epitaph` and
+   `highestEra`, which `archiveCurrentWorld()` persists — so the Chronicle
+   would describe the world as it was *before* its own ending. New §8a splits
+   `commitEndingKind()` at 85% from the full resolution at the true end.
+
+Both were failures of the same kind: assuming reuse of existing machinery gives
+behaviour the machinery was explicitly written not to give.
+
 **Next:** review, then phase 1 if the shape survives.

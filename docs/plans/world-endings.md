@@ -116,13 +116,46 @@ Times are **world-seconds** (so they compress with the speed control).
 | --- | --- | --- | --- |
 | 1. Omen | — | ~40s | The world knows. Reuse the 3-stage omen machinery at world scale: sky lean, narration, animals/boats stop. `BLIGHT` already ramps here — fold it in rather than adding a second signal. |
 | 2. Onset | — | ~12s | The event becomes visible and unmistakable. One arrival, not a barrage. |
-| 3. The unmaking | — | ~35s | The land actually changes. Civs die on-screen. This is the only loud part, and it is loud by *extent*, not brightness. |
+| 3. The unmaking | — | ~35s | The land actually changes. Civs fall on-screen — see §5a, this does **not** happen for free. Loud by *extent*, not brightness. |
 | 4. Silence | 2.5s | ~15s | **Hold the aftermath.** The most valuable second in the sequence is the one where nothing happens and the viewer looks at what is left. Then the card, then black. |
 
 Total ~100 world-seconds against a world life of ~9.7–16.2 real minutes
 (`endTick` is 58–97% of `worldCycleTicks` 30000 at 30 ticks/s) — roughly 10% of
 a life spent ending. Act 4 is the cheapest and probably the highest-value part
 of the whole proposal.
+
+### 5a. Civs do not die just because you hit them — a correction from review
+
+Reusing the catastrophe path cannot make act 3 lethal. Verified in source:
+
+- `sim.ts:1853` — `civ.vitality = Math.max(0.05, civ.vitality - scaledHit)`.
+  Every catastrophe clamps to a **0.05 vitality floor**, so no catastrophe can
+  kill a civ, however severe.
+- `sim.ts:977` — death only happens after a full `declining` phase, and
+  `decliningDuration` is **1500 ticks** plus variation, i.e. ~50 world-seconds.
+  That is longer than acts 3 and 4 combined.
+- `sim.ts:1932` — a declining civ can **rally** out of it.
+
+So a civ struck at the start of the unmaking is still alive, declining and
+possibly recovering when the next world begins. The apocalypse needs its own
+terminal path:
+
+1. **Apocalypse hits ignore the vitality floor.** The 0.05 clamp exists so a
+   regional disaster maims rather than erases; an apocalypse is the case it was
+   written to exclude. Pass the floor as a parameter rather than adding a
+   second code path.
+2. **Suppress `rally` while the apocalypse runs.** Pulling out of it is a good
+   story during a world's life and the wrong one during its end.
+3. **A terminal transition, not a faster decline.** A civ reduced below a tile
+   threshold by the apocalypse goes to `dead` directly, so the deaths land
+   inside act 3 where they can be seen, instead of trickling through act 4.
+
+**But the requirement is not "everything dies."** `drowned` reads *"the last
+cities keep their lights above a rising sea"*; survivors on high ground are the
+picture. The real requirement is: **whatever deaths the apocalypse causes must
+complete before act 4, and survival must be a deliberate outcome of the
+apocalypse's shape rather than an artifact of decline timing.** Each catalogue
+entry below should state its intended survivor profile.
 
 ---
 
@@ -222,12 +255,34 @@ must be made in advance.
   Costs one extra scoring pass; the scores can still shift after commitment,
   which we would have to accept and document.
 - **Option 3 — recommended.** Commit at ~85% using the existing scores *with*
-  the seed affinity as the same +1.15 thumb, then **lock it**. Identical
-  machinery, one call site moved earlier, determinism preserved, and the card
-  at the end finally describes something the viewer watched.
+  the seed affinity as the same +1.15 thumb, then **lock the kind**.
+  Determinism preserved, and the card at the end finally describes something
+  the viewer watched.
 
 Option 3 also fixes an existing defect for free: today the title can contradict
 the world's history.
+
+### 8a. Lock the kind, not the outcome — a correction from review
+
+"Move the `resolveWorldEnding()` call earlier" is the wrong implementation of
+option 3, and would introduce a bug. That function returns `epitaph`,
+`highestEra`, `livingCivilizations` and `cities`, and `archiveCurrentWorld()`
+persists `outcome.epitaph` and `outcome.highestEra` into the permanent archive
+(`main.ts:6863`, `:6872`). Resolving at 85% would snapshot all of it **before
+the apocalypse happens**, so the Chronicle would record a drowned world's flood
+count from before the Deluge, and would miss every death the ending caused.
+
+Split it in two:
+
+- **`commitEndingKind(world, history, fate) -> WorldEndingKind`** at ~85%.
+  Scoring only. This is what act 1 needs, and it is the only thing locked.
+- **`resolveWorldEnding(..., committedKind)`** still runs at the true end, with
+  the kind passed in rather than re-scored. Epitaph, era, survivor counts and
+  the archive entry are all computed *after* the apocalypse, and therefore
+  describe it.
+
+The scoring is shared, so the two cannot disagree about what happened — only
+about when it was decided.
 
 ---
 
@@ -257,6 +312,11 @@ Headless, since none of this can be judged by an agent's eye:
    world-second durations under pause and at 4x.
 4. **Frame cost** — FPS through act 3 vs the preceding minute.
 5. **Coherence** — the printed ending title matches the apocalypse that ran.
+6. **Deaths land in act 3** — no civ killed by the apocalypse is still in
+   `declining` when act 4 begins, and no `rally` fires during the sequence.
+7. **The archive describes the ending** — the persisted epitaph and
+   `highestEra` reflect post-apocalypse state, not the 85% snapshot. Assert the
+   archived flood/death counts differ from their values at commitment.
 
 What cannot be verified without a display: whether any of it is *beautiful*, and
 whether act 3 crosses from awe into noise. That is a preview judgement.
