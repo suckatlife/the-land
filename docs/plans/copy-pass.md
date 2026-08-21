@@ -1,0 +1,364 @@
+# Plan — a copy pass, and what "de-AI" should and shouldn't mean
+
+**Status:** proposal, for review. No copy has been changed.
+**Scope:** every word a visitor reads — the doorway, About, Privacy, Terms,
+Support, the ending cards, and the in-world narration.
+
+---
+
+## 1. What I actually measured
+
+I audited the project's copy against the evidenced tells rather than guessing.
+Two scripts, both committed: `scripts/copy-audit.py` over the five HTML pages,
+`scripts/copy-audit-src.py` over user-facing string literals in `src/`.
+
+**The lexical tells are simply not here.** Across every surface — the five HTML
+pages *and* the copy that lives in `src/`, which an earlier draft of this
+document did not actually check before claiming it had:
+
+| surface | flagged vocabulary | puffery | "not X, but Y" | trailing `-ing` |
+| --- | --- | --- | --- | --- |
+| the five HTML pages | *address, addresses, linked, using, were* | **0** | **0** | 1 |
+| the doorway | *fight* | **0** | **0** | 0 |
+| the seven ending cards | **none** | **0** | **0** | 0 |
+| all prose literals in `main.ts` | *approach, emerges, hold, impact, remains, stands, wandering, were* | **0** | **0** | 6 |
+
+Those are the complete hits against **all 394 content-bearing style words** —
+not a hand-picked subset — and they are ordinary English used ordinarily: *"one
+banner stands"*, *"the birds have gone"*, *"a wandering herd"*. None of the
+actual markers appear: no *delve*, *underscores*, *showcasing*, *pivotal*,
+*seamless*, *crucial* or *realm*.
+
+The audit runs against the **complete** style-typed list from Kobak et al.
+(*Science Advances*, 2025), pulled from
+[`results/excess_words.csv`](https://github.com/berenslab/llm-excess-vocab/blob/main/results/excess_words.csv)
+— 900 words, 410 typed as style. Two earlier drafts used a hand-picked 114-word
+subset and then claimed widening it "would not change the conclusion", which a
+zero intersection cannot support. It has now actually been widened.
+
+**Doing that turned up something worth knowing.** The measured list contains
+`this`, `their` and `while` — pronouns and prepositions whose *frequency shifted
+in biomedical abstracts*. Raw membership is the wrong test, so the audit reports
+the **394 content-bearing** words and keeps the full 410 available as
+`style_any`.
+
+**And the two most-cited tells in popular writing — *tapestry* and *testament* —
+are not in the measured dataset at all.** The folklore vocabulary and the
+evidenced vocabulary are different sets. That alone is a reason not to edit from
+a list you read in a blog post. No *delve*, *tapestry*, *testament*, *underscores*,
+*seamless*, *robust*, *realm*. No "boasts a", no "stands as", no "is a
+testament to". That is unusual and worth stating plainly: **the copy does not
+have an AI vocabulary problem.**
+
+**And neither, it turns out, are the rhythmic ones.** Sentence-length dispersion
+is the tell with the cleanest evidence behind it — human prose scatters, LLM
+prose clusters at 10–30 tokens ("register leveling", PMC11422446). Measured per
+*sentence*, comparably across every surface:
+
+| surface | sentences | mean | **SD** | under 8 words |
+| --- | --- | --- | --- | --- |
+| the five HTML pages | 81 | 10.4 | **6.6** | 33 |
+| **the doorway** | **3** | **12.3** | **2.5** | **0** |
+| **the seven ending cards** | **12** | **8.8** | **3.4** | **5** |
+| all prose literals in `main.ts` | 331 | 6.7 | **2.4** | 229 |
+
+*(The page figures changed after review: the extractor replaced every tag with a
+space, which merged headings, navigation and footers into adjacent paragraphs
+and produced "sentences" that were nothing of the kind. It now walks block
+elements. The conclusion did not move — 6.3 to 6.6 — but the earlier number was
+not measuring what it said.)*
+
+**This kills the finding an earlier draft of this document led with**, and the
+correction is worth spelling out because it is instructive.
+
+That draft reported the ending cards at **SD 1.2** and called them "the most
+uniform prose in the project". That number was the spread of **whole-card
+lengths** — all seven land between 13 and 17 words — not of sentence lengths.
+The tell being invoked is about sentences. Split properly, the cards run from
+four words (*"Roots opened the roads."*) to fifteen (*"The warm country narrowed
+to a few valleys, and every surviving fire became a capital."*) and score
+**3.4 — more varied than the rest of the app's prose, not less.**
+
+So the honest summary of the whole audit is: **this project does not have
+measurable AI-writing tells.** Not lexically, not rhythmically, on any surface.
+
+The whole-card uniformity is still a real observation — every ending card
+occupies the same visual weight, 13 to 17 words, which is a *design* fact worth
+a decision. But it is a craft observation, not an AI tell, and this document
+should not have dressed it as one.
+
+---
+
+## 2. The seven lines I wrote today, audited
+
+`ENDING_OMENS` went in this afternoon (#14). It fails its own test:
+
+> The tide comes further inland than the oldest maps allow.
+> The frost does not lift at noon any more.
+> There is a taste of iron on the wind, **and** the birds have gone.
+> The roads are quieter each year, **and** the grass is patient.
+> One banner is answered everywhere, **and** no one remembers the others.
+> The cities have begun to look upward, **and** to build for leaving.
+> Nothing is being built that was not asked for.
+
+Seven lines, mean 10.6 words, SD ~1.8 — and **four of the seven are the same
+two-clause "…, and …" shape.** That is parallelism saturation: the device is
+fine, using it four times in seven lines is a machine. Gorrie's formulation is
+the one to hold onto — *"what the LLM lacks is not technical ability, but
+taste"* — and it applies to me.
+
+---
+
+## 3. What NOT to do, which matters more than what to do
+
+The research on this is unambiguous and mostly points at restraint:
+
+- **Leave the em dashes alone.** The em-dash tell is a fine-tuning artifact of
+  particular model families at particular moments, already fading — OpenAI
+  announced a fix in Nov 2025, Gemini's rate is human-indistinguishable, Llama's
+  is zero. Em dashes are continuous in English prose since the 1800s. The
+  spaced-vs-unspaced claim is **folklore with no measurement behind it**; it
+  tracks Chicago vs AP house style.
+- **Leave curly quotes and the Oxford comma alone.** Both track house style, not
+  authorship. The Oxford comma claim has no corpus evidence at all.
+- **Do not thin the adjectives.** Humans measurably use *more* adjectives (7.58%
+  vs 6.69–6.86%) and score ~1.7× on lexical diversity. "Cut the adjectives"
+  pushes prose *toward* the AI profile.
+- **Do not flatten the voice.** Detectors flag simple vocabulary, predictable
+  structure and low idiomaticity — which are also the properties of deliberately
+  spare prose, and of second-language writing (61% false-positive rate on
+  non-native English, Liang et al.). **This project's voice is spare by design.**
+  Every heuristic here will over-fire on it.
+
+The failure mode of this whole genre is subtractive editing. The documented
+result is writers dropping em dashes, avoiding "moreover", and British writers
+second-guessing "whilst". We should not join them.
+
+**So: no word-blacklist, no find-and-replace. The proposal below is almost
+entirely about rhythm and specificity.**
+
+---
+
+## 4. Proposed changes, by surface
+
+### 4a. The doorway — highest value, first thing anyone reads, and the flattest
+
+Once the button label and the eyebrow are excluded — they are labels, not
+sentences — the doorway's three real sentences run 9, 13 and 15 words: **SD 2.5 —
+flatter than any of the five pages, and flatter than the ending cards.** (Not
+flatter than everything: the `main.ts` prose superset sits at 2.4. An earlier
+version of this sentence claimed the doorway was the flattest thing measured,
+which was wrong.) That is a genuine finding
+and it happens to land on the surface this section was already arguing about,
+for unrelated reasons. It is also the one place where a visitor is reading
+*instead of* watching, so an even rhythm has the least excuse.
+
+Current:
+
+> **a world in motion**
+> Kaldrass · seed 8f2a1c
+> # The Land
+> Watch civilizations settle, spread, trade, fight, and sometimes disappear.
+> Each world runs for 10–17 minutes and can end in a different way. Leave it on
+> a second screen, or hover over the map to see what's happening.
+> `[ start watching ]`
+
+Three problems, in order of severity:
+
+1. **"settle, spread, trade, fight, and sometimes disappear"** — a five-verb
+   enumeration, the inflated cousin of the rule of three. It lists categories
+   instead of showing one thing.
+2. **"can end in a different way"** is the vaguest sentence on the screen, and
+   it is describing the feature this project just spent a day building.
+3. **"a world in motion"** could be above anything.
+
+Three options, because this is a taste call:
+
+**Option A — concrete, keeps the shape.**
+> **ten minutes, or a few thousand years**
+> Kaldrass · seed 8f2a1c
+> # The Land
+> Civilizations settle, spread, and fall. None of them are you.
+> A world lasts 10–17 minutes and dies in its own way — under ice, under water,
+> or of nothing but time. Leave it on a second screen. Hover to see what a place
+> is called.
+> `[ start watching ]`
+
+**Option B — shortest, most restraint.**
+> Kaldrass · seed 8f2a1c
+> # The Land
+> A world that carries on without you.
+> Ten to seventeen minutes is a whole history here. Then it ends, and another
+> one starts.
+> `[ start watching ]`
+
+*(the first line is lifted from the About page, where it is already the best
+sentence in the project)*
+
+**Option C — leaves the informational job intact, fixes only the rhythm.**
+> **a world in motion**
+> Kaldrass · seed 8f2a1c
+> # The Land
+> Civilizations settle, spread, and disappear.
+> Each world runs 10–17 minutes. It can end under ice, under water, or simply by
+> running out of people. Leave it on a second screen, or hover over the map to
+> see what's happening.
+> `[ start watching ]`
+
+I'd argue for **B**. It is the only one that trusts the thing on screen to do
+the explaining, and the doorway is in front of a *moving world* — the copy is
+competing with it.
+
+### 4b. The ending cards — a craft note, not a tell
+
+Their sentence rhythm is fine (SD 3.4). What is uniform is **card length**: all
+seven land in a five-word band, 13 to 17.
+
+| | drowned | long_winter | ash | rewilded | world_empire | exodus | garden |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| words | 16 | 15 | 13 | 15 | 15 | 17 | 14 |
+| sentences | 2 | 1 | 2 | 2 | 1 | 2 | 2 |
+
+Whether that matters is a taste call, and a defensible answer is *no*: they
+appear in the same slot every time, and equal weight may be exactly right. The
+argument for varying them is that seven endings which are meant to feel
+different currently arrive at the same size. The rewrites below are offered on
+that basis alone — **not** because anything measured says they read as machine
+copy.
+
+Illustrative, on two of them:
+
+> **The Green Silence** — *the land outlived its makers*
+> ~~Roots opened the roads. Forest and grass crossed the old borders without
+> learning their names.~~
+> **Roots opened the roads. Nothing came to fix them.**
+
+> **The Garden World** — *an age learned how to remain*
+> ~~Cities grew quieter instead of larger. The old wilderness returned, this
+> time by invitation.~~
+> **Cities stopped growing. That turned out to be the hard part.**
+
+The second of each pair is shorter, blunter, and has a point of view. Applied
+across all seven, the target is an SD nearer 4 than 1.2 — some one-sentence,
+some three.
+
+### 4c. The omen lines — break the shape, not the words
+
+Four of seven share "…, and …". Rewriting three of them to different shapes:
+
+> There is a taste of iron on the wind. The birds left a week ago.
+> The roads are quieter every year. The grass is patient.
+> One banner is answered everywhere now. No one remembers the others.
+
+Same words, mostly. Splitting the comma-and into two sentences breaks the
+parallelism *and* drops the mean sentence length, which helps the SD.
+
+### 4d. About — one change
+
+The page is good. "A world that carries on without you" is the best sentence in
+the project. One line is doing the AI thing:
+
+> ~~The Land is a living deep-time diorama for a second screen, an idle display,
+> or a few minutes of close observation.~~
+
+That is a tricolon of near-synonyms — three ways of saying "you can look at this
+for varying lengths of time" — and "living deep-time diorama" stacks three
+modifiers on one noun. Proposed:
+
+> **The Land is a deep-time diorama. Leave it running, or watch it closely; it
+> does not behave differently either way.**
+
+### 4e. Privacy and Terms — leave almost entirely alone
+
+Terms is not, as an earlier draft of this document claimed, the flattest prose
+in the project — that was measured before the extractor was fixed, and Terms now
+scores 6.1 against About's 5.7. Its rhythm is unremarkable and **that is
+correct**:
+Legal copy should be uniform and boring; varying the sentence rhythm of a
+privacy policy to look less like an AI wrote it would be a genuinely bad trade
+against clarity. The Privacy page is specific, honest, and unusually readable
+for what it is.
+
+**One exception**, in Privacy:
+
+> ~~The Land does not use accounts, advertising trackers, or cookies. It uses
+> limited, anonymous analytics to understand whether the experience is useful.~~
+
+"whether the experience is useful" is corporate-neutral in the way the research
+calls out — vagueness where a specific reason belongs. Proposed:
+
+> **The Land has no accounts, no ad trackers, and no cookies. It counts visits
+> and a handful of button presses, so I can tell whether anyone is actually
+> watching.**
+
+First person, one concrete admission. This is also the only place on the site
+where a person is visibly present.
+
+---
+
+**One small thing the audit did surface:** six trailing `-ing` significance
+clauses among the `main.ts` prose literals (the *"…, highlighting the region's
+enduring legacy"* shape). That is a low count across 331 sentences and may all
+be legitimate; worth a look with `python3 scripts/copy-audit-src.py -v` before
+deciding it is nothing.
+
+## 5. What I am deliberately not proposing
+
+- No changes to the in-world narration. The closest measurement available is the
+  **`main.ts` prose superset** — 331 sentences, mean 6.7 words, 229 under eight,
+  which also contains HUD, archive and doorway copy and is *not* narration
+  specifically. On that evidence the surface is short, concrete and varied, and
+  nothing in the audit flags it. The recommendation to leave it alone therefore
+  rests partly on judgement rather than purely on measurement, which is worth
+  saying plainly: isolating narration means following values through
+  `narrateEvent()` and the event tables, which static scanning does not do
+  reliably.
+- No word blacklist and no automated find-and-replace anywhere.
+- No punctuation changes at all.
+- No changes to Terms.
+
+---
+
+## 6. Sources
+
+- Kobak, González-Márquez, Horvát & Lause, *"Delving into LLM-assisted writing
+  in biomedical publications through excess vocabulary"*, **Science Advances**
+  11(27), 2025 — https://www.science.org/doi/10.1126/sciadv.adt3813 · word list:
+  https://github.com/berenslab/llm-excess-vocab
+- *"Contrasting Linguistic Patterns in Human and LLM-Generated News Text"* —
+  https://pmc.ncbi.nlm.nih.gov/articles/PMC11422446/ (sentence-length clustering,
+  lexical diversity, adjective and emotion rates)
+- Wikipedia, *Signs of AI writing* —
+  https://en.wikipedia.org/wiki/Wikipedia:Signs_of_AI_writing (era-stratified
+  marker list; puffery and manufactured-significance taxonomies)
+- Oremus, *"The Most Famous AI Writing Tic Is Also the Most Mysterious"*, **The
+  Atlantic**, 2026 —
+  https://www.theatlantic.com/technology/2026/07/ai-chatbot-writing-tic-negative-parallelism/687892/
+  (negative parallelism ~3× human rate; note this figure has a single origin)
+- Gorrie, *"Why ChatGPT writes like that"* —
+  https://www.deadlanguagesociety.com/p/rhetorical-analysis-ai (parallelism,
+  antithesis, tricolon; "not technical ability, but taste")
+- Liang et al., *GPT detectors are biased against non-native English writers* —
+  https://arxiv.org/pdf/2304.02819 (61% false-positive rate)
+- Yakura et al., *LLM influence on human spoken communication* —
+  https://arxiv.org/abs/2409.01754 (lexical seepage into unscripted speech)
+- OpenAI withdrawing its own detector (26% recall, 9% false positive) —
+  https://techcrunch.com/2023/07/25/openai-scuttles-ai-written-text-detector-over-low-rate-of-accuracy/
+
+---
+
+## 7. Open questions for review
+
+1. Doorway: A, B, or C? I argue for B, but B removes the "hover over the map"
+   hint entirely — is that discoverability worth losing?
+2. Is "None of them are you" / "That turned out to be the hard part" the right
+   register for this project, or is a dry joke wrong against the painterly
+   brief?
+3. The Privacy rewrite introduces **first person** ("so I can tell whether
+   anyone is actually watching"). The rest of the site is impersonal. Is one
+   first-person sentence a welcome signature or an inconsistency?
+4. Ending cards: is deliberately varying their length worth the loss of the
+   set's visual consistency? They appear in the same slot every time.
+5. Should the SD measurement become a check that runs, or is a one-off audit
+   enough? A script that fails when a surface drops below ~SD 3 is cheap, but it
+   is also exactly the kind of metric that gets gamed.

@@ -1335,3 +1335,112 @@ the approach — a single `worldIsHeld()` consulted by the clocks themselves,
 rather than a growing set of call-site guards found one review at a time.
 
 **Next:** the copy pass (Lawrence's next brief).
+
+---
+
+## Plan — a copy pass — claude — 2026-08-21
+
+Proposal only, no copy changed. `docs/plans/copy-pass.md`, plus
+`scripts/copy-audit.py`, the script the numbers came from.
+
+**Measured before proposing.** Audited every page and every user-facing string
+literal against the evidenced tells rather than guessing.
+
+**The lexical tells are not here.** Zero hits across all five pages from the
+407-word measured excess-vocabulary list (Kobak et al., Science Advances 2025):
+no *delve*, *tapestry*, *testament*, *seamless*, *realm*. Zero puffery, zero
+"not X, but Y". Worth stating plainly, because the brief assumed there would be
+something to strip.
+
+**The tells that are here are rhythmic:**
+
+| surface | lines | mean | SD |
+| --- | --- | --- | --- |
+| all five pages | 65 | 14.4 | 6.3 |
+| **ending descriptions** | **7** | **15.0** | **1.2** |
+| in-world narration | 127 | 8.9 | 2.8 |
+
+The seven ending cards have a standard deviation of **1.2 words** — same
+length, same two-sentence shape, on the most important screen in the app. The
+narration, by contrast, is the healthiest prose in the project and should be
+left alone.
+
+**And the seven `ENDING_OMENS` lines I wrote this afternoon fail their own
+test:** four of seven are the same "…, and …" two-clause shape. Parallelism
+saturation, in copy I added hours ago.
+
+**The proposal is mostly about what not to do.** No word blacklist, no
+punctuation changes, no touching Terms — its flat rhythm is correct for legal
+copy. The em-dash tell is a fading model artifact and the spaced-vs-unspaced
+claim is folklore; the Oxford comma claim has no corpus evidence; and thinning
+adjectives pushes prose *toward* the AI profile, since humans measurably use
+more of them. Detectors false-positive on non-native and deliberately spare
+writing at 61%, and this project's voice is spare by design.
+
+**Could not verify:** whether any of the proposed copy is *better*. Three
+doorway options are offered rather than one, because that is a taste call and
+it belongs to Lawrence.
+
+**Three corrections from review, all of them to my own accuracy:**
+
+- The audit ran against **114** style words, not the 407 the document claimed.
+  The 114 are the high-value subset with the largest measured frequency shifts,
+  and the result was zero, so widening it would not change the conclusion — but
+  the number as written was wrong.
+- Only the HTML audit script was committed; the `src/` one, which produced the
+  ending-card and narration figures, was not. Both are in `scripts/` now.
+- The ending descriptions are **not** all two sentences: `long_winter` and
+  `world_empire` are single sentences. That correction sharpens the finding
+  rather than weakening it — those two reach the same 15 words by a different
+  construction, so the uniformity is in *length*, not sentence count, and
+  varying sentence count alone will not fix it.
+
+**A fourth correction, and the sharpest one:** the "127 narration lines, SD 2.8"
+figure was neither narration nor a clean population. The script dropped every
+string containing `${...}`, which silently excluded most real narration, while
+sweeping in unrelated UI strings like the archive's "No worlds..." message. So
+the number used to justify leaving that surface alone did not measure it.
+
+Rewritten to report three populations honestly: ending cards (7, SD 1.2),
+narration provably reaching `pushNarration()` (17, SD 3.2), and every
+sentence-shaped literal in `main.ts` (218, SD 2.7). The conclusion survives —
+both prose subsets scatter roughly twice as widely as the ending cards — but it
+now rests on a measurement that says what it means.
+
+**And then review killed the headline finding outright, correctly.** The
+SD 1.2 I led with was the spread of *whole-card lengths*, not sentence lengths —
+while the tell being invoked is explicitly about sentences, and the HTML audit
+split sentences properly. Measured comparably, the ending cards score **3.4**,
+running from four words ("Roots opened the roads.") to fifteen. That is *more*
+varied than the rest of the app's prose (2.4), not less.
+
+So the honest result of the whole exercise is a negative one: **this project has
+no measurable AI-writing tells — not lexically, not rhythmically, on any
+surface.** The card-length uniformity is real but it is a craft observation, and
+the document had dressed it as evidence of machine copy.
+
+Worth keeping as a lesson: I compared two numbers produced by two different
+methods and did not notice. The HTML audit split sentences; the src audit
+measured whole literals. Same column header, different quantity.
+
+**Then review made me actually widen the word list, and that was worth doing.**
+Pulled the real dataset (900 words, 410 typed style) and found two things a
+subset had hidden: the measured list contains `this`, `their` and `while` —
+pronouns whose frequency shifted *in biomedical abstracts*, so raw membership is
+the wrong test and the audit now reports the 394 content-bearing words; and
+**`tapestry` and `testament`, the two most-cited tells in popular writing, are
+not in the measured dataset at all.** The folklore vocabulary and the evidenced
+vocabulary are different sets.
+
+Also added the doorway to the audit, which neither script had been reading —
+it is a multiline tagged template in `main.ts`, invisible to both the HTML block
+parser and the single-line literal regex. The document had been proposing three
+rewrites of copy it had never measured. It audits clean (5 sentences, SD 5.0).
+
+And narration lines beginning with a substitution (`${civ.name} begins to
+falter.`) were being dropped by the leading-capital requirement, which was most
+of `narrateEvent()`'s table: 290 sentences became 331.
+
+**Next:** review, then apply whichever options survive — but the case for
+changing anything is now much weaker than when this started, and that should be
+said out loud rather than buried.
