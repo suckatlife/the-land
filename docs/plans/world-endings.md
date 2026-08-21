@@ -298,7 +298,7 @@ So act 3 of a quiet ending is per-title:
 | --- | --- |
 | `rewilded` | **Fade schedule.** Surviving civs ordered (smallest first, or furthest from the last capital) and given death ticks spread across act 3, so the lights go out one by one and the last before the silence. |
 | `garden` | **Nothing dies** — and that has to be enforced. `advanceCivPhase()` runs every tick and will flip a civ from `declining` to `dead` when its phase timer expires; suppressing rallies does not stop it. Freeze ordinary phase aging for the sequence, or pin the living set explicitly. Construction stops, roads soften, wild returns at the edges. The world gets quieter, not emptier — act 4 holds a living world at rest. |
-| `exodus` | **Departure**, which needs a third state. Cities go dark in sequence as launches leave; tiles stay built, not ruined. But `resolveWorldEnding()` and `archiveCurrentWorld()` both define a survivor as *not `dead`*, so leaving the departed alive makes the Chronicle report that they remained — the opposite of what the viewer watched. Add a `departed` civ state that counts as **neither** a death nor a survivor, and exclude it from both. |
+| `exodus` | **Departure**, which needs a third state. Cities go dark in sequence as launches leave; tiles stay built, not ruined. But `resolveWorldEnding()` and `archiveCurrentWorld()` both define a survivor as *not `dead`*, so leaving the departed alive makes the Chronicle report that they remained — the opposite of what the viewer watched. Add a `departed` civ state that counts as **neither** a death nor a survivor. Excluding it from the two archive functions is *not enough*: expansion (`sim.ts:2022`), `maybeBreakaway()` (`:1217`) and most render paths treat any phase other than `dead` as active, so departed peoples would keep spreading and lighting cities through acts 3 and 4. Define **one** `isActive(civ)` predicate and apply it across sim and renderer. |
 | `world_empire` | **Consolidation.** The last rivals are absorbed rather than killed; act 4 holds one colour across the map. |
 
 Rallies are suppressed for the whole window, and the birth paths are frozen per
@@ -418,8 +418,13 @@ Supervolcano, and `sundered` had no score at all. Proposed rule, mirroring the
    `ashfall ← volcanoes`, `impact ← asteroids`, `deluge ← floods + waterGain`,
    `shaking ← earthquakes`, `freeze ← iceExtent/iceMax`, and `quiet` as a flat
    baseline every world can reach.
-2. **Add the seed's affinity** as the same `+1.15` thumb, so close worlds
-   diverge and identical seeds agree.
+2. **Add a seeded cause affinity** as a `+1.15` thumb, so close worlds diverge
+   and identical seeds agree. It must be **its own roll**, not the existing
+   `fate.affinity`: that one is a `WorldEndingKind`, where `ash` covers both
+   `impact` and `ashfall`, four titles collapse to `quiet`, and nothing
+   corresponds to `shaking` — so reusing it cannot express cause-level
+   divergence. `worldFateForSeed()` gains a second draw,
+   `causeAffinity: ApocalypseKind`, salted differently.
 3. **Then derive the title** from the winning cause's legal set, using the
    *existing* ending scores restricted to that set. `shaking → sundered`
    uniquely; `quiet →` whichever of `rewilded | garden | exodus | world_empire`
