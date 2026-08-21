@@ -27,9 +27,13 @@ def ending_cards():
     return [detemplate(d) for d in re.findall(r"description: '([^']+)'", s)]
 
 def main_prose():
+    """Sentence-shaped literals in main.ts, including the ones that START with a
+    substitution. Requiring an initial capital before de-templating silently
+    dropped every line like `${civ.name} begins to falter.` — most of
+    narrateEvent()'s table."""
     s = strip_comments(open('src/main.ts').read())
     out, seen = [], set()
-    for lit in re.findall(r"[`'\"]([A-Z][^`'\"\n]{14,240}?[.!?])[`'\"]", s):
+    for lit in re.findall(r"[`'\"]((?:\$\{[^}]*\}|[A-Z])[^`'\"\n]{14,240}?[.!?])[`'\"]", s):
         if re.search(r'[<>]|https?:|=>|\{\s*kind|\|\||&&', lit):
             continue
         c = detemplate(lit)
@@ -37,7 +41,21 @@ def main_prose():
             seen.add(c); out.append(c)
     return out
 
-for name, lits in (('ending cards ', ending_cards()), ('main.ts prose', main_prose())):
+def doorway():
+    """The first-run doorway is a multiline tagged template in main.ts, so it
+    matches neither the HTML block parser nor the single-line literal regex —
+    it was absent from both audits while the proposal rewrote it."""
+    s = open('src/main.ts').read()
+    m = re.search(r"intro\.innerHTML = `(.*?)`;", s, re.S)
+    if not m:
+        return []
+    inner = re.sub(r'<[^>]+>', '\n', m.group(1))
+    return [detemplate(l) for l in inner.split('\n')
+            if len(l.strip()) > 8 and not l.strip().startswith('$')]
+
+for name, lits in (('doorway      ', doorway()),
+                  ('ending cards ', ending_cards()),
+                  ('main.ts prose', main_prose())):
     print(f"\n--- {name.strip()}")
     report_lexical("  lexical", " ".join(lits))
     rhythm("  rhythm ", [s for l in lits for s in split_sentences(l)], '-v' in sys.argv)

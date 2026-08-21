@@ -16,20 +16,36 @@ Two scripts, both committed: `scripts/copy-audit.py` over the five HTML pages,
 pages *and* the copy that lives in `src/`, which an earlier draft of this
 document did not actually check before claiming it had:
 
-| surface | style-words | puffery | "not X, but Y" | trailing `-ing` |
+| surface | flagged vocabulary | puffery | "not X, but Y" | trailing `-ing` |
 | --- | --- | --- | --- | --- |
-| the five HTML pages | **0** | **0** | **0** | 1 |
-| the seven ending cards | **0** | **0** | **0** | 0 |
-| all prose literals in `main.ts` | **0** | **0** | **0** | 5 |
+| the five HTML pages | *address, addresses, linked, using, were* | **0** | **0** | 1 |
+| the doorway | *fight* | **0** | **0** | 0 |
+| the seven ending cards | **none** | **0** | **0** | 0 |
+| all prose literals in `main.ts` | *approach, emerges, hold, impact, remains, stands, wandering, were* | **0** | **0** | 6 |
 
-Zero hits against **114 style words** — the high-value subset of the 407 that
-Kobak et al. (*Science Advances*, 2025) classify as style rather than content.
-The full 407 are at
-https://github.com/berenslab/llm-excess-vocab and could be wired in; the 114 are
-the ones with the largest measured frequency shifts, and the result was zero, so
-widening the list would not change the conclusion. (Stated precisely because an
-earlier draft of this document claimed the audit ran against all 407. It did
-not.) No *delve*, *tapestry*, *testament*, *underscores*,
+Those are the complete hits against **all 394 content-bearing style words** —
+not a hand-picked subset — and they are ordinary English used ordinarily: *"one
+banner stands"*, *"the birds have gone"*, *"a wandering herd"*. None of the
+actual markers appear: no *delve*, *underscores*, *showcasing*, *pivotal*,
+*seamless*, *crucial* or *realm*.
+
+The audit runs against the **complete** style-typed list from Kobak et al.
+(*Science Advances*, 2025), pulled from
+[`results/excess_words.csv`](https://github.com/berenslab/llm-excess-vocab/blob/main/results/excess_words.csv)
+— 900 words, 410 typed as style. Two earlier drafts used a hand-picked 114-word
+subset and then claimed widening it "would not change the conclusion", which a
+zero intersection cannot support. It has now actually been widened.
+
+**Doing that turned up something worth knowing.** The measured list contains
+`this`, `their` and `while` — pronouns and prepositions whose *frequency shifted
+in biomedical abstracts*. Raw membership is the wrong test, so the audit reports
+the **394 content-bearing** words and keeps the full 410 available as
+`style_any`.
+
+**And the two most-cited tells in popular writing — *tapestry* and *testament* —
+are not in the measured dataset at all.** The folklore vocabulary and the
+evidenced vocabulary are different sets. That alone is a reason not to edit from
+a list you read in a blog post. No *delve*, *tapestry*, *testament*, *underscores*,
 *seamless*, *robust*, *realm*. No "boasts a", no "stands as", no "is a
 testament to". That is unusual and worth stating plainly: **the copy does not
 have an AI vocabulary problem.**
@@ -42,8 +58,9 @@ prose clusters at 10–30 tokens ("register leveling", PMC11422446). Measured pe
 | surface | sentences | mean | **SD** | under 8 words |
 | --- | --- | --- | --- | --- |
 | the five HTML pages | 81 | 10.4 | **6.6** | 33 |
+| the doorway | 5 | 8.6 | **5.0** | 2 |
 | **the seven ending cards** | **12** | **8.8** | **3.4** | **5** |
-| all prose literals in `main.ts` | 290 | 6.9 | **2.4** | 194 |
+| all prose literals in `main.ts` | 331 | 6.7 | **2.4** | 229 |
 
 *(The page figures changed after review: the extractor replaced every tag with a
 space, which merged headings, navigation and footers into adjacent paragraphs
@@ -266,16 +283,16 @@ where a person is visibly present.
 
 ---
 
-**One small thing the audit did surface:** five trailing `-ing` significance
+**One small thing the audit did surface:** six trailing `-ing` significance
 clauses among the `main.ts` prose literals (the *"…, highlighting the region's
-enduring legacy"* shape). That is a low count across 290 sentences and may all
+enduring legacy"* shape). That is a low count across 331 sentences and may all
 be legitimate; worth a look with `python3 scripts/copy-audit-src.py -v` before
 deciding it is nothing.
 
 ## 5. What I am deliberately not proposing
 
 - No changes to the in-world narration. The closest measurement available is the
-  **`main.ts` prose superset** — 290 sentences, mean 6.9 words, 194 under eight,
+  **`main.ts` prose superset** — 331 sentences, mean 6.7 words, 229 under eight,
   which also contains HUD, archive and doorway copy and is *not* narration
   specifically. On that evidence the surface is short, concrete and varied, and
   nothing in the audit flags it. The recommendation to leave it alone therefore

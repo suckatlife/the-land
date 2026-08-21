@@ -1309,6 +1309,24 @@ Worth keeping as a lesson: I compared two numbers produced by two different
 methods and did not notice. The HTML audit split sentences; the src audit
 measured whole literals. Same column header, different quantity.
 
+**Then review made me actually widen the word list, and that was worth doing.**
+Pulled the real dataset (900 words, 410 typed style) and found two things a
+subset had hidden: the measured list contains `this`, `their` and `while` —
+pronouns whose frequency shifted *in biomedical abstracts*, so raw membership is
+the wrong test and the audit now reports the 394 content-bearing words; and
+**`tapestry` and `testament`, the two most-cited tells in popular writing, are
+not in the measured dataset at all.** The folklore vocabulary and the evidenced
+vocabulary are different sets.
+
+Also added the doorway to the audit, which neither script had been reading —
+it is a multiline tagged template in `main.ts`, invisible to both the HTML block
+parser and the single-line literal regex. The document had been proposing three
+rewrites of copy it had never measured. It audits clean (5 sentences, SD 5.0).
+
+And narration lines beginning with a substitution (`${civ.name} begins to
+falter.`) were being dropped by the leading-capital requirement, which was most
+of `narrateEvent()`'s table: 290 sentences became 331.
+
 **Next:** review, then apply whichever options survive — but the case for
 changing anything is now much weaker than when this started, and that should be
 said out loud rather than buried.
