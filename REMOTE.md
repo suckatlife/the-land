@@ -68,16 +68,23 @@ description claims, and is the evidence real?*
    both:
 
    ```
-   PR=<n>; HEAD=$(git rev-parse HEAD)
+   PR=<n>
+   # Ask GitHub for the head — NOT git rev-parse HEAD. A local checkout can be
+   # stale, or on another branch entirely (see "one agent per working copy"),
+   # and an older commit that was reviewed would then read as success.
+   HEAD=$(gh api repos/suckatlife/the-land/pulls/$PR --jq .head.sha)
    # findings
-   gh api repos/suckatlife/the-land/pulls/$PR/reviews \
+   gh api --paginate repos/suckatlife/the-land/pulls/$PR/reviews \
      --jq ".[] | select(.user.login==\"chatgpt-codex-connector[bot]\")
                  | select(.commit_id==\"$HEAD\") | .submitted_at"
    # no findings
-   gh api repos/suckatlife/the-land/issues/$PR/comments \
+   gh api --paginate repos/suckatlife/the-land/issues/$PR/comments \
      --jq ".[] | select(.user.login==\"chatgpt-codex-connector[bot]\")
                  | select(.body | contains(\"${HEAD:0:10}\")) | .created_at"
    ```
+
+   `--paginate` on both: a talkative PR runs past the first page, and a missing
+   later comment reads as "not reviewed" and triggers a needless escalation.
 
    Either one, matching the current head, means reviewed. Two things that look
    like answers but are not: a review or comment against an *earlier* commit,
