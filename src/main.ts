@@ -7314,7 +7314,11 @@ app.ticker.add((ticker) => {
     blackoutGfx.visible = false;
   }
   updateSmoke(dtSec);
-  updateFarmGrowth(simWorld.tick);
+  // Declared here rather than lower down so the land transitions below can be
+  // gated too: a field growing into view during act 4 is the world still
+  // changing, whatever the tile counts say.
+  const worldHeld = simWorld.ending?.silent === true;
+  if (!worldHeld) updateFarmGrowth(simWorld.tick);
   updateBiomeTrans();
   flushBiomeChanges(simWorld.tick);
   drawRoads(dtSec);
@@ -7340,7 +7344,6 @@ app.ticker.add((ticker) => {
   // biomes — or push narration of their own. Left running, the silence could
   // still visibly and permanently change. Atmosphere, light and the drawing
   // passes continue; the world does not.
-  const worldHeld = simWorld.ending?.silent === true;
   if (!worldHeld) {
     updateFires(dtSec, nowSec, n);
     maybeEruptVolcano(dtSec);

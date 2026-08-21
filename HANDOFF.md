@@ -1313,4 +1313,13 @@ Also `checkWarQuiet()`, which crosses its own 45-second threshold and narrates
 "the border falls quiet" — a seventh narrator, found only because two surviving
 civs is a common way for `garden` to end.
 
+**Eighth system: farm growth.** Fields kept growing into view during act 4 —
+again invisible to a tile-count check. Held.
+
+**Deliberately not held:** the in-flight tile-colour, building-alpha and biome
+crossfades. Those are transitions *already committed* before the boundary, and
+freezing them mid-fade would leave half-drawn tiles standing through the
+aftermath, which looks broken rather than still. Letting a fade finish is not
+the world changing. That is a judgement call and the opposite one is defensible.
+
 **Next:** the copy pass (Lawrence's next brief).
