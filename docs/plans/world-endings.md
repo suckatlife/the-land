@@ -157,9 +157,16 @@ terminal path:
    and act 4 would begin with all of them intact. The guarantee exists so a
    regional disaster never wipes the world; the apocalypse is precisely the
    case it was written to exclude. Make `emberCount` an argument rather than a
-   constant, and let each apocalypse pass **its own survivor count** — which is
-   exactly the "survivor profile" below, expressed as a number: the Deluge
-   passes 1–2 (lights above the sea), a full rewilding passes 0.
+   constant. But a *count* is not enough: `safeIds` is recomputed on every
+   `applyCatastrophe()` call, automatically includes every capital outside that
+   segment's radius, and only then pads to `emberCount`. Across a repeated
+   front the protected set drifts from hit to hit, so survivor identity changes
+   and more civs survive than intended. The apocalypse must instead **choose a
+   persistent survivor set once at `commitTick`** — from its own final shape,
+   e.g. the Deluge protects whoever holds the highest ground — and pass that
+   same set through every hit in the sequence, with the per-hit capital rule
+   and the ember padding both disabled. Survival then follows the apocalypse's
+   geometry, which is the point.
 5. **Freeze the birth paths at `commitTick`.** `step()` keeps rolling
    `baseCivSpawnChance` and settling `pendingSettlements` (`sim.ts:2221-2242`),
    and a desperate expedition can found a successor after its parent dies
@@ -168,7 +175,18 @@ terminal path:
    roll and clear `pendingSettlements` when the ending begins. (A migration
    band walking into an apocalypse is a good image; a civilisation *founded*
    during one is a bug. If we want the image, let existing bands walk but never
-   settle.)
+   settle.) **`maybeBreakaway()` is a fourth, separate path** — it runs every 15
+   ticks and inserts a `rising` civ directly (`sim.ts:1214`, `:2142`),
+   bypassing migrations, settlements and expeditions alike. It has to be gated
+   with the others; a breakaway colony founded during act 3 would be in no
+   schedule and still lit in the silence.
+6. **Suspend the in-cycle catastrophe systems.** `step()` keeps escalating
+   `world.brewing` and calls `stepVolcanoes()` independently
+   (`sim.ts:2190-2193`, `:1443`). An ordinary severe flood arriving in the
+   middle of the Impact would stage a second, unrelated disaster with its own
+   omens and renderer effects, and would break the `severeCatastrophes <= 1`
+   assertion in §10.5b. Clear `world.brewing` at `commitTick` and hold both
+   systems for the sequence. The apocalypse is the only thing happening.
 
 **But the requirement is not "everything dies."** `drowned` reads *"the last
 cities keep their lights above a rising sea"*; survivors on high ground are the
@@ -342,8 +360,15 @@ never tell which one ran. The two vocabularies are different things:
   read, and what determinism is asserted on.
 - **`WorldEndingKind`** — what the card *says*, and what the archive labels.
 
-An explicit `APOCALYPSE_TO_ENDING` map joins them, and the archive record gains
-an `apocalypse` field so the Chronicle records the cause as well as the title.
+**Commit the pair, not the cause alone.** A single-valued
+`APOCALYPSE_TO_ENDING` map cannot work in the other direction: `rewilded`,
+`world_empire`, `exodus` and `garden` are four different quiet outcomes and all
+share the `quiet` cause, so one key cannot reach four titles — three of those
+cards would become unreachable. So `commitEndingKind()` returns
+**`{ apocalypse, ending }`**, chosen together at `commitTick`, and the map
+degrades to a *validation* — which endings are legal for which cause — rather
+than a function. The archive records both fields, so the Chronicle keeps the
+cause as well as the title.
 `shaking` needs a title no existing kind provides — propose an eighth,
 `sundered` ("the ground remembered it was not solid"). `impact` and `ashfall`
 may legitimately share `ash`: both leave a world under a dark sky, and the
@@ -403,12 +428,16 @@ Headless, since none of this can be judged by an agent's eye:
 3. **Pacing** — assert the four acts fire in order with the intended
    world-second durations under pause and at 4x.
 4. **Frame cost** — FPS through act 3 vs the preceding minute.
-5. **Coherence** — the printed title is the one `APOCALYPSE_TO_ENDING` maps the
-   committed `ApocalypseKind` to, and the archive records both.
+5. **Coherence** — the printed title is the committed `ending`, the committed
+   `apocalypse` is legal for it per the map, and the archive records both.
+   Assert all four quiet titles remain reachable across seeds.
 5b. **The epitaph counts one disaster, not ten** — assert
    `history.severeCatastrophes` rises by at most 1 across the whole sequence.
 5c. **Nothing is born during the ending** — assert civ count never rises after
-   `commitTick`, and that `pendingSettlements` is empty in act 4.
+   `commitTick` (covering breakaways, which are the easiest path to miss), and
+   that `pendingSettlements` is empty in act 4.
+5d. **Nothing else happens** — assert no non-apocalypse `catastrophe` or `omen`
+   event fires between `commitTick` and the turnover.
 6. **Deaths land in act 3** — no civ killed by the apocalypse is still in
    `declining` when act 4 begins, and no `rally` fires during the sequence. For
    the quiet end, assert the last scheduled death precedes act 4.
@@ -456,9 +485,12 @@ working structure; if it doesn't, we learn that before building four disasters.
 9. §8a-bis proposes an eighth `WorldEndingKind` (`sundered`) for The Shaking.
    Is a new title right, or should a shattered world be archived as `ash` or
    `rewilded` and the distinction live only in the `apocalypse` field?
-10. §5a.4 turns the ember guarantee into a per-apocalypse survivor count. Is
-   "how many civs live through this" the right dial to expose, or should
-   survival fall out of the physics?
+10. §5a.4 gives each apocalypse a persistent survivor set chosen from its own
+   geometry. Is "who is standing on high ground" the right selector for the
+   Deluge, or should survival be scored on something less literal?
+11. §5a.6 silences the in-cycle catastrophe systems for the whole 102-second
+   sequence. Is a world where nothing else can happen for a hundred seconds
+   correct, or should ordinary disasters still be able to interleave?
 8. §8b sizes the sequence at 3,060 ticks. If review shortens act 1 the commit
    moves later and the world gets less warning — is 40s of omen the part to
    protect, or the part to cut?

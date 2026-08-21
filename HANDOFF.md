@@ -1090,4 +1090,17 @@ floor, the ember guarantee, the decline timer and the birth loop are all working
 as designed; the plan just wanted them to behave differently at the end of the
 world.
 
+**Round five** closed the last of the "existing machinery won't do that" family:
+`maybeBreakaway()` is a *fourth* birth path that inserts a rising civ directly
+every 15 ticks; `world.brewing` and `stepVolcanoes()` keep firing, so an
+ordinary flood could arrive mid-Impact; the ember guarantee is recomputed per
+hit so a *count* lets survivor identity drift, and the apocalypse needs a
+persistent survivor set chosen from its own geometry; and a single-valued
+cause→title map cannot reach four different quiet titles, so the commit returns
+the pair.
+
+Five rounds, thirteen findings, none of them cosmetic. The plan is worth more
+than the code it will produce — every one of these would have been found in
+implementation instead, at much higher cost.
+
 **Next:** review, then phase 1 if the shape survives.
