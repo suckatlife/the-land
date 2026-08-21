@@ -2237,10 +2237,13 @@ export function step(
 
   // Once pressure commits to a direction, the coming catastrophe takes shape;
   // omens fire as it nears.
-  if (!world.brewing && world.catastrophePressure >= CATASTROPHE.brewingThreshold) {
+  if (!world.ending && !world.brewing && world.catastrophePressure >= CATASTROPHE.brewingThreshold) {
     world.brewing = { type: rollCatastropheType(characterOf(world)), severity: rollCatastropheSeverity(), omenStage: 0 };
   }
-  if (world.brewing) {
+  // Omens are held during the ending too: beginEnding() clearing `brewing` only
+  // stopped the impact, and an unrelated flood or asteroid omen narrated over a
+  // committed ending is exactly the second disaster this is meant to prevent.
+  if (!world.ending && world.brewing) {
     // Omen depth predicts magnitude: a minor event gets only the stage-1
     // murmur, severe ones escalate through all three. The viewer learns that
     // stage-3 language means something big — and a lone omen that fizzles

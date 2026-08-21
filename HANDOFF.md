@@ -1196,6 +1196,28 @@ which contradicts *"an age learned how to remain"* — `advanceCivPhase()` still
 kills regardless. Phase 2 owns that, along with `exodus`'s launches and
 `world_empire`'s consolidation.
 
+**Three bugs found in review, all mine, all fixed:**
+
+1. *Omens still fired during the ending.* `beginEnding()` cleared
+   `world.brewing`, but the block above it recreated one as pressure crossed a
+   threshold and emitted ordinary omen events — so a committed ending could be
+   narrated over by an unrelated flood or asteroid. The guard stopped the
+   impact, not the warning. Both blocks are gated now.
+2. *The `skip 5k` button skipped the whole ending.* Its handler called `step()`
+   5,000 times without the new checkpoints, so births and catastrophes ran
+   through the ending window and the world then committed at or past `endTick`
+   and was replaced immediately. The commit/omen/turnover checks are now one
+   `endingCheckpoints()` called from both loops.
+   **This also corrected my own verification:** I had seen the commitment fire
+   at tick 15114 against a commit tick of 14732 and dismissed 382 ticks of
+   lateness as "skip granularity". It was this bug. Re-measured with a skip
+   deliberately straddling the commit: `startedTick` is now **exactly**
+   `commitTick`, lateness **0**, the world survives the skip, and
+   `simWorld.brewing` stayed null through every sample of the ending.
+3. *`__forceEnding` was not one-shot* — it survived `resetWorld()` and forced
+   every later world, which would quietly invalidate any multi-world
+   reachability or determinism probe. Consumed on use now.
+
 **Next:** Lawrence watches a turnover on the preview. If the shape reads, phase
 2 is the cheap apocalypses (supervolcano, long winter) plus the three remaining
 quiet gestures.

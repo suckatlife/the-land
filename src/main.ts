@@ -1850,7 +1850,10 @@ let forcedEndingKind: WorldEndingKind | null = null;
 
 function commitEnding() {
   committedEnding = commitEndingKind(simWorld, biomeMap, currentWorldHistory, currentWorldFate);
-  if (forcedEndingKind) committedEnding = { ...committedEnding, ending: forcedEndingKind };
+  if (forcedEndingKind) {
+    committedEnding = { ...committedEnding, ending: forcedEndingKind };
+    forcedEndingKind = null;   // one-shot: it forces the NEXT commitment, not every one
+  }
   // Phase 1 stages act 3 for `rewilded` only. `garden`, `exodus` and
   // `world_empire` get the omen and the held silence but keep today's act 3,
   // because each needs a different gesture and none of them is a death.
@@ -1858,6 +1861,27 @@ function commitEnding() {
     ? buildFadeSchedule(currentWorldFate.endTick)
     : new Map<number, number>();
   beginEnding(simWorld, fade);
+}
+
+// The commit, the omen and the turnover. Called after every step() — from the
+// ticker loop and from the skip fast-forward alike. A 5,000-tick skip that
+// crossed these boundaries would otherwise run births and catastrophes straight
+// through the ending window, then commit at or past endTick and replace an
+// over-age world, skipping the whole staged sequence.
+// Returns true if the world turned over, in which case simWorld is a new one
+// and the caller must stop stepping the old.
+function endingCheckpoints(): boolean {
+  const acts = endingActTicks(currentWorldFate.endTick);
+  if (!committedEnding && simWorld.tick >= acts.commit) commitEnding();
+  if (committedEnding && !endingOmenSpoken && simWorld.tick >= acts.omen) {
+    endingOmenSpoken = true;
+    pushNarration(ENDING_OMENS[committedEnding.ending], { priority: 'high' });
+  }
+  if (simWorld.tick >= currentWorldFate.endTick) {
+    beginWorldEnding();
+    return true;
+  }
+  return false;
 }
 
 // Instrument for the ending sequence: what was committed, when each act opens,
@@ -7188,18 +7212,9 @@ app.ticker.add((ticker) => {
       }
     }
     // The ending is staged across the world's last ~102 seconds, so it has to
-    // be chosen well before the turnover — act 1 cannot start without knowing
-    // what is ending.
-    const acts = endingActTicks(currentWorldFate.endTick);
-    if (!committedEnding && simWorld.tick >= acts.commit) commitEnding();
-    if (committedEnding && !endingOmenSpoken && simWorld.tick >= acts.omen) {
-      endingOmenSpoken = true;
-      pushNarration(ENDING_OMENS[committedEnding.ending], { priority: 'high' });
-    }
-
-    // Record the ending, then let the next world rise through the blackout.
-    if (simWorld.tick >= currentWorldFate.endTick) {
-      beginWorldEnding();
+    // be chosen well before the turnover, and the next world rises through the
+    // blackout when it arrives.
+    if (endingCheckpoints()) {
       frameEvents.length = 0;
       break;
     }
@@ -8522,7 +8537,12 @@ qualityBtn.addEventListener('click', () => {
 document.getElementById('skip')!.addEventListener('click', () => {
   const wasRunning = running;
   running = false;
-  for (let i = 0; i < SKIP_TICKS; i++) step(simWorld, biomeMap, elevationMap);
+  for (let i = 0; i < SKIP_TICKS; i++) {
+    step(simWorld, biomeMap, elevationMap);
+    // The ending's boundaries live inside the skip as well; crossing one here
+    // and only noticing on the next frame would bypass the whole sequence.
+    if (endingCheckpoints()) break;
+  }
   // Full redraw after skip — terrain may have mutated, so rebuild biome layer first.
   // Scars from skipped ticks weren't rendered; drop any stale ones.
   atmos.clearScars();
