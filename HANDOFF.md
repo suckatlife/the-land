@@ -1000,3 +1000,38 @@ been checked against a known-clean review, so its silence meant nothing — and 
 reported that silence as fact three times before being corrected.
 
 **Next:** Nothing pending.
+
+---
+
+## Plan — apocalypses that end a world — claude — 2026-08-21
+
+Proposal only, no code. `docs/plans/world-endings.md`. Lawrence asked for the
+reset to stop being anticlimactic and for several distinct apocalypses, and
+asked for options as a plan for Codex to review.
+
+**The diagnosis, which is sharper than "it feels flat":** `beginWorldEnding()`
+is five lines. At `endTick` the world is *replaced* — `resolveWorldEnding()`
+classifies it retrospectively, `resetWorld()` swaps it, and the viewer gets
+0.7s of black and a 1.8s fade. Nothing is unmade. No tile changes state, no civ
+falls. `WORLD_ENDINGS` is a caption applied after the fact, so a world that
+never flooded can be titled *The Drowned World*.
+
+**The scale problem, measured:** the map is 9,216 tiles and `severeRadius` 32
+already covers ~35% of it. A bigger circle cannot read as an apocalypse — it
+has to differ in kind, global by construction, and slow enough to watch.
+
+**Proposed:** a four-act ending (omen ~40s / onset ~12s / unmaking ~35s /
+**silence ~15s**) in world-seconds so it obeys pause and the speed control;
+six candidate endings of which only three are disasters; and phase 1 that ships
+the *shape* for every world with no new apocalypse at all.
+
+**Two things I want argued with in review**, both flagged in the doc: whether
+"slow and large, not fast and bright" genuinely reconciles an apocalypse with
+the brief's calm test or is a rationalisation; and whether holding a dead world
+for 15 seconds is the best second in the sequence or just dead air.
+
+**Also noted:** `garden`, `exodus` and `world_empire` should never explode.
+Making every ending spectacular would turn spectacle into wallpaper and cost
+the calm test, so the plan keeps a quiet end.
+
+**Next:** review, then phase 1 if the shape survives.
