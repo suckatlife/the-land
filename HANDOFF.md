@@ -1221,3 +1221,50 @@ kills regardless. Phase 2 owns that, along with `exodus`'s launches and
 **Next:** Lawrence watches a turnover on the preview. If the shape reads, phase
 2 is the cheap apocalypses (supervolcano, long winter) plus the three remaining
 quiet gestures.
+
+---
+
+## Plan — a copy pass — claude — 2026-08-21
+
+Proposal only, no copy changed. `docs/plans/copy-pass.md`, plus
+`scripts/copy-audit.py`, the script the numbers came from.
+
+**Measured before proposing.** Audited every page and every user-facing string
+literal against the evidenced tells rather than guessing.
+
+**The lexical tells are not here.** Zero hits across all five pages from the
+407-word measured excess-vocabulary list (Kobak et al., Science Advances 2025):
+no *delve*, *tapestry*, *testament*, *seamless*, *realm*. Zero puffery, zero
+"not X, but Y". Worth stating plainly, because the brief assumed there would be
+something to strip.
+
+**The tells that are here are rhythmic:**
+
+| surface | lines | mean | SD |
+| --- | --- | --- | --- |
+| all five pages | 65 | 14.4 | 6.3 |
+| **ending descriptions** | **7** | **15.0** | **1.2** |
+| in-world narration | 127 | 8.9 | 2.8 |
+
+The seven ending cards have a standard deviation of **1.2 words** — same
+length, same two-sentence shape, on the most important screen in the app. The
+narration, by contrast, is the healthiest prose in the project and should be
+left alone.
+
+**And the seven `ENDING_OMENS` lines I wrote this afternoon fail their own
+test:** four of seven are the same "…, and …" two-clause shape. Parallelism
+saturation, in copy I added hours ago.
+
+**The proposal is mostly about what not to do.** No word blacklist, no
+punctuation changes, no touching Terms — its flat rhythm is correct for legal
+copy. The em-dash tell is a fading model artifact and the spaced-vs-unspaced
+claim is folklore; the Oxford comma claim has no corpus evidence; and thinning
+adjectives pushes prose *toward* the AI profile, since humans measurably use
+more of them. Detectors false-positive on non-native and deliberately spare
+writing at 61%, and this project's voice is spare by design.
+
+**Could not verify:** whether any of the proposed copy is *better*. Three
+doorway options are offered rather than one, because that is a taste call and
+it belongs to Lawrence.
+
+**Next:** review, then apply whichever options survive.
