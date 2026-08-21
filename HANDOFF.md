@@ -1264,4 +1264,19 @@ genuinely still. No page exceptions.
 path is asserted from the code rather than measured; it needs a civ whose
 decline timer happens to expire mid-omen, which I could not force.
 
+**A sixth finding, and the fix was incomplete without it:** freezing `step()`
+only froze the *sim*. The ticker still ran `updateFires`, `updatePlagues`,
+floods, droughts, volcanoes, festivals and `maybeChronicle` in `main.ts` —
+several of which mutate `biomeMap` or `simWorld.tiles` (fire turns forest to
+grass, plague turns built tiles to ruins) or push narration of their own. The
+silence could still visibly and permanently change. Those systems are now gated
+on the silent state; atmosphere, light and the drawing passes continue.
+
+My first test passed only because that run happened to have no fire or plague
+in flight — a gap in the test, not evidence. Re-measured by forcing a plague,
+fire, flood, drought and eruption ~260 ticks before act 4: built and ruin counts
+were **visibly moving right up to the boundary**, then held at 541 / 1793 / 6882
+across 15 samples while the tick advanced 397. `__dbg` now exposes the debug
+spawns so this case stays testable.
+
 **Next:** the copy pass (Lawrence's next brief).

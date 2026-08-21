@@ -7327,18 +7327,27 @@ app.ticker.add((ticker) => {
   updateOrbitalRing(dtSec, nowSec, n);
   drawCauseways();
   drawLighthouses(nowSec, n);
-  updateFires(dtSec, nowSec, n);
-  maybeEruptVolcano(dtSec);
-  updateVolcanoes(dtSec, nowSec, n);
-  maybeOutbreak(dtSec, nowSec);
-  updatePlagues(nowSec);
-  maybeAwaken(dtSec, nowSec);
-  updateFaiths(nowSec, n);
-  maybeFlood(dtSec);
-  updateFloods(dtSec, nowSec, n);
-  maybeGrowDelta(dtSec);
-  maybeDrought(dtSec);
-  updateDroughts(dtSec, nowSec);
+  // Act 4 holds the world, and freezing step() was not enough to do it: these
+  // systems live in the renderer but mutate the map — fire turns forest to
+  // grass, plague turns built tiles to ruins, floods and droughts rewrite
+  // biomes — or push narration of their own. Left running, the silence could
+  // still visibly and permanently change. Atmosphere, light and the drawing
+  // passes continue; the world does not.
+  const worldHeld = simWorld.ending?.silent === true;
+  if (!worldHeld) {
+    updateFires(dtSec, nowSec, n);
+    maybeEruptVolcano(dtSec);
+    updateVolcanoes(dtSec, nowSec, n);
+    maybeOutbreak(dtSec, nowSec);
+    updatePlagues(nowSec);
+    maybeAwaken(dtSec, nowSec);
+    updateFaiths(nowSec, n);
+    maybeFlood(dtSec);
+    updateFloods(dtSec, nowSec, n);
+    maybeGrowDelta(dtSec);
+    maybeDrought(dtSec);
+    updateDroughts(dtSec, nowSec);
+  }
   updateRiverCraft(dtSec, n);
   drawEnergyFarms(nowSec, n);
   drawMegastructures(nowSec, n);
@@ -7347,8 +7356,10 @@ app.ticker.add((ticker) => {
   drawEraSkylines(nowSec, n);
   updateBirdFlocks(dtSec, nowSec, n);
   maybeGhost(dtSec, n);
-  updateFestival(n);
-  maybeChronicle();
+  if (!worldHeld) {
+    updateFestival(n);   // a festival narrates when it starts
+    maybeChronicle();
+  }
   // The camera breathes — whole-stage lens scale, leaning in with dread.
   breathT += worldSeconds;   // camera breathing on the world's clock
   app.stage.scale.set(
@@ -7743,6 +7754,12 @@ const DBG_SPAWNS: Array<[string, (() => void) | null]> = [
   ['— clear —', null],
   ['Clear debug spawns', () => { debugMegas.length = 0; debugWonders.length = 0; debugRing = false; }],
 ];
+// The same spawns, callable from the console, so the ending's hold can be
+// tested against an event that is actually in flight.
+(window as any).__dbg = Object.fromEntries(
+  DBG_SPAWNS.filter(([, fn]) => fn).map(([label, fn]) => [label, fn!]),
+);
+
 
 const hud = document.createElement('div');
 hud.style.cssText = `
