@@ -1293,4 +1293,22 @@ sentence-shaped literal in `main.ts` (218, SD 2.7). The conclusion survives —
 both prose subsets scatter roughly twice as widely as the ending cards — but it
 now rests on a measurement that says what it means.
 
-**Next:** review, then apply whichever options survive.
+**And then review killed the headline finding outright, correctly.** The
+SD 1.2 I led with was the spread of *whole-card lengths*, not sentence lengths —
+while the tell being invoked is explicitly about sentences, and the HTML audit
+split sentences properly. Measured comparably, the ending cards score **3.4**,
+running from four words ("Roots opened the roads.") to fifteen. That is *more*
+varied than the rest of the app's prose (2.4), not less.
+
+So the honest result of the whole exercise is a negative one: **this project has
+no measurable AI-writing tells — not lexically, not rhythmically, on any
+surface.** The card-length uniformity is real but it is a craft observation, and
+the document had dressed it as evidence of machine copy.
+
+Worth keeping as a lesson: I compared two numbers produced by two different
+methods and did not notice. The HTML audit split sentences; the src audit
+measured whole literals. Same column header, different quantity.
+
+**Next:** review, then apply whichever options survive — but the case for
+changing anything is now much weaker than when this started, and that should be
+said out loud rather than buried.

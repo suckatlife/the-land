@@ -30,45 +30,35 @@ not.) No *delve*, *tapestry*, *testament*, *underscores*,
 testament to". That is unusual and worth stating plainly: **the copy does not
 have an AI vocabulary problem.**
 
-**The tells that are here are rhythmic.** Sentence length is the measurement
-with the cleanest evidence behind it — human prose scatters, LLM prose clusters
-at 10–30 tokens ("register leveling", PMC11422446).
+**And neither, it turns out, are the rhythmic ones.** Sentence-length dispersion
+is the tell with the cleanest evidence behind it — human prose scatters, LLM
+prose clusters at 10–30 tokens ("register leveling", PMC11422446). Measured per
+*sentence*, comparably across every surface:
 
-| surface | lines | mean | **SD** | in the 8–25w band |
+| surface | sentences | mean | **SD** | under 8 words |
 | --- | --- | --- | --- | --- |
-| all five pages | 65 | 14.4 | 6.3 | **83%** |
-| `terms/index.html` | 18 | 14.2 | **4.9** | — |
-| **`endings.ts` descriptions** | **7** | **15.0** | **1.2** | **100%** |
-| narration reached via `pushNarration()` | 17 | 8.6 | **3.2** | — |
-| all sentence-shaped literals in `main.ts` | 218 | 9.1 | **2.7** | — |
+| the five HTML pages | 65 | 14.4 | **6.3** | 6 |
+| **the seven ending cards** | **12** | **8.8** | **3.4** | **5** |
+| all prose literals in `main.ts` | 283 | 6.9 | **2.4** | 187 |
 
-Two things stand out.
+**This kills the finding an earlier draft of this document led with**, and the
+correction is worth spelling out because it is instructive.
 
-**The seven ending descriptions have a standard deviation of 1.2 words.** Every
-one lands between 13 and 17 words:
+That draft reported the ending cards at **SD 1.2** and called them "the most
+uniform prose in the project". That number was the spread of **whole-card
+lengths** — all seven land between 13 and 17 words — not of sentence lengths.
+The tell being invoked is about sentences. Split properly, the cards run from
+four words (*"Roots opened the roads."*) to fifteen (*"The warm country narrowed
+to a few valleys, and every surviving fire became a capital."*) and score
+**3.4 — more varied than the rest of the app's prose, not less.**
 
-| | drowned | long_winter | ash | rewilded | world_empire | exodus | garden |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| words | 16 | 15 | 13 | 15 | 15 | 17 | 14 |
-| sentences | 2 | **1** | 2 | 2 | **1** | 2 | 2 |
+So the honest summary of the whole audit is: **this project does not have
+measurable AI-writing tells.** Not lexically, not rhythmically, on any surface.
 
-They are *not* all two sentences — `long_winter` and `world_empire` are single
-sentences. That correction sharpens the finding rather than weakening it: those
-two reach the same 15-word length by a different construction, so the
-uniformity lives in **length**, not in sentence count. This is the most uniform
-prose in the project and it sits on the most important screen — the card a
-viewer reads when a world they watched for fifteen minutes ends.
-
-**The in-world prose is the healthiest text here.** Both populations agree in
-shape: short, scattered, concrete, with 73 of 218 literals under eight words and
-almost nothing above 25. They are reported separately and honestly because
-neither is cleanly "the narration" — the 17 are those I can prove reach
-`pushNarration()`, and the 218 are every sentence-shaped literal in the file,
-which also sweeps in HUD and archive strings. An earlier draft of this document
-reported a single figure of "127 narration lines, SD 2.8"; that number was a
-filtered mix of the two and was mislabelled. The conclusion survives the
-correction — both subsets scatter roughly twice as widely as the ending cards —
-but the claim needed to match the measurement.
+The whole-card uniformity is still a real observation — every ending card
+occupies the same visual weight, 13 to 17 words, which is a *design* fact worth
+a decision. But it is a craft observation, not an AI tell, and this document
+should not have dressed it as one.
 
 ---
 
@@ -182,13 +172,22 @@ I'd argue for **B**. It is the only one that trusts the thing on screen to do
 the explaining, and the doorway is in front of a *moving world* — the copy is
 competing with it.
 
-### 4b. The ending cards — the SD 1.2 problem
+### 4b. The ending cards — a craft note, not a tell
 
-The seven descriptions all land in a five-word band. The fix is not to rewrite
-them into a new uniform shape; it is to **let their lengths diverge** so they do
-not read as a set. Note that varying *sentence count* alone will not do it —
-`long_winter` and `world_empire` already differ there and still land at 15
-words.
+Their sentence rhythm is fine (SD 3.4). What is uniform is **card length**: all
+seven land in a five-word band, 13 to 17.
+
+| | drowned | long_winter | ash | rewilded | world_empire | exodus | garden |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| words | 16 | 15 | 13 | 15 | 15 | 17 | 14 |
+| sentences | 2 | 1 | 2 | 2 | 1 | 2 | 2 |
+
+Whether that matters is a taste call, and a defensible answer is *no*: they
+appear in the same slot every time, and equal weight may be exactly right. The
+argument for varying them is that seven endings which are meant to feel
+different currently arrive at the same size. The rewrites below are offered on
+that basis alone — **not** because anything measured says they read as machine
+copy.
 
 Illustrative, on two of them:
 
@@ -259,10 +258,9 @@ where a person is visibly present.
 
 ## 5. What I am deliberately not proposing
 
-- No changes to the in-world narration. It already has the best measured rhythm
-  in the project — SD 3.2 on the lines provably reaching `pushNarration()`, 2.7
-  across all 218 sentence-shaped literals, against 1.2 for the ending cards.
-  Touching it is the highest-risk, lowest-value edit available.
+- No changes to the in-world narration. 283 sentences, mean 6.9 words, 187 of
+  them under eight. It is short, concrete and varied, and nothing in the audit
+  flags it. Touching it is the highest-risk, lowest-value edit available.
 - No word blacklist and no automated find-and-replace anywhere.
 - No punctuation changes at all.
 - No changes to Terms.

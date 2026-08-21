@@ -1,15 +1,22 @@
-"""Measure the rhythm of user-facing prose in src/.
+"""Sentence-length spread of user-facing prose in src/.
 
-Sentence-length spread is the AI-writing tell with the cleanest evidence behind
-it (PMC11422446: human prose scatters, LLM prose clusters at 10-30 tokens), so
-that is what this reports.
+Sentence-length dispersion is the AI-writing tell with the cleanest evidence
+behind it (PMC11422446: human prose scatters, LLM prose clusters at 10-30
+tokens). This measures SENTENCES, split the same way scripts/copy-audit.py
+splits the HTML pages, so the two are comparable.
 
-Two populations, kept separate on purpose:
-  * ending cards  - the seven WORLD_ENDINGS descriptions
-  * narration     - lines that reach pushNarration(), including the templated
-                    ones. An earlier version of this script dropped every
-                    string containing ${...}, which silently excluded most
-                    narration and included unrelated UI strings instead.
+Two populations, and the labels are deliberately literal about what they are:
+
+  ending cards   - the seven WORLD_ENDINGS descriptions. A closed, hand-checkable
+                   set; this is the population the proposal's argument rests on.
+  main.ts prose  - every sentence-shaped string literal in main.ts. A SUPERSET of
+                   the in-world narration: it also contains HUD, archive and
+                   intro copy. It is not "the narration" and is not labelled as
+                   such. Extracting narration exactly would mean following values
+                   through narrateEvent() and the event tables, which static
+                   scanning does not do reliably - two earlier attempts here
+                   produced populations that included code fragments and missed
+                   most of the real lines.
 """
 import re, statistics, sys
 
@@ -17,60 +24,41 @@ def strip_comments(s):
     s = re.sub(r'^\s*//.*$', '', s, flags=re.M)
     return re.sub(r'/\*.*?\*/', '', s, flags=re.S)
 
-def clean(lit):
+def sentences(lit):
     """Templated narration counts: ${civ.name} stands in for the word it becomes."""
-    lit = re.sub(r'\$\{[^}]*\}', 'Xxxx', lit)
-    return ' '.join(lit.split())
+    lit = ' '.join(re.sub(r'\$\{[^}]*\}', 'Xxxx', lit).split())
+    return [s.strip() for s in re.split(r'(?<=[.!?])\s+', lit) if len(s.strip()) > 3]
 
-def endings():
+def ending_cards():
     s = strip_comments(open('src/endings.ts').read())
-    return [clean(m) for m in re.findall(r"description: '([^']+)'", s)]
-
-def narration():
-    """Strings in narration contexts: pushNarration(...) arguments and the
-    pick([...]) arrays that feed them."""
-    s = strip_comments(open('src/main.ts').read())
-    out, seen = [], set()
-    for m in re.finditer(r'pushNarration\(', s):
-        # take the balanced-ish window after the call and pull its literals
-        window = s[m.end(): m.end() + 900]
-        for lit in re.findall(r"[`'\"]([^`'\"\n]{12,200}?)[`'\"]", window):
-            if re.search(r'[<>]|https?:|^\w+$', lit):
-                continue
-            c = clean(lit)
-            if c and c not in seen and re.search(r'[a-z]{3}\s', c):
-                seen.add(c); out.append(c)
+    out = []
+    for d in re.findall(r"description: '([^']+)'", s):
+        out += sentences(d)
     return out
 
-def report(name, lines):
-    if not lines:
-        print(f'{name}: none found'); return
-    lens = [len(l.split()) for l in lines]
-    sd = statistics.pstdev(lens)
-    print(f'{name}: {len(lines)} lines | mean {statistics.mean(lens):.1f}w | SD {sd:.1f}')
+def main_prose():
+    s = strip_comments(open('src/main.ts').read())
+    out, seen = [], set()
+    for lit in re.findall(r"[`'\"]([A-Z][^`'\"\n]{14,240}?[.!?])[`'\"]", s):
+        if re.search(r'[<>]|https?:|=>|\{\s*kind|\|\||&&', lit):
+            continue          # code fragments and markup, not copy
+        for sent in sentences(lit):
+            if sent in seen or not re.search(r'[a-z]{3}\s+[a-z]', sent):
+                continue
+            seen.add(sent); out.append(sent)
+    return out
+
+def report(name, sents):
+    lens = [len(s.split()) for s in sents]
+    if not lens:
+        print(f'{name}: none'); return
+    print(f'{name}: {len(sents)} sentences | mean {statistics.mean(lens):.1f}w '
+          f'| SD {statistics.pstdev(lens):.1f}')
     print(f'  buckets  <8w={sum(1 for l in lens if l<8)}  8-15={sum(1 for l in lens if 8<=l<16)}'
           f'  16-25={sum(1 for l in lens if 16<=l<26)}  26+={sum(1 for l in lens if l>=26)}')
     if '-v' in sys.argv:
-        for l in sorted(lines, key=lambda x: len(x.split())):
-            print(f'   {len(l.split()):3}w  {l}')
+        for s in sorted(sents, key=lambda x: len(x.split())):
+            print(f'   {len(s.split()):3}w  {s}')
 
-def prose_literals():
-    """Every sentence-shaped literal in main.ts: starts uppercase, ends in
-    terminal punctuation, contains a space. A superset of narration — it also
-    catches HUD and archive strings — so it is reported separately rather than
-    labelled as narration."""
-    s = strip_comments(open('src/main.ts').read())
-    out, seen = [], set()
-    for lit in re.findall(r"[`'\"]([A-Z][^`'\"\n]{14,200}?[.!?])[`'\"]", s):
-        if re.search(r'[<>{]|https?:', lit.replace('${', '\x00')) or '\x00' in lit:
-            pass
-        if re.search(r'[<>]|https?:', lit):
-            continue
-        c = clean(lit)
-        if c and c not in seen and ' ' in c:
-            seen.add(c); out.append(c)
-    return out
-
-report('ending cards       ', endings())
-report('narration (direct) ', narration())
-report('all prose literals ', prose_literals())
+report('ending cards ', ending_cards())
+report('main.ts prose', main_prose())
