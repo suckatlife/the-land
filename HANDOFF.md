@@ -1053,4 +1053,19 @@ before accepting:**
 Both were failures of the same kind: assuming reuse of existing machinery gives
 behaviour the machinery was explicitly written not to give.
 
+**A third round, and one self-inflicted wound worth recording:** review found
+that committing the ending kind at "~85% of life" breaks the short worlds —
+`lifeFraction` bottoms out at 0.58, so the shortest world is 17,400 ticks (580s)
+and 85% leaves 87 seconds for a 102-second sequence. A fixed *fraction* was the
+wrong parameterisation for a fixed-*duration* sequence; the commit tick is now
+derived as `endTick - SEQUENCE_TICKS - margin`. Review also caught that the
+quiet ending needs a scheduled fade for exactly the reason the apocalypse needs
+a terminal path, and that `commitEndingKind` cannot score `drowned` without the
+biome map.
+
+Separately: my own edit script silently dropped a block — it wrote the file
+without applying that replacement — so two open questions were missing from the
+previous commit and I did not notice until re-reading the file. Assert on every
+replacement, and diff the result rather than trusting the script exited 0.
+
 **Next:** review, then phase 1 if the shape survives.

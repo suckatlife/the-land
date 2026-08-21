@@ -216,6 +216,17 @@ last civs decline, the roads go to seed, and the lights go out one by one.
 *Why include it:* if every world ends in spectacle, spectacle becomes wallpaper
 and the calm test suffers. **The quiet ending is what makes the loud ones land.**
 
+*It needs its own terminal schedule, for the same reason §5a does.* Ordinary
+decline cannot deliver it: a `rising` or `stable` civ may not enter decline for
+minutes, and `decliningDuration` then adds ~50 world-seconds, so act 4 would
+begin with cities still lit — the one thing the quiet end promises not to do.
+Proposal: at `commitTick` the quiet end takes a **fade schedule** — surviving
+civs are ordered (smallest first, or furthest from the last capital) and given
+death ticks spread across act 3, so the lights go out one by one and the last
+goes out before the silence. Rallies suppressed for the same window. The quiet
+end is *scheduled*, not merely *unforced* — otherwise it is indistinguishable
+from the anticlimax we are trying to fix.
+
 ---
 
 ## 7. Not every ending should be an apocalypse
@@ -274,8 +285,12 @@ count from before the Deluge, and would miss every death the ending caused.
 
 Split it in two:
 
-- **`commitEndingKind(world, history, fate) -> WorldEndingKind`** at ~85%.
-  Scoring only. This is what act 1 needs, and it is the only thing locked.
+- **`commitEndingKind(world, biomes, history, fate) -> WorldEndingKind`**,
+  called at `commitTick` (§8b). Scoring only; this is what act 1 needs and the
+  only thing locked. It takes `biomes` because the `drowned` score compares
+  `waterFraction(biomes)` against `history.initialWaterFraction`, and
+  `SimWorld` does not carry the biome map — omitting it would either lose
+  post-creation flooding from the early classification or fork the scorer.
 - **`resolveWorldEnding(..., committedKind)`** still runs at the true end, with
   the kind passed in rather than re-scored. Epitaph, era, survivor counts and
   the archive entry are all computed *after* the apocalypse, and therefore
@@ -283,6 +298,32 @@ Split it in two:
 
 The scoring is shared, so the two cannot disagree about what happened — only
 about when it was decided.
+
+### 8b. Derive the commit tick from the sequence, not from a life fraction
+
+"~85% of life" does not survive contact with the short worlds.
+`worldFateForSeed()` rolls `lifeFraction = 0.58 + u * 0.39`, so:
+
+| world | endTick | life @30tps | 85% leaves | sequence needs |
+| --- | --- | --- | --- | --- |
+| shortest (0.58) | 17,400 | 580s | **87s** | **102s** |
+| longest (0.97) | 29,100 | 970s | 145s | 102s |
+
+For roughly the shortest quarter of rolls, act 1 would have to begin before the
+kind was known, or the later acts would silently compress. A fixed fraction is
+simply the wrong parameterisation: the sequence has a fixed *duration*, so the
+commit has a fixed *offset*.
+
+```
+SEQUENCE_TICKS = (40 + 12 + 35 + 15) * ticksPerSecond   // 3,060
+COMMIT_MARGIN  = 300                                    // ~10s of slack
+commitTick     = endTick - SEQUENCE_TICKS - COMMIT_MARGIN
+```
+
+That is 80.7% of life for the shortest world and 88.5% for the longest, and it
+is right for both. It also means changing an act's duration moves the commit
+automatically instead of silently eating the margin. Worth a startup assertion
+that `commitTick` lands comfortably after civilisations first appear.
 
 ---
 
@@ -313,8 +354,12 @@ Headless, since none of this can be judged by an agent's eye:
 4. **Frame cost** — FPS through act 3 vs the preceding minute.
 5. **Coherence** — the printed ending title matches the apocalypse that ran.
 6. **Deaths land in act 3** — no civ killed by the apocalypse is still in
-   `declining` when act 4 begins, and no `rally` fires during the sequence.
-7. **The archive describes the ending** — the persisted epitaph and
+   `declining` when act 4 begins, and no `rally` fires during the sequence. For
+   the quiet end, assert the last scheduled death precedes act 4.
+7. **The shortest world still fits** — force `lifeFraction` to its 0.58 floor
+   and assert all four acts run at full duration with `commitTick` before
+   act 1 begins.
+8. **The archive describes the ending** — the persisted epitaph and
    `highestEra` reflect post-apocalypse state, not the 85% snapshot. Assert the
    archived flood/death counts differ from their values at commitment.
 
@@ -347,3 +392,11 @@ working structure; if it doesn't, we learn that before building four disasters.
 4. Is §8 option 3's early commitment worth the risk that the world changes
    character in its last 15%?
 5. Should the quiet end be common (say 1 world in 3) or rare?
+6. §5a lets the apocalypse ignore the 0.05 vitality floor. Is that the right
+   lever, or should the floor stay absolute and the apocalypse kill only
+   through a separate terminal transition?
+7. Should any apocalypse ever leave **zero** survivors, or is a witness always
+   part of the picture?
+8. §8b sizes the sequence at 3,060 ticks. If review shortens act 1 the commit
+   moves later and the world gets less warning — is 40s of omen the part to
+   protect, or the part to cut?
