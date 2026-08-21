@@ -7061,6 +7061,12 @@ function resetWorld(newSeed: string, archiveEnding?: WorldEnding, outcome?: Reso
 function resetSimOnly() {
   simWorld = createSimWorld(GRID_SIZE, GRID_SIZE, currentSeed);
   displayedEraRank = 0;   // same world, fresh history: the age starts over too
+  // The new sim has not committed to an ending; leaving the old commitment set
+  // would make endingCheckpoints() skip commitEnding(), so births and
+  // catastrophes would never be held and the turnover would archive the
+  // previous run's title.
+  committedEnding = null;
+  endingOmenSpoken = false;
   seedInitialCivs(simWorld, biomeMap, 1);
   (window as any).__sim = simWorld;
   fadedDeadCivs.clear();
