@@ -1,0 +1,39 @@
+# Lets a phone drive Claude. Comment "@claude ..." on any issue or PR in this
+# repo and this runs a full Claude Code session on GitHub's runners: it can read
+# the repo, make changes, commit, and open a pull request.
+#
+# The point of routing through GitHub rather than the Claude app is bandwidth
+# and durability — a comment is a few hundred bytes, the work happens on a
+# runner, and the result is a PR that survives a dropped connection.
+#
+# Setup (once, from a laptop):
+#   1. Install the app: https://github.com/apps/claude
+#   2. Add repo secret ANTHROPIC_API_KEY (Settings > Secrets > Actions)
+# Or run /install-github-app in a Claude Code terminal, which does both.
+name: claude
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  issues:
+    types: [opened, assigned]
+
+jobs:
+  claude:
+    # Only wake up when actually summoned — otherwise every comment burns a run.
+    if: contains(github.event.comment.body, '@claude') || contains(github.event.issue.body, '@claude')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0     # full history: turns reference earlier commits and tags
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
