@@ -50,11 +50,32 @@ description claims, and is the evidence real?*
    does nothing. `@codex review` remains available to force a re-review.
    Codex reads the whole diff, does **not** edit on the first pass, and reports:
    blocking defects / non-blocking concerns / ready or not.
-4. **Repair — once.** If there are blocking findings, Claude gets exactly one
-   follow-up, scoped to those findings. No scope growth. If it needs a second
-   repair pass, close it and re-brief; something was wrong with the task.
+4. **Repair — once, and this step is deliberately manual.** If there are
+   blocking findings, Lawrence sends Claude one follow-up, scoped to those
+   findings. No scope growth. If it needs a second repair pass, close it and
+   re-brief; something was wrong with the task.
+
+   Claude does **not** watch the PR by default: Codex posts to GitHub, and
+   nothing tells Claude. Claude's **auto-fix** feature would close that gap — it
+   subscribes to PR activity and pushes a fix when a check fails or a reviewer
+   comments — but it requires the Claude GitHub App, and chaining it to Codex's
+   review-on-every-push creates a loop with no human in it:
+
+   > Codex reviews -> Claude fixes -> pushes -> Codex re-reviews -> Claude fixes
+
+   Nothing bounds that, it violates the one-repair-pass rule, and it spends rate
+   limits on both accounts unattended. Keeping the human in this one step is the
+   only thing that stops it. If a particular PR really should run unattended,
+   turn auto-fix on for that PR **and** set Codex's trigger to *On PR open* for
+   the duration, so the cycle cannot close.
 5. **Gate.** Lawrence opens the Vercel preview from the PR on his phone, looks
-   at the actual world, and merges only if he likes it. Merging deploys.
+   at the actual world, and merges only if he likes it. Merging deploys, closes
+   the PR, and ends reviews on it — the trigger is a push to an open PR, so a
+   merged branch is finished. New work is a new PR.
+
+**Notifications:** Codex posts a standard GitHub review, and Claude opens PRs
+under Lawrence's account, so he is the author and subscribed. GitHub Mobile
+push notifications are what actually close the loop — check they are on.
 
 ## What each side owes the other
 
