@@ -297,8 +297,8 @@ So act 3 of a quiet ending is per-title:
 | title | act 3 |
 | --- | --- |
 | `rewilded` | **Fade schedule.** Surviving civs ordered (smallest first, or furthest from the last capital) and given death ticks spread across act 3, so the lights go out one by one and the last before the silence. |
-| `garden` | **Nothing dies.** Construction stops, roads soften, wild returns at the edges of settlement. The world gets quieter, not emptier — act 4 holds a living world at rest. |
-| `exodus` | **Departure.** Cities go dark in sequence as launches leave; the tiles stay built, not ruined. Dark ≠ dead, and the archive should not count these as deaths. |
+| `garden` | **Nothing dies** — and that has to be enforced. `advanceCivPhase()` runs every tick and will flip a civ from `declining` to `dead` when its phase timer expires; suppressing rallies does not stop it. Freeze ordinary phase aging for the sequence, or pin the living set explicitly. Construction stops, roads soften, wild returns at the edges. The world gets quieter, not emptier — act 4 holds a living world at rest. |
+| `exodus` | **Departure**, which needs a third state. Cities go dark in sequence as launches leave; tiles stay built, not ruined. But `resolveWorldEnding()` and `archiveCurrentWorld()` both define a survivor as *not `dead`*, so leaving the departed alive makes the Chronicle report that they remained — the opposite of what the viewer watched. Add a `departed` civ state that counts as **neither** a death nor a survivor, and exclude it from both. |
 | `world_empire` | **Consolidation.** The last rivals are absorbed rather than killed; act 4 holds one colour across the map. |
 
 Rallies are suppressed for the whole window, and the birth paths are frozen per
@@ -407,6 +407,35 @@ may legitimately share `ash`: both leave a world under a dark sky, and the
 titles are honest for either. Where two causes share a title, §10.5 asserts
 agreement **through the map**, not identity.
 
+### 8a-ter. How the cause is actually chosen — *Claude's call, flag if wrong*
+
+Naming `ApocalypseKind` did not say how a world picks one, and the existing
+scorer only produces titles — so `ash` could not choose between Impact and
+Supervolcano, and `sundered` had no score at all. Proposed rule, mirroring the
+`fate.affinity` thumb that already exists:
+
+1. **Score the causes from history**, not the titles:
+   `ashfall ← volcanoes`, `impact ← asteroids`, `deluge ← floods + waterGain`,
+   `shaking ← earthquakes`, `freeze ← iceExtent/iceMax`, and `quiet` as a flat
+   baseline every world can reach.
+2. **Add the seed's affinity** as the same `+1.15` thumb, so close worlds
+   diverge and identical seeds agree.
+3. **Then derive the title** from the winning cause's legal set, using the
+   *existing* ending scores restricted to that set. `shaking → sundered`
+   uniquely; `quiet →` whichever of `rewilded | garden | exodus | world_empire`
+   the current scoring already prefers.
+
+Choosing cause-first and title-second is what makes all four quiet titles
+reachable while keeping one committed pair.
+
+**This needs one small sim change:** `WorldHistory` counts floods, volcanoes and
+asteroids but **not earthquakes** (`endings.ts:156-169`), so `shaking` has no
+input today. Add the counter.
+
+**And a hard rule: a cause is only selectable once its sequence exists.** The
+selectable set is gated on what has shipped, so a committed cause always has
+something to run. Until phase 2 lands, every world resolves to `quiet`.
+
 ### 8b. Derive the commit tick from the sequence, not from a life fraction
 
 "~85% of life" does not survive contact with the short worlds.
@@ -465,6 +494,9 @@ Headless, since none of this can be judged by an agent's eye:
    Assert all four quiet titles remain reachable across seeds.
 5b. **The epitaph counts one disaster, not ten** — assert
    `history.severeCatastrophes` rises by at most 1 across the whole sequence.
+5b-ii. **Every cause is reachable** — across a spread of seeds, assert each
+   selectable `ApocalypseKind` occurs, and that no world commits to a cause
+   whose sequence has not shipped.
 5c. **Nothing is born during the ending** — assert civ count never rises after
    `commitTick` (covering breakaways, which are the easiest path to miss), and
    that `pendingSettlements` is empty in act 4.
@@ -487,12 +519,21 @@ whether act 3 crosses from awe into noise. That is a preview judgement.
 
 ## 11. Phasing
 
-- **Phase 1 — the shape.** Acts 1 and 4 for *every* ending, plus the quiet end
-  (§6.6). No new apocalypse at all. This alone converts a 2.5-second swap into
-  a real ending, and it is the cheapest, least risky part.
-- **Phase 2 — one apocalypse.** Supervolcano or Impact (most reuse), plus §8
-  option 3 so the card matches.
-- **Phase 3 — the rest.** Deluge and the Shaking, which need new rendering.
+- **Phase 1 — the shape, and the commitment.** Acts 1 and 4 for *every* ending,
+  the `{ apocalypse, ending }` commitment at `commitTick` (§8a-ter, §8b), and
+  **only `rewilded`'s fade schedule** as act 3. `garden`, `exodus` and
+  `world_empire` keep today's behaviour for now — they get the new omen and the
+  held silence, but no bespoke act 3.
+  *Why the commitment moves here (Claude's call):* phase 1 cannot decide
+  whether to kill, preserve, launch or consolidate without knowing the ending,
+  and today nothing is chosen until `beginWorldEnding()` at `endTick`. Deferring
+  it would make phase 1 incoherent. This makes phase 1 bigger than the original
+  sketch, and that is the honest cost.
+- **Phase 2 — the cheap apocalypses.** Supervolcano (needs the global ash
+  scalar, §6.4) and **the Long Winter** (mostly existing ice), plus the
+  per-title act 3 for `garden`, `exodus` and `world_empire`.
+- **Phase 3 — the expensive ones.** Impact, Deluge and The Shaking, which need
+  new rendering — the moving shoreline wash and the rift geometry.
 
 Phase 1 is worth shipping alone. If it lands well the rest is decoration on a
 working structure; if it doesn't, we learn that before building four disasters.
@@ -520,6 +561,9 @@ working structure; if it doesn't, we learn that before building four disasters.
 10. §5a.4 gives each apocalypse a persistent survivor set chosen from its own
    geometry. Is "who is standing on high ground" the right selector for the
    Deluge, or should survival be scored on something less literal?
+13. §8a-ter picks the cause from history first and the title second. Does
+   cause-before-title match how you think about these endings, or should the
+   title lead?
 12. Three of the four quiet titles now need bespoke act-3 gestures (garden's
    softening, exodus's launches, empire's consolidation). Is that worth
    building, or should phase 1 ship only `rewilded`'s fade and leave the other
