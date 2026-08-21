@@ -1,15 +1,23 @@
-# Lets a phone drive Claude. Comment "@claude ..." on any issue or PR in this
-# repo and this runs a full Claude Code session on GitHub's runners: it can read
-# the repo, make changes, commit, and open a pull request.
+# OPTIONAL. You do not need this to work from a phone — claude.ai/code (in the
+# Claude app) reaches this repo without it, runs on Anthropic's infrastructure,
+# and bills against your subscription rather than an API key. Prefer that.
 #
-# The point of routing through GitHub rather than the Claude app is bandwidth
-# and durability — a comment is a few hundred bytes, the work happens on a
-# runner, and the result is a PR that survives a dropped connection.
+# This file exists for one case: driving Claude from a GitHub comment when you
+# would rather not open the Claude app at all. Comment "@claude ..." on an issue
+# or PR and a full session runs on GitHub's runners and opens a PR.
 #
-# Setup (once, from a laptop):
-#   1. Install the app: https://github.com/apps/claude
-#   2. Add repo secret ANTHROPIC_API_KEY (Settings > Secrets > Actions)
-# Or run /install-github-app in a Claude Code terminal, which does both.
+# Setup, only if you want it:
+#   1. Install https://github.com/apps/claude on this repo
+#   2. Add repo secret ANTHROPIC_API_KEY  <-- billed SEPARATELY from your
+#      Claude subscription. This is the reason to prefer the app.
+#
+# Without that secret this workflow will fire on an @claude comment and fail,
+# leaving a red X. Delete the file if you decide not to use it.
+#
+# Loop hazard: Claude's PR auto-fix feature posts comments under YOUR GitHub
+# account. If such a comment ever contains "@claude", it would re-trigger this
+# workflow. The guards below (skip bots, one run at a time) reduce that; if you
+# enable auto-fix, watch the Actions tab the first time.
 name: claude
 
 on:
@@ -20,10 +28,20 @@ on:
   issues:
     types: [opened, assigned]
 
+concurrency:
+  # One session at a time, so a chain of comments cannot fan out into
+  # overlapping runs racing each other on the same branch.
+  group: claude-${{ github.event.issue.number || github.run_id }}
+  cancel-in-progress: false
+
 jobs:
   claude:
-    # Only wake up when actually summoned — otherwise every comment burns a run.
-    if: contains(github.event.comment.body, '@claude') || contains(github.event.issue.body, '@claude')
+    # Only wake up when actually summoned, and never in response to a bot —
+    # otherwise every comment burns a run, and an agent's own reply can
+    # re-trigger the workflow it came from.
+    if: |
+      github.event.sender.type != 'Bot' &&
+      (contains(github.event.comment.body, '@claude') || contains(github.event.issue.body, '@claude'))
     runs-on: ubuntu-latest
     permissions:
       contents: write

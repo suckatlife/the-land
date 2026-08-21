@@ -13,27 +13,63 @@ kind of work*. Everything you send should fit in one thumb-typed line.
 
 ## What remote turns can and cannot do
 
-A cloud runner has no GPU, no display, and no browser — so **nobody can watch
-the world remotely.** `scripts/loop/turn.sh` will not work; there are no
-screenshots and no visual gate.
+A cloud runner has no GPU, no display and no browser, so **no agent can watch
+the world.** `scripts/loop/turn.sh` will not run remotely; there are no
+screenshots and no visual gate on the agent's side.
 
-That is not a small limitation, it decides what the work should be:
+**But you can watch it.** Vercel builds a preview for every branch and posts the
+URL as a "Vercel" status on the commit — confirmed working on this repo. So the
+loop is: the agent builds and proves what a build can prove, and *you* open the
+preview on your phone and judge the rest. That makes visual work possible
+remotely; it just moves the eye from the agent to you.
+
+Two honest limits on that: a phone screen is not your monitor, so fine palette
+and light judgements should still wait; and an agent that *claims* it verified
+something visual is confabulating — it could not.
 
 **Good remote work** — simulation logic and balance, world character and form
-tuning by measurement, the habitability and "is anything happening" guardrails,
-narration and chronicle text, docs, dead code, refactors, test harnesses,
-anything a `npm run build` can prove.
+tuning by measurement, guardrails, narration text, docs, dead code, refactors,
+anything `npm run build` can prove, plus bold visual changes obvious enough to
+read on a phone.
 
-**Bad remote work** — palette, light, composition, anything whose success is
-"does it look right." Those need your eye at full resolution. An agent that
-tunes colour blind will confidently make it worse, and you will not find out
-until you get home.
+**Poor remote work** — subtle palette, light and composition tuning. Those are
+the ones you will want at full resolution.
 
-The verification bar remotely is: **`npm run build` passes** (it typechecks with
-`noUnusedLocals`, so it catches real breakage) plus whatever can be measured
-numerically. Anything visual gets deferred to a note in `HANDOFF.md`.
+The verification bar remotely is: **`npm run build` passes**, the Vercel preview
+builds green, and anything measurable is measured. Everything else is a note in
+`HANDOFF.md` for when you are back.
+
+## The shape of a remote sprint
+
+Keep it to **one builder pass and one repair pass.** More than that and you are
+reviewing a large diff on a phone, which is where mistakes get merged.
+
+1. Claude builds on a `claude/*` branch and opens a **draft** PR.
+2. Codex reviews it — read-only, no edits on the first pass.
+3. If Codex finds something blocking, Claude gets **one** follow-up, scoped to
+   those findings only. No scope growth.
+4. You open the Vercel preview from the PR, and merge only if you like it.
 
 ## Driving Claude
+
+**The simple way, and the one to use: the Claude app.** Open Claude on your
+phone, go to Code (claude.ai/code), pick this repository, and describe the task.
+The session runs on Anthropic's infrastructure, survives you closing the app or
+losing signal, and you monitor it from the same phone. It can open a pull
+request when it is done.
+
+Two things worth knowing:
+- It bills against your **Claude subscription**, with no separate charge for the
+  cloud machine. The GitHub Action below uses an API key and bills separately.
+- It needs a **Pro or Max plan**, and GitHub connected to your Claude account.
+  **Test this before you leave** — it is the whole plan, and it is the one piece
+  I cannot verify for you.
+- The "Claude GitHub App" is NOT a phone app. It is a permission grant you
+  install on the repo at github.com/apps/claude, like connecting Vercel. Cloud
+  sessions do not require it. It only adds auto-fix, where Claude watches a PR
+  and responds to failing checks by itself.
+
+### The GitHub-comment alternative (optional)
 
 Comment on any issue or PR in the repo, from the GitHub mobile app or the
 browser:
@@ -74,11 +110,22 @@ while you were away.
 
 ## Guardrails while you are away
 
-- **Never merge to `main` from the phone unless you mean to deploy.** `main`
-  auto-deploys to the live site. Work on branches and PRs; leave merging to
-  `main` for when you are home and can look at it.
+- `main` is **branch-protected** as of 2026-08-21: pull request required, the
+  Vercel check must pass, no force pushes, no deletions, and it is enforced on
+  admins — so neither you nor an agent can push straight to production by
+  accident. Merging a PR still deploys, so merge deliberately. If you ever need
+  the protection off, it is a toggle in the repo settings from your phone.
+- Agents work on `claude/*`, `codex/*` or `agent/*` branches. Never `main`.
 - The anchor tags `known-good-2026-08-18` and `live-2026-08-18` are the way
   back if a run goes badly: `git reset --hard known-good-2026-08-18`.
 - Ask for **one change per turn**. A phone is a bad place to review a
   400-line diff, and a bad diff merged remotely is expensive to undo.
-- If an agent says it verified something visual, disbelieve it. It could not.
+- If an agent says it verified something visual, disbelieve it. It could not —
+  open the preview yourself.
+- **Cost:** the `@claude` GitHub Action bills against an `ANTHROPIC_API_KEY`,
+  separately from your Claude subscription. Running Claude from **claude.ai/code**
+  or the Claude app uses the subscription instead. If you would rather not meter
+  API spend from a campsite, prefer the app and keep the Action as a fallback.
+- Write your sprint briefs in your phone's Notes app while offline, then paste
+  one when you next get signal. Composing a brief on a bar of signal is the
+  worst part of this.
