@@ -830,8 +830,11 @@ and the agent that pushed it did not notice — it read the silence as "no
 findings" rather than "no review", which is exactly the failure this file
 already warns about and still walked into.
 
-Every review that was explicitly requested with an `@codex review` comment
-arrived, including twice during the dead windows.
+Explicit requests are much better than the automatic trigger but are not
+certain either: by the end of the day, **eight `@codex review` comments had
+produced five reviews.** Two were ignored early (13:32, 16:16) and three more
+on PR #10 went unanswered across seventeen minutes while this entry was being
+written. That is why the rule below is ask *and confirm*, not just ask.
 
 **Did:** Made the comment the primary trigger rather than the fallback. Step 3
 of the loop, the builder's obligations, and the draft-PR guardrail now all say
