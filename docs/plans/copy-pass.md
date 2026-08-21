@@ -9,8 +9,8 @@ Support, the ending cards, and the in-world narration.
 ## 1. What I actually measured
 
 I audited the project's copy against the evidenced tells rather than guessing.
-Two scripts: one over the five HTML pages, one over user-facing string literals
-in `src/`.
+Two scripts, both committed: `scripts/copy-audit.py` over the five HTML pages,
+`scripts/copy-audit-src.py` over user-facing string literals in `src/`.
 
 **The lexical tells are simply not here.** Across all five pages:
 
@@ -18,8 +18,14 @@ in `src/`.
 | --- | --- | --- | --- | --- |
 | about / privacy / terms / support / index | **0** | **0** | **0** | 1 |
 
-Zero hits from the 407-word measured excess-vocabulary list (Kobak et al.,
-*Science Advances* 2025). No *delve*, *tapestry*, *testament*, *underscores*,
+Zero hits against **114 style words** — the high-value subset of the 407 that
+Kobak et al. (*Science Advances*, 2025) classify as style rather than content.
+The full 407 are at
+https://github.com/berenslab/llm-excess-vocab and could be wired in; the 114 are
+the ones with the largest measured frequency shifts, and the result was zero, so
+widening the list would not change the conclusion. (Stated precisely because an
+earlier draft of this document claimed the audit ran against all 407. It did
+not.) No *delve*, *tapestry*, *testament*, *underscores*,
 *seamless*, *robust*, *realm*. No "boasts a", no "stands as", no "is a
 testament to". That is unusual and worth stating plainly: **the copy does not
 have an AI vocabulary problem.**
@@ -37,10 +43,20 @@ at 10–30 tokens ("register leveling", PMC11422446).
 
 Two things stand out.
 
-**The seven ending descriptions have a standard deviation of 1.2 words.** They
-are all the same length, all two sentences, all built the same way. This is the
-most uniform prose in the project and it sits on the most important screen —
-the card a viewer reads when a world they watched for fifteen minutes ends.
+**The seven ending descriptions have a standard deviation of 1.2 words.** Every
+one lands between 13 and 17 words:
+
+| | drowned | long_winter | ash | rewilded | world_empire | exodus | garden |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| words | 16 | 15 | 13 | 15 | 15 | 17 | 14 |
+| sentences | 2 | **1** | 2 | 2 | **1** | 2 | 2 |
+
+They are *not* all two sentences — `long_winter` and `world_empire` are single
+sentences. That correction sharpens the finding rather than weakening it: those
+two reach the same 15-word length by a different construction, so the
+uniformity lives in **length**, not in sentence count. This is the most uniform
+prose in the project and it sits on the most important screen — the card a
+viewer reads when a world they watched for fifteen minutes ends.
 
 **The in-world narration is the healthiest text here** (SD 2.8 on a mean of
 8.9, with 48 lines under eight words). It scatters, it's short, it's concrete.
@@ -160,9 +176,11 @@ competing with it.
 
 ### 4b. The ending cards — the SD 1.2 problem
 
-The seven descriptions are the same length and the same construction. The fix
-is not to rewrite all seven into a new uniform shape; it is to **let their
-lengths diverge** so they do not read as a set.
+The seven descriptions all land in a five-word band. The fix is not to rewrite
+them into a new uniform shape; it is to **let their lengths diverge** so they do
+not read as a set. Note that varying *sentence count* alone will not do it —
+`long_winter` and `world_empire` already differ there and still land at 15
+words.
 
 Illustrative, on two of them:
 

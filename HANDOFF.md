@@ -1267,4 +1267,18 @@ writing at 61%, and this project's voice is spare by design.
 doorway options are offered rather than one, because that is a taste call and
 it belongs to Lawrence.
 
+**Three corrections from review, all of them to my own accuracy:**
+
+- The audit ran against **114** style words, not the 407 the document claimed.
+  The 114 are the high-value subset with the largest measured frequency shifts,
+  and the result was zero, so widening it would not change the conclusion — but
+  the number as written was wrong.
+- Only the HTML audit script was committed; the `src/` one, which produced the
+  ending-card and narration figures, was not. Both are in `scripts/` now.
+- The ending descriptions are **not** all two sentences: `long_winter` and
+  `world_empire` are single sentences. That correction sharpens the finding
+  rather than weakening it — those two reach the same 15 words by a different
+  construction, so the uniformity is in *length*, not sentence count, and
+  varying sentence count alone will not fix it.
+
 **Next:** review, then apply whichever options survive.
