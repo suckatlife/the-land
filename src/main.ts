@@ -7429,7 +7429,9 @@ app.ticker.add((ticker) => {
     trailDecay(seaTrail, 0.99); trailDecay(landTrail, 0.99); trailDecay(airTrail, 0.988);
     redrawTrails();
     queueFestivals();
-    checkWarQuiet();
+    // checkWarQuiet pushes "the border falls quiet" on its own 45-second
+    // threshold, which two surviving civs can cross during act 4.
+    if (!worldHeld) checkWarQuiet();
     maybeNameConstellations();
   }
   // Animate tile color/alpha toward targets. Capped per frame: a "skip 5k" or
@@ -7531,7 +7533,12 @@ app.ticker.add((ticker) => {
         // A ruin's life: drain to grey stone, collapse the upper floors into a
         // low rubble stub, then let the land reclaim it. Hold at age 0 (intact)
         // until this tile's staggered start, so a fallen city crumbles in a ripple.
-        if (nowSec >= bts.ruinStartAt) {
+        // Held in act 4 with everything else. Ruin decay runs 30s plus stagger
+        // and the last scheduled death lands under 35s before the silence, so
+        // without this, buildings keep greying and collapsing right through the
+        // aftermath — invisible to a tile-count check, because the tiles are
+        // already ruins.
+        if (nowSec >= bts.ruinStartAt && !(simWorld.ending?.silent)) {
           bts.ruinAge[s] = Math.min(1, bts.ruinAge[s] + worldSeconds / RUIN_DECAY_SECONDS);
         }
         const age = bts.ruinAge[s];

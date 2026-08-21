@@ -1300,4 +1300,17 @@ the renderer's world systems, the narrators, and the tick-derived land systems
 are four separate populations, and each had to be found on its own. Anything
 keyed to `simWorld.tick` is suspect during act 4 by construction.
 
+**A fifth and sixth system, and the fifth is the one my test was structurally
+unable to see.** `ruinAge` advances from `worldSeconds` in the building
+animation loop: ruin decay runs 30 seconds plus stagger, and the last scheduled
+death lands under 35 seconds before act 4, so buildings kept greying,
+collapsing and being reclaimed straight through the aftermath. **Tile counts
+stayed constant the whole time** — the tiles were already ruins — so every
+freeze test I ran passed while the screen was still visibly changing. Counting
+tiles was the wrong instrument for a claim about stillness.
+
+Also `checkWarQuiet()`, which crosses its own 45-second threshold and narrates
+"the border falls quiet" — a seventh narrator, found only because two surviving
+civs is a common way for `garden` to end.
+
 **Next:** the copy pass (Lawrence's next brief).
