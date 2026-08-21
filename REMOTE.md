@@ -1,131 +1,127 @@
-# Working on The Land from a phone
+# The Land — multi-agent workflow
 
-For when the laptop is off and the connection is thin. Everything below is
-driven from GitHub, because GitHub is the only thing both agents can reach and
-the only thing that survives you losing signal mid-task.
+Claude builds. Codex reviews adversarially. Lawrence merges. Nothing reaches the
+public site without a human looking at it.
 
-## The one rule that makes this work
+This file is the contract. Both agents should read it before starting work;
+`AGENTS.md` and `CLAUDE.md` point here.
 
-**The prompt lives in the repo, not in your message.** Typing a full brief on a
-phone is miserable, so the agents are told to read `AUTO_LOOP.md` and
-`HANDOFF.md` themselves. Your message only has to say *which turn* and *what
-kind of work*. Everything you send should fit in one thumb-typed line.
+---
 
-## What remote turns can and cannot do
+## The three roles
 
-A cloud runner has no GPU, no display and no browser, so **no agent can watch
-the world.** `scripts/loop/turn.sh` will not run remotely; there are no
-screenshots and no visual gate on the agent's side.
+| Role | Who | Can | Cannot |
+| --- | --- | --- | --- |
+| **Builder** | Claude Code (cloud, from the Claude app) | Branch, commit, push, open a PR | Merge, touch `main`, deploy |
+| **Reviewer** | Codex (ChatGPT app, or `@codex review` on the PR) | Read the diff, run checks, report findings | Merge, deploy; edit anything on the first pass |
+| **Gate** | Lawrence | Merge, deploy, overrule either agent | — |
 
-**But you can watch it.** Vercel builds a preview for every branch and posts the
-URL as a "Vercel" status on the commit — confirmed working on this repo. So the
-loop is: the agent builds and proves what a build can prove, and *you* open the
-preview on your phone and judge the rest. That makes visual work possible
-remotely; it just moves the eye from the agent to you.
+## Why the review is adversarial
 
-Two honest limits on that: a phone screen is not your monitor, so fine palette
-and light judgements should still wait; and an agent that *claims* it verified
-something visual is confabulating — it could not.
+Not politeness — the reviewer's job is to find the thing the builder is **wrong
+about**. This project has a specific track record that justifies it:
 
-**Good remote work** — simulation logic and balance, world character and form
-tuning by measurement, guardrails, narration text, docs, dead code, refactors,
-anything `npm run build` can prove, plus bold visual changes obvious enough to
-read on a phone.
+- A sim-clock fix moved history onto wall-clock time but left the sky, weather
+  and every story surface on the old clock. Caught a turn later, by measurement.
+- The follow-up fix corrected the frame-rate half of that split and missed the
+  identical bug on the speed control, **three lines away**.
+- An agent asserted no visual verification was possible from a phone. Wrong:
+  Vercel builds a preview per branch.
+- An agent introduced a regression that tinted every settled tile brown, and
+  described it in a commit message as a feature.
+- An agent replaced two terrain functions with "one continuous function", which
+  silently deleted every landmass outside the play area for island worlds, and
+  reported it as an improvement with a passing measurement to back it up.
 
-**Poor remote work** — subtle palette, light and composition tuning. Those are
-the ones you will want at full resolution.
+Every one of those passed its own build gate and its author's own review. The
+common failure is not bad code — it is **an agent believing its own summary**.
+So the reviewer's first question is always: *does the diff do what the
+description claims, and is the evidence real?*
 
-The verification bar remotely is: **`npm run build` passes**, the Vercel preview
-builds green, and anything measurable is measured. Everything else is a note in
-`HANDOFF.md` for when you are back.
+## The loop
 
-## The shape of a remote sprint
+1. **Brief.** Lawrence opens Claude → Code, picks the repo, states one task.
+   Prompts live in the repo, so the brief can be one line:
+   > Next turn per REMOTE.md. Sim/balance work. Branch `claude/<topic>`, draft PR.
+2. **Build.** Claude works on a `claude/*` branch, one change, and opens a
+   **draft** PR. Vercel builds a preview automatically.
+3. **Review.** Lawrence pastes the PR link into Codex, or comments
+   `@codex review` on the PR. Codex reads the whole diff, does **not** edit, and
+   reports: blocking defects / non-blocking concerns / ready or not.
+4. **Repair — once.** If there are blocking findings, Claude gets exactly one
+   follow-up, scoped to those findings. No scope growth. If it needs a second
+   repair pass, close it and re-brief; something was wrong with the task.
+5. **Gate.** Lawrence opens the Vercel preview from the PR on his phone, looks
+   at the actual world, and merges only if he likes it. Merging deploys.
 
-Keep it to **one builder pass and one repair pass.** More than that and you are
-reviewing a large diff on a phone, which is where mistakes get merged.
+## What each side owes the other
 
-1. Claude builds on a `claude/*` branch and opens a **draft** PR.
-2. Codex reviews it — read-only, no edits on the first pass.
-3. If Codex finds something blocking, Claude gets **one** follow-up, scoped to
-   those findings only. No scope growth.
-4. You open the Vercel preview from the PR, and merge only if you like it.
+**Builder (Claude)**
+- One change. If you find three things, do one and write the others into
+  `HANDOFF.md` under "spotted, not done".
+- `npm run build` must pass (it typechecks with `noUnusedLocals`).
+- The PR description states what you changed, what you verified **and how**, and
+  what you could not verify. Say plainly when something needs an eye.
+- Never claim a visual result. You have no display. The preview is for Lawrence.
+- Append a `HANDOFF.md` entry in the same PR.
 
-## Driving Claude
+**Reviewer (Codex)**
+- Read the whole diff, not the description. The description is the claim under
+  test.
+- Check the project's invariants (`CLAUDE.md`): no Pixi in `sim.ts`; snapshot
+  before mutate; the `fadedDeadCivs` repaint; era fixed at civ birth.
+- **Check determinism.** The sim draws from a seeded stream. Any `Math.random()`
+  in `src/sim.ts` silently breaks shared world links and reproducible worlds.
+  This has already happened once, in cherry-picked code.
+- Check that measurements prove what they are said to prove. A single-line
+  terrain probe was once used to claim land existed beyond the map; measuring
+  the whole visible area showed the opposite.
+- Flag scope creep, and flag any claim an agent could not have made.
+- First pass is read-only. Report; do not fix.
 
-**The simple way, and the one to use: the Claude app.** Open Claude on your
-phone, go to Code (claude.ai/code), pick this repository, and describe the task.
-The session runs on Anthropic's infrastructure, survives you closing the app or
-losing signal, and you monitor it from the same phone. It can open a pull
-request when it is done.
+**Gate (Lawrence)**
+- Open the preview before merging. It is the only real visual check.
+- Merge deliberately: `main` deploys to the live site in about ten seconds.
+- If an agent says it verified something visual, disbelieve it.
 
-Two things worth knowing:
-- It bills against your **Claude subscription**, with no separate charge for the
-  cloud machine. The GitHub Action below uses an API key and bills separately.
-- It needs a **Pro or Max plan**, and GitHub connected to your Claude account.
-  **Test this before you leave** — it is the whole plan, and it is the one piece
-  I cannot verify for you.
-- The "Claude GitHub App" is NOT a phone app. It is a permission grant you
-  install on the repo at github.com/apps/claude, like connecting Vercel. Cloud
-  sessions do not require it. It only adds auto-fix, where Claude watches a PR
-  and responds to failing checks by itself.
+## The guardrails, and what they actually stop
 
-### The GitHub-comment alternative (optional)
+- **`main` is branch-protected**: PR required, the Vercel check must pass, no
+  force pushes, no deletions, enforced on admins. Neither agent — nor Lawrence
+  by accident — can push straight to production.
+- **Agents use `claude/*`, `codex/*` or `agent/*` branches.** Never `main`.
+- **Draft PRs** until the builder considers it finished.
+- **One builder pass, one repair pass.** A phone is a bad place to review a
+  400-line diff.
+- **Anchor tags** are the way back: `known-good-2026-08-18` (pre-loop state),
+  `live-2026-08-18` (what was live then). `git reset --hard <tag>` on a branch,
+  or revert the merge commit from the GitHub UI.
 
-Comment on any issue or PR in the repo, from the GitHub mobile app or the
-browser:
+## What cannot be done remotely
 
-> @claude take the next turn per AUTO_LOOP.md. Remote turn: no screenshots, so
-> pick sim/logic work, verify with npm run build, and open a PR.
+No cloud runner has a GPU, a display, or a browser. `scripts/loop/turn.sh` does
+not run remotely; there are no agent-side screenshots.
 
-That runs `.github/workflows/claude.yml` on GitHub's runners. It reads the repo,
-works, and opens a pull request. Needs the Claude GitHub App installed and an
-`ANTHROPIC_API_KEY` repo secret — see the comments in that workflow.
+**But Lawrence can see it**: Vercel builds a preview per branch and posts the URL
+as a check on the PR. So the eye moves from the agent to the human rather than
+disappearing.
 
-Alternative with no setup at all: **claude.ai/code** in the phone browser,
-pointed at this repo. Same agent, started from a chat instead of a comment.
+- **Good remote work** — sim logic and balance, world character and form tuning
+  by measurement, guardrails, narration text, docs, refactors, anything a build
+  or a number can prove, and bold visual changes obvious on a phone screen.
+- **Poor remote work** — subtle palette, light and composition. A phone is not a
+  monitor. Leave those for a real screen.
 
-## Driving Codex
+## Running the agents
 
-In the ChatGPT app, open Codex, point it at `suckatlife/the-land`, and give it
-the same one-liner. It works in its own cloud container and opens a PR.
+**Claude** — the Claude app → Code (claude.ai/code), repo `suckatlife/the-land`.
+Runs on Anthropic infrastructure, survives losing signal, bills against the
+subscription. Needs Pro/Max and GitHub connected to the Claude account.
 
-On GitHub, `@codex review` on a pull request gets you a review rather than new
-work — which is the useful half of the pairing: **let Codex review what Claude
-built, and vice versa.** Neither agent can start the other, so you are the baton
-either way; reviewing is the cheapest possible baton pass.
+**Codex** — the ChatGPT app → Codex, same repo, for full review sessions; or
+`@codex review` on a PR for a review posted inline.
 
-## The loop, adapted
-
-1. Comment `@claude` on the tracking issue with the turn id and a one-line aim.
-2. It opens a PR. Skim the description on your phone.
-3. Comment `@codex review` on that PR.
-4. Read the review. If it is fine, merge from the phone. If not, comment
-   `@claude` on the same PR with the fix.
-5. Next turn goes to whichever agent did not do the last one — `HANDOFF.md`
-   records whose turn it was, so you never have to remember.
-
-Each agent must append to `HANDOFF.md` in its PR. That file is the state of the
-project; if you read nothing else when you get back, read the entries added
-while you were away.
-
-## Guardrails while you are away
-
-- `main` is **branch-protected** as of 2026-08-21: pull request required, the
-  Vercel check must pass, no force pushes, no deletions, and it is enforced on
-  admins — so neither you nor an agent can push straight to production by
-  accident. Merging a PR still deploys, so merge deliberately. If you ever need
-  the protection off, it is a toggle in the repo settings from your phone.
-- Agents work on `claude/*`, `codex/*` or `agent/*` branches. Never `main`.
-- The anchor tags `known-good-2026-08-18` and `live-2026-08-18` are the way
-  back if a run goes badly: `git reset --hard known-good-2026-08-18`.
-- Ask for **one change per turn**. A phone is a bad place to review a
-  400-line diff, and a bad diff merged remotely is expensive to undo.
-- If an agent says it verified something visual, disbelieve it. It could not —
-  open the preview yourself.
-- **Cost:** the `@claude` GitHub Action bills against an `ANTHROPIC_API_KEY`,
-  separately from your Claude subscription. Running Claude from **claude.ai/code**
-  or the Claude app uses the subscription instead. If you would rather not meter
-  API spend from a campsite, prefer the app and keep the Action as a fallback.
-- Write your sprint briefs in your phone's Notes app while offline, then paste
-  one when you next get signal. Composing a brief on a bar of signal is the
-  worst part of this.
+Optional: `.github/workflows/claude.yml` lets `@claude` in a GitHub comment run
+a session on a runner. It needs the Claude GitHub App plus an
+`ANTHROPIC_API_KEY` secret, which bills **separately** from the subscription.
+Prefer the app.
