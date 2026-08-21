@@ -1221,3 +1221,47 @@ kills regardless. Phase 2 owns that, along with `exodus`'s launches and
 **Next:** Lawrence watches a turnover on the preview. If the shape reads, phase
 2 is the cheap apocalypses (supervolcano, long winter) plus the three remaining
 quiet gestures.
+
+---
+
+## Ending follow-ups — claude — 2026-08-21
+
+Closes the five findings in issue #15, all from the review of #14.
+
+**The P1 mattered most.** For `garden`, `exodus` and `world_empire` the silence
+was not silent: those endings have no staged act 3, so `endingCheckpoints()`
+went straight from the omen to the turnover and civs kept expanding,
+conquering, founding cities and narrating through the beat that is the whole
+point of the sequence. My verified "livingCivs 0 across every sample of the
+silence" had been measured on `rewilded`, the only ending with a staged act 3 —
+so the claim was true of a quarter of the cases and I reported it as general.
+
+**Did.** `EndingState` gains `silent`; `beginSilence()` sets it at the act-4
+boundary for *every* ending, and `step()` then returns
+`{changes: [], events: [], biomeChanges: []}` immediately. Time still passes —
+the sky and the turnover clock run off `worldClock` in the renderer — but the
+world itself is finished.
+
+The other four:
+
+- Scheduled civs are held from ordinary death until their tick
+  (`advanceCivPhase(..., holdDeath)`). A civ whose decline timer expired during
+  the omen used to vanish before act 3 and out of the smallest-first order.
+- The skip now passes its events to `rememberWorldEvents()`. A skipped ending
+  was archiving an epitaph that undercounted its own deaths.
+- An omen spoken during a skip is re-spoken after the post-skip log reset;
+  `endingOmenSpoken` is latched, so it would otherwise never be seen.
+- The archive persists `apocalypse` alongside the title. Invisible while only
+  `quiet` ships, but the moment impact and ashfall both produce `ash`, saved
+  worlds could not say which ran.
+
+**Verified:** build clean. Headless on the previously-failing case — a forced
+`garden` ending — `silent` true through 24 samples of act 4, tick advancing 421
+while built (2029), ruin (619) and living (4) were all constant. The world is
+genuinely still. No page exceptions.
+
+**Could not verify:** still nothing visual. And the "held from ordinary death"
+path is asserted from the code rather than measured; it needs a civ whose
+decline timer happens to expire mid-omen, which I could not force.
+
+**Next:** the copy pass (Lawrence's next brief).

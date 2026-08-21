@@ -17,7 +17,7 @@ const WONDER_RADIUS: Record<NaturalWonderKind, number> = {
   atoll: 6, canyon: 8, dune_sea: 9,
 };
 import { drawTile, drawStateOverlayPersistent, redrawOverlay, redrawBiomeTile, lerpColor, gridToScreen, rgbToHsl, hslToRgb } from './iso';
-import { createSimWorld, beginEnding, rollCharacter, characterOf, step, tileOverlayColor, seedInitialCivs, applyCatastrophe, setVolcanoes, eruptVolcanoesNow, setWonderSites, iceDepthAt, SIM, CATASTROPHE, CITY, nearestCityDist, type SimWorld, type Civ, type CivCity, type SimEvent, type Era, type TileOverlay, type BiomeChange, type CatastropheType } from './sim';
+import { createSimWorld, beginEnding, beginSilence, rollCharacter, characterOf, step, tileOverlayColor, seedInitialCivs, applyCatastrophe, setVolcanoes, eruptVolcanoesNow, setWonderSites, iceDepthAt, SIM, CATASTROPHE, CITY, nearestCityDist, type SimWorld, type Civ, type CivCity, type SimEvent, type Era, type TileOverlay, type BiomeChange, type CatastropheType } from './sim';
 import { createAtmosphere, ATMOS } from './atmosphere';
 import { initializeAnalytics, trackEvent } from './analytics';
 import {
@@ -1718,6 +1718,9 @@ interface ArchivedWorld {
   name: string;
   endedAt: number;
   ending: WorldEnding;
+  // Which sequence actually ran. `ending` is only the title, and two causes can
+  // share one — an impact and a supervolcano both leave a world of ash.
+  apocalypse?: ApocalypseKind;
   ticksLived: number;
   civilizations: number;
   survivingCivilizations: number;
@@ -1877,6 +1880,8 @@ function endingCheckpoints(): boolean {
     endingOmenSpoken = true;
     pushNarration(ENDING_OMENS[committedEnding.ending], { priority: 'high' });
   }
+  // Act 4 applies to every ending, not only the ones with a staged act 3.
+  if (committedEnding && simWorld.tick >= acts.silence) beginSilence(simWorld);
   if (simWorld.tick >= currentWorldFate.endTick) {
     beginWorldEnding();
     return true;
@@ -7001,6 +7006,9 @@ function archiveCurrentWorld(ending: WorldEnding, outcome?: ResolvedWorldEnding)
     name: currentWorldName,
     endedAt: Date.now(),
     ending,
+    // Read directly: this runs at the top of resetWorld(), before the
+    // commitment is cleared.
+    apocalypse: committedEnding?.apocalypse,
     ticksLived: simWorld.tick,
     civilizations,
     survivingCivilizations,
@@ -8544,7 +8552,11 @@ document.getElementById('skip')!.addEventListener('click', () => {
   const wasRunning = running;
   running = false;
   for (let i = 0; i < SKIP_TICKS; i++) {
-    step(simWorld, biomeMap, elevationMap);
+    const { events } = step(simWorld, biomeMap, elevationMap);
+    // The skipped ticks are still history: without this a skipped ending
+    // archives an epitaph that undercounts its own deaths, and a commitment
+    // reached mid-skip is scored against stale history.
+    rememberWorldEvents(currentWorldHistory, events);
     // The ending's boundaries live inside the skip as well; crossing one here
     // and only noticing on the next frame would bypass the whole sequence.
     if (endingCheckpoints()) break;
@@ -8575,6 +8587,12 @@ document.getElementById('skip')!.addEventListener('click', () => {
   seedSuccessionAfterSkip();
   drawCityMarkers();
   eventLog.length = 0;
+  // The reset above clears the log, which would swallow an omen the skip had
+  // just spoken — and `endingOmenSpoken` is latched, so it would never be said
+  // again. If the skip landed inside the ending, say it now instead.
+  if (committedEnding && endingOmenSpoken && simWorld.tick < currentWorldFate.endTick) {
+    pushNarration(ENDING_OMENS[committedEnding.ending], { priority: 'high' });
+  }
   accumulator = 0;
   running = wasRunning;
   updateHud();
