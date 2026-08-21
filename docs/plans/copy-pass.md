@@ -144,8 +144,11 @@ entirely about rhythm and specificity.**
 ### 4a. The doorway — highest value, first thing anyone reads, and the flattest
 
 Once the button label and the eyebrow are excluded — they are labels, not
-sentences — the doorway's three real sentences run 9, 13 and 15 words: **SD 2.5,
-the flattest prose measured anywhere in the project.** That is a genuine finding
+sentences — the doorway's three real sentences run 9, 13 and 15 words: **SD 2.5 —
+flatter than any of the five pages, and flatter than the ending cards.** (Not
+flatter than everything: the `main.ts` prose superset sits at 2.4. An earlier
+version of this sentence claimed the doorway was the flattest thing measured,
+which was wrong.) That is a genuine finding
 and it happens to land on the surface this section was already arguing about,
 for unrelated reasons. It is also the one place where a visitor is reading
 *instead of* watching, so an even rhythm has the least excuse.
