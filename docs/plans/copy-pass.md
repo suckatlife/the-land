@@ -12,11 +12,15 @@ I audited the project's copy against the evidenced tells rather than guessing.
 Two scripts, both committed: `scripts/copy-audit.py` over the five HTML pages,
 `scripts/copy-audit-src.py` over user-facing string literals in `src/`.
 
-**The lexical tells are simply not here.** Across all five pages:
+**The lexical tells are simply not here.** Across every surface — the five HTML
+pages *and* the copy that lives in `src/`, which an earlier draft of this
+document did not actually check before claiming it had:
 
-| | style-words | puffery | "not X, but Y" | trailing `-ing` significance |
+| surface | style-words | puffery | "not X, but Y" | trailing `-ing` |
 | --- | --- | --- | --- | --- |
-| about / privacy / terms / support / index | **0** | **0** | **0** | 1 |
+| the five HTML pages | **0** | **0** | **0** | 1 |
+| the seven ending cards | **0** | **0** | **0** | 0 |
+| all prose literals in `main.ts` | **0** | **0** | **0** | 5 |
 
 Zero hits against **114 style words** — the high-value subset of the 407 that
 Kobak et al. (*Science Advances*, 2025) classify as style rather than content.
@@ -37,9 +41,15 @@ prose clusters at 10–30 tokens ("register leveling", PMC11422446). Measured pe
 
 | surface | sentences | mean | **SD** | under 8 words |
 | --- | --- | --- | --- | --- |
-| the five HTML pages | 65 | 14.4 | **6.3** | 6 |
+| the five HTML pages | 81 | 10.4 | **6.6** | 33 |
 | **the seven ending cards** | **12** | **8.8** | **3.4** | **5** |
-| all prose literals in `main.ts` | 283 | 6.9 | **2.4** | 187 |
+| all prose literals in `main.ts` | 290 | 6.9 | **2.4** | 194 |
+
+*(The page figures changed after review: the extractor replaced every tag with a
+space, which merged headings, navigation and footers into adjacent paragraphs
+and produced "sentences" that were nothing of the kind. It now walks block
+elements. The conclusion did not move — 6.3 to 6.6 — but the earlier number was
+not measuring what it said.)*
 
 **This kills the finding an earlier draft of this document led with**, and the
 correction is worth spelling out because it is instructive.
@@ -256,11 +266,23 @@ where a person is visibly present.
 
 ---
 
+**One small thing the audit did surface:** five trailing `-ing` significance
+clauses among the `main.ts` prose literals (the *"…, highlighting the region's
+enduring legacy"* shape). That is a low count across 290 sentences and may all
+be legitimate; worth a look with `python3 scripts/copy-audit-src.py -v` before
+deciding it is nothing.
+
 ## 5. What I am deliberately not proposing
 
-- No changes to the in-world narration. 283 sentences, mean 6.9 words, 187 of
-  them under eight. It is short, concrete and varied, and nothing in the audit
-  flags it. Touching it is the highest-risk, lowest-value edit available.
+- No changes to the in-world narration. The closest measurement available is the
+  **`main.ts` prose superset** — 290 sentences, mean 6.9 words, 194 under eight,
+  which also contains HUD, archive and doorway copy and is *not* narration
+  specifically. On that evidence the surface is short, concrete and varied, and
+  nothing in the audit flags it. The recommendation to leave it alone therefore
+  rests partly on judgement rather than purely on measurement, which is worth
+  saying plainly: isolating narration means following values through
+  `narrateEvent()` and the event tables, which static scanning does not do
+  reliably.
 - No word blacklist and no automated find-and-replace anywhere.
 - No punctuation changes at all.
 - No changes to Terms.
