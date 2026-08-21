@@ -45,11 +45,10 @@ description claims, and is the evidence real?*
    > Next turn per REMOTE.md. Sim/balance work. Branch `claude/<topic>`, draft PR.
 2. **Build.** Claude works on a `claude/*` branch, one change, and opens a
    **draft** PR. Vercel builds a preview automatically.
-3. **Review.** Lawrence taps **Ready for review** on the PR. That is the baton:
-   draft means "Claude is still working", ready means "Codex, your turn".
-   With **Automatic reviews** enabled, undrafting is all it takes — Codex
-   reviews without being asked. Otherwise comment `@codex review`.
-   Either way Codex reads the whole diff, does **not** edit, and reports:
+3. **Review — automatic.** With Codex set to review **on every push**, it
+   reviews as soon as Claude pushes, and again after any repair push. Lawrence
+   does nothing. `@codex review` remains available to force a re-review.
+   Codex reads the whole diff, does **not** edit on the first pass, and reports:
    blocking defects / non-blocking concerns / ready or not.
 4. **Repair — once.** If there are blocking findings, Claude gets exactly one
    follow-up, scoped to those findings. No scope growth. If it needs a second
@@ -93,7 +92,8 @@ description claims, and is the evidence real?*
   force pushes, no deletions, enforced on admins. Neither agent — nor Lawrence
   by accident — can push straight to production.
 - **Agents use `claude/*`, `codex/*` or `agent/*` branches.** Never `main`.
-- **Draft PRs** while the builder is still working. Undrafting is the handoff.
+- **Draft PRs** while the builder is still working — a signal to the human, not
+  to Codex, which reviews on pushes regardless of draft state.
 - **One builder pass, one repair pass.** A phone is a bad place to review a
   400-line diff.
 - **Anchor tags** are the way back: `known-good-2026-08-18` (pre-loop state),
@@ -133,16 +133,26 @@ not in the ChatGPT mobile app:
 1. Connect Codex cloud to `suckatlife/the-land` (ChatGPT → Codex → connect the
    repository). Needs GitHub push or admin permission on the repo.
 2. Go to **chatgpt.com/codex/settings/code-review**.
-3. Turn on **Code review** for the repository.
-4. Turn on **Automatic reviews**.
+3. Confirm the repository is Codex-enabled, and turn on **Auto review**.
+4. Set **Review trigger** to **On every push**.
+5. Consider **Exhaustive code review** on — the volume here is one PR per turn,
+   and depth is the entire reason Codex is in this loop.
 
-Then marking a PR ready for review is enough to summon it. Codex reads the
+The trigger options are *On PR open*, *On every push*, and *Smart detect
+(experimental)*. There is **no "when marked ready for review"** option, so
+drafting is not a signal Codex can see. *On every push* is the right choice: it
+covers both the first review and the re-review after a repair push, without
+anyone having to ask. Avoid *Smart detect* while unattended — experimental
+behaviour is a poor bet when nobody is watching.
+
+**Rate limits are silent.** With *Enable credits use* off, reviews simply stop
+once limits are hit. Treat "Codex said nothing" as *check whether it is
+rate-limited*, not as *it found nothing*. Codex reads the
 `## Code Review Rules` section of `AGENTS.md`, so the criteria in this file
 apply without restating them per PR.
 
-If auto-review does not fire on undrafting — the docs do not say whether it
-treats a draft becoming ready as "opening a PR for review" — fall back to the
-`@codex review` comment. Worth testing once before relying on it.
+If a review does not appear after a push, fall back to the `@codex review`
+comment, which always works. Worth testing once before relying on it.
 
 Optional: `.github/workflows/claude.yml` lets `@claude` in a GitHub comment run
 a session on a runner. It needs the Claude GitHub App plus an
