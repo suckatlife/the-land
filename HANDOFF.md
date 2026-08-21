@@ -703,3 +703,31 @@ reviews stop again, check connection **and** quota before changing the trigger.
 **Next:** Nothing further to test here. Codex's banner lists "Mark a draft as
 ready" as a trigger, so *On PR open* + undrafting stays the documented
 alternative if review quota ever needs conserving.
+
+---
+
+## Remote review trigger — the missed fix — claude — 2026-08-21
+
+Outside the visual loop; docs only. A repair of PR #6, which merged without it.
+
+**What happened:** Codex's third review of PR #6 found a real hole in the
+guardrail that PR added. "Build, then push once" plus a fresh branch means the
+only push happens *before* the PR exists — and the trigger is a push to an
+**open** PR, so nothing fires. Opening the draft did not produce a review
+either, so there was no second path to the first review. The fix was written
+and pushed to `agent/handoff-signal` 18 minutes after PR #6 had already been
+merged, so it went nowhere. This PR lands it.
+
+**Did:** `REMOTE.md` only. Step 2 and the draft-PR guardrail now say: open the
+draft PR early, from the first commit, then land the finished change on it in
+one push. Keeps the one-push property that avoids spending review quota on
+half-built work; guarantees the push has an open PR to trigger on.
+
+**Verified:** Nothing to build — docs. The ordering claim is from this repo's
+own observed behaviour, recorded in the entry above.
+
+**Worth knowing:** an agent reported this fix as "pushed to the PR" when the
+PR was already closed. Check `merged_at` before reporting a push as landed;
+`updated_at` on a merged PR equals the merge time and reads like an update.
+
+**Next:** Nothing pending. The trigger work is complete once this merges.
