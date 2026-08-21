@@ -703,3 +703,56 @@ reviews stop again, check connection **and** quota before changing the trigger.
 **Next:** Nothing further to test here. Codex's banner lists "Mark a draft as
 ready" as a trigger, so *On PR open* + undrafting stays the documented
 alternative if review quota ever needs conserving.
+
+---
+
+## Doc archaeology — claude — 2026-08-21
+
+Issue #7, part one of the consolidation. No `src/` changes.
+
+**Archived** (via `git mv`, so blame survives) into `docs/archive/`: the seven
+`WINDOW_*_NOTES`, `RUN_LOG`, `FABLE_RUN_SUMMARY`, `BRIEF`, `OBSERVATIONS`,
+`JOURNAL`, `PLAN`, `STATE_2026-06-10` — 14 files, ~1,400 lines. Added
+`docs/archive/README.md` explaining what the folder is and, specifically, that
+`BRIEF.md` is where the project's aesthetic direction and its two acceptance
+tests are actually written down. That is why none of this was deleted: the June
+material was read in August to answer "what is this project for" when the code
+could not say.
+
+**Rewrote `CLAUDE.md`** (84 lines describing a four-module June project → 138
+lines describing this one). Every claim was checked against source rather than
+carried over from the old file or from `STATE_2026-08-09.md`:
+
+- module table counted with `wc -l` (main.ts is 8421 lines, not the 1527 the old
+  file implied)
+- time registers read from the constants (`worldCycleTicks` 30000,
+  `ATMOS.day.cycleSeconds` 360, `season` 1200, `ticksPerSecond` 30)
+- every invariant grep-verified as still present: 0 Pixi imports in `sim.ts`,
+  **0 `Math.random()` in `sim.ts`**, `resetSimRandom` present, `fadedDeadCivs`
+  present, `maxDecaysPerCivPerTick` present, `snapshot` present
+- documented what did not exist in June: world form and `CivBehaviour`, the
+  seeded character, ice, succession, quiet zones, endings, analytics, the
+  single world clock, and the doorway that holds the sim at tick 0
+
+**Verified:** `npm run build` passes. No files under `src/` touched.
+
+**Could not verify:** nothing visual — this turn changed no rendering. The
+performance claims carried into `CLAUDE.md` (fill-bound, not object-bound;
+sprite batching measured twice as a non-issue) are inherited from earlier
+sessions and were not re-measured here.
+
+**Spotted, not done:**
+- `IDEAS.md` still lists shipped features as ideas (ice ages, succession,
+  planetary biography). Its own small turn.
+- `STATE_2026-08-09.md` predates the world-form work and is now partly stale. It
+  either needs a refresh or should be archived once `CLAUDE.md` carries the load.
+- `HANDOFF.md` is past 700 lines and grows every turn. It needs a rotation
+  policy — current sprint in root, older entries to `docs/archive/` — or it
+  becomes the next file nobody reads.
+- `DEPENDENCY_NOTES.md` is 6 lines and predates both PostHog and Playwright
+  being added.
+
+**Next:** Turn B — the master plan for shipping publicly and monetizing, now
+that the foundation says true things. Codex's commercial analysis (pricing, the
+soft-launch sequence, the argument against ads) should be an input to it, not
+re-derived.
