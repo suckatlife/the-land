@@ -50,9 +50,30 @@ description claims, and is the evidence real?*
    merely creates the branch has nothing to trigger on, and opening a draft was
    not observed to trigger a review either. Vercel builds a preview
    automatically.
-3. **Review — automatic.** With Codex set to review **on every push**, it
-   reviews as soon as Claude pushes, and again after any repair push. Lawrence
-   does nothing. `@codex review` remains available to force a re-review.
+3. **Review — ask for it, every time.** Codex's *on every push* setting works,
+   but not reliably: on 2026-08-21 it reviewed during one 86-minute window out
+   of three hours, and **PR #9 merged having never been reviewed** because
+   nobody noticed the silence. So the builder **comments `@codex review` on the
+   PR on every push that lands a *finished* change — the first complete push and
+   each repair push, but **not** the draft-opening push, which step 2 makes
+   deliberately incomplete — and then
+   **confirms the review actually arrived for that commit.** Asking is not the
+   same as being reviewed: requests have been ignored too. Confirmation is one
+   API call:
+
+   ```
+   gh api repos/suckatlife/the-land/pulls/<n>/reviews \
+     --jq '.[] | select(.user.login == "chatgpt-codex-connector[bot]")
+                 | "\(.submitted_at) \(.commit_id[0:7])"'
+   ```
+
+   The `select` is not optional: that endpoint lists **every** review on the PR,
+   so without it a review by Lawrence — or any bot — reads as a Codex review. A
+   review counts only if it is Codex's *and* its `commit_id` is the current
+   head. If nothing has
+   appeared after ~5 minutes, comment again. If a second request also goes
+   unanswered, **say so in the PR and to Lawrence** — an unreviewed PR is a
+   thing to escalate, never a thing to report as done.
    Codex reads the whole diff, does **not** edit on the first pass, and reports:
    blocking defects / non-blocking concerns / ready or not.
 4. **Repair — once, and this step is deliberately manual.** If there are
@@ -92,6 +113,12 @@ push notifications are what actually close the loop — check they are on.
   what you could not verify. Say plainly when something needs an eye.
 - Never claim a visual result. You have no display. The preview is for Lawrence.
 - Append a `HANDOFF.md` entry in the same PR.
+- **Comment `@codex review` on every push that lands finished work — not the
+  draft-opening push — then confirm a review arrived for that commit.** Do not
+  wait on the automatic trigger, and do not treat "I asked" as evidence:
+  requests get ignored. State plainly in the PR when a review could not be
+  obtained; never let that pass silently. An unreviewed PR has merged once
+  already.
 
 **Reviewer (Codex)**
 - Read the whole diff, not the description. The description is the claim under
@@ -108,6 +135,9 @@ push notifications are what actually close the loop — check they are on.
 - First pass is read-only. Report; do not fix.
 
 **Gate (Lawrence)**
+- **Check there is a Codex review against the commit being merged.** PR #9
+  merged unreviewed because nobody looked. The review list is on the PR page;
+  a review of an earlier commit is not a review of this one.
 - Open the preview before merging. It is the only real visual check.
 - Merge deliberately: `main` deploys to the live site in about ten seconds.
 - If an agent says it verified something visual, disbelieve it.
@@ -122,8 +152,8 @@ push notifications are what actually close the loop — check they are on.
   to Codex, which (on *On every push*) reviews pushes regardless of draft
   state. So: open the draft PR first, then land the finished change on it in
   **one** push. Not "build, then push once at the end" — that push would have
-  no open PR to trigger on. If the first review still does not arrive,
-  `@codex review`.
+  no open PR to trigger on. Then comment `@codex review` — always, not only
+  when the automatic trigger has visibly failed.
 - **One builder pass, one repair pass.** A phone is a bad place to review a
   400-line diff.
 - **One agent per working copy.** Two sessions sharing a checkout produced the
@@ -207,20 +237,35 @@ rate-limited*, not as *it found nothing*. Codex reads the
 `## Code Review Rules` section of `AGENTS.md`, so the criteria in this file
 apply without restating them per PR.
 
-If a review does not appear after a push, fall back to the `@codex review`
-comment. **Tested on PR #6 (2026-08-21), and the push trigger works** — the
-failure half of the sequence matters as much as the success, so both are here:
-nothing arrived on PR open or on the first three pushes; the first
-`@codex review` comment got no reply; a second, 43 minutes later, produced a
-review in three minutes; and **the next push after that was reviewed
-automatically four minutes later, with nobody asking.** So *On every push* is
-live, and the comment fallback works.
+`@codex review` is the **primary** trigger, not a fallback — see the loop above.
+The automatic setting is a bonus when it works, and the whole day's evidence is
+that it works *sometimes*:
 
-Why the first hour was silent is **not** established. An unconnected repository
-and a silent rate limit look identical from GitHub — nothing is posted either
-way. If reviews stop again, check the connection **and** the quota at
-chatgpt.com/codex/settings/code-review before touching the trigger; changing
-the trigger cannot help if the cause is quota.
+Counted from the API across 2026-08-21: **11 reviews from 10 explicit requests
+and an unknown number of pushes.** Five of the ten requests were answered
+(median 3 minutes); the other six reviews arrived automatically, all of them
+between 14:18 and 15:44. Outside that window the automatic trigger produced
+nothing, and **PR #9 lived and merged without a single review.**
+
+The failures are not evenly spread, and this is the part worth knowing:
+
+| PR | requests | answered |
+| --- | --- | --- |
+| #6 | 2 | 1 (the first was ignored, the second answered 43 min later) |
+| #10 | 5 | 1 — four consecutive requests ignored between 16:18 and 16:30 |
+| #11 | 3 | 3, at 16:21, 16:29 and 16:38 |
+
+#10 and #11 were being pushed to in the *same minutes*. So silence is **not**
+simply a global rate limit: one PR can go dark while another is reviewed
+normally. #10 is the only PR touching `src/main.ts`, which is 8.4k lines, so a
+large or slow diff is the better suspect. Either way the operational answer is
+the same — ask, confirm, re-ask, and escalate rather than assume.
+
+Why it goes quiet is **not** established. An unconnected repository and a silent
+rate limit look identical from GitHub — nothing is posted either way. If reviews
+stop, check the connection **and** the quota at
+chatgpt.com/codex/settings/code-review; changing the trigger cannot help if the
+cause is quota. But do not spend the trip diagnosing it: just comment.
 
 Optional: `.github/workflows/claude.yml` lets `@claude` in a GitHub comment run
 a session on a runner. It needs the Claude GitHub App plus an

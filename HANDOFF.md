@@ -817,6 +817,58 @@ PR was already closed. Check `merged_at` before reporting a push as landed;
 
 ---
 
+## Ask for the review, every time — claude — 2026-08-21
+
+Docs only, `REMOTE.md`. Prompted by Lawrence after noticing PR #10 had gone
+unreviewed.
+
+**Why:** the contract said Codex reviews on every push and Lawrence does
+nothing. Across today that held for one 86-minute window out of three-plus
+hours: 6 automatic reviews between 14:18 and 15:44, and nothing before or
+after, across 9 pushes. **PR #9 merged having never been reviewed at all**,
+and the agent that pushed it did not notice — it read the silence as "no
+findings" rather than "no review", which is exactly the failure this file
+already warns about and still walked into.
+
+Counted properly from the API, after two goes at it by estimate that Codex
+caught as inconsistent: **10 explicit requests produced 5 reviews**; 6 more
+reviews arrived automatically, all between 14:18 and 15:44.
+
+The failures cluster: PR #11 was answered 3 times out of 3 (16:21, 16:29,
+16:38) while PR #10 had four consecutive requests ignored (16:18–16:30) in the
+same minutes. So this is **not** a plain global rate limit — a single PR can go
+dark while another is reviewed normally. #10 is the only PR touching
+`src/main.ts` (8.4k lines); a diff Codex struggles with is the better suspect.
+That does not change the rule, but it does change what to check first.
+
+**Did:** Made the comment the primary trigger rather than the fallback. Step 3
+of the loop, the builder's obligations, and the draft-PR guardrail now all say
+the builder comments `@codex review` on every push that lands **finished**
+work — the first complete push and each repair push — but not on the
+draft-opening push, which step 2 makes deliberately incomplete. Then it
+confirms a review by **Codex** exists at the current head, since that API
+endpoint lists every reviewer.
+Replaced the "the push trigger works" claim — written this morning off two
+observations — with the full day's table, which does not support it.
+
+**Verified:** Nothing to build. The table is from the GitHub API: review
+timestamps per PR against push timestamps.
+
+**Corrected in review:** the first version of this rule said to comment and not
+wait, and claimed the comment "has never failed". Codex pointed out that my own
+evidence table recorded an ignored request, so the rule as written could still
+let an unreviewed PR reach the gate — the exact failure it was meant to stop.
+While fixing that, a second request went unanswered live, on PR #10's `39d1360`.
+So the rule is now ask **and confirm**: check that a review exists whose
+`commit_id` is the current head, comment again after ~5 minutes, and escalate
+rather than proceed if a second request is also ignored. The gate section now
+tells Lawrence to check for a review against the commit he is merging.
+
+**Next:** Nothing pending. If the automatic trigger becomes reliable the rule
+costs one redundant comment per push, which is the right side to err on.
+
+---
+
 ## The last Date.now() lifetimes — claude — 2026-08-21
 
 **Type: SYSTEMIC.** Closes the clock family opened in Turn 01.
