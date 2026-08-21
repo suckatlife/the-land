@@ -54,7 +54,9 @@ description claims, and is the evidence real?*
    but not reliably: on 2026-08-21 it reviewed during one 86-minute window out
    of three hours, and **PR #9 merged having never been reviewed** because
    nobody noticed the silence. So the builder **comments `@codex review` on the
-   PR every time it opens one and every time it pushes to one** — and then
+   PR on every push that lands a *finished* change — the first complete push and
+   each repair push, but **not** the draft-opening push, which step 2 makes
+   deliberately incomplete — and then
    **confirms the review actually arrived for that commit.** Asking is not the
    same as being reviewed: requests have been ignored too. Confirmation is one
    API call:
@@ -107,12 +109,12 @@ push notifications are what actually close the loop — check they are on.
   what you could not verify. Say plainly when something needs an eye.
 - Never claim a visual result. You have no display. The preview is for Lawrence.
 - Append a `HANDOFF.md` entry in the same PR.
-- **Comment `@codex review` after every push, including the one that opens the
-  PR — then confirm a review arrived for that commit.** Do not wait on the
-  automatic trigger; silence from Codex is indistinguishable from a rate limit,
-  and an unreviewed PR has merged once already. Requests get ignored too, so
-  "I asked" is not evidence. State plainly in the PR when a review could not be
-  obtained; never let that pass silently.
+- **Comment `@codex review` on every push that lands finished work — not the
+  draft-opening push — then confirm a review arrived for that commit.** Do not
+  wait on the automatic trigger, and do not treat "I asked" as evidence:
+  requests get ignored. State plainly in the PR when a review could not be
+  obtained; never let that pass silently. An unreviewed PR has merged once
+  already.
 
 **Reviewer (Codex)**
 - Read the whole diff, not the description. The description is the claim under
@@ -235,19 +237,25 @@ apply without restating them per PR.
 The automatic setting is a bonus when it works, and the whole day's evidence is
 that it works *sometimes*:
 
-| window (2026-08-21, UTC) | automatic reviews |
-| --- | --- |
-| 12:49 – 14:18 | none, across 4 pushes and one ignored `@codex review` |
-| 14:18 – 15:44 | 6, each 3–4 minutes after a push |
-| 15:44 – 16:11 | none, across 5 pushes on two PRs |
+Counted from the API across 2026-08-21: **11 reviews from 10 explicit requests
+and an unknown number of pushes.** Five of the ten requests were answered
+(median 3 minutes); the other six reviews arrived automatically, all of them
+between 14:18 and 15:44. Outside that window the automatic trigger produced
+nothing, and **PR #9 lived and merged without a single review.**
 
-In the first dead window a second `@codex review` comment, 43 minutes after the
-first, produced a review in three minutes. In the second, one comment produced
-one in three minutes. **Explicit requests are far more reliable than the automatic
-trigger, but they are not certain either:** of six `@codex review` comments,
-two went unanswered — one at 13:32 and one at 16:16 — while roughly half of the
-pushes relying on the automatic trigger got nothing at all. PR #9 merged
-unreviewed as a result. Ask, then check; do not assume either path worked.
+The failures are not evenly spread, and this is the part worth knowing:
+
+| PR | requests | answered |
+| --- | --- | --- |
+| #6 | 2 | 1 (the first was ignored, the second answered 43 min later) |
+| #10 | 5 | 1 — four consecutive requests ignored between 16:18 and 16:30 |
+| #11 | 3 | 3, at 16:21, 16:29 and 16:38 |
+
+#10 and #11 were being pushed to in the *same minutes*. So silence is **not**
+simply a global rate limit: one PR can go dark while another is reviewed
+normally. #10 is the only PR touching `src/main.ts`, which is 8.4k lines, so a
+large or slow diff is the better suspect. Either way the operational answer is
+the same — ask, confirm, re-ask, and escalate rather than assume.
 
 Why it goes quiet is **not** established. An unconnected repository and a silent
 rate limit look identical from GitHub — nothing is posted either way. If reviews

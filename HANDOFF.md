@@ -830,11 +830,16 @@ and the agent that pushed it did not notice — it read the silence as "no
 findings" rather than "no review", which is exactly the failure this file
 already warns about and still walked into.
 
-Explicit requests are much better than the automatic trigger but are not
-certain either: by the end of the day, **eight `@codex review` comments had
-produced five reviews.** Two were ignored early (13:32, 16:16) and three more
-on PR #10 went unanswered across seventeen minutes while this entry was being
-written. That is why the rule below is ask *and confirm*, not just ask.
+Counted properly from the API, after two goes at it by estimate that Codex
+caught as inconsistent: **10 explicit requests produced 5 reviews**; 6 more
+reviews arrived automatically, all between 14:18 and 15:44.
+
+The failures cluster: PR #11 was answered 3 times out of 3 (16:21, 16:29,
+16:38) while PR #10 had four consecutive requests ignored (16:18–16:30) in the
+same minutes. So this is **not** a plain global rate limit — a single PR can go
+dark while another is reviewed normally. #10 is the only PR touching
+`src/main.ts` (8.4k lines); a diff Codex struggles with is the better suspect.
+That does not change the rule, but it does change what to check first.
 
 **Did:** Made the comment the primary trigger rather than the fallback. Step 3
 of the loop, the builder's obligations, and the draft-PR guardrail now all say
