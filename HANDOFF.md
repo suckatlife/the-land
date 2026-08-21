@@ -684,16 +684,22 @@ unasked; drafts are a signal to Lawrence, not to Codex, so the builder pushes
 once, when the change is whole. The repair step stays manual on purpose:
 Claude auto-fix + Codex review-on-push would close a loop with no human in it.
 
-**Verified:** On PR #6 itself the automatic trigger did **not** fire on open
-or on three pushes; the first `@codex review` got no reply; the second, 43 min
-later, produced a review in 3 min. So the comment fallback works. The push
-trigger is **not yet shown** working — the first PR that gets a review
-unasked is the proof. Codex's own review banner lists "Mark a draft as ready"
-as a trigger, so *On PR open* + undrafting is the documented alternative.
+**Verified:** The push trigger works, and PR #6 was itself the test. Nothing
+arrived on open or on the first three pushes; the first `@codex review` got no
+reply; the second, 43 min later, produced a review in 3 min — and then the
+next push was reviewed **automatically** 4 min later, unasked (review
+`4994365177` on commit `2de2dc9`; no `@codex` comment after 14:20Z). So *On
+every push* is live and the comment fallback works.
 
-**Could not verify:** Whether the silent no-reply was a rate limit or an
-unconnected repo. Rate limits are silent with credits use off.
+A correction worth keeping, since it is the failure this repo exists to catch:
+the first version of this entry said the push trigger was "not yet shown
+working". That was true when written and false twenty minutes later, and the
+event that disproved it was the review of the commit containing the claim.
 
-**Next:** Open the next real PR as usual and watch whether a review arrives
-without `@codex review`. If not, set the trigger to *On PR open* and use
-draft → ready as the baton.
+**Could not verify:** Why the first hour was silent. An unconnected repo and a
+silent rate limit (credits use off) are indistinguishable from GitHub. If
+reviews stop again, check connection **and** quota before changing the trigger.
+
+**Next:** Nothing further to test here. Codex's banner lists "Mark a draft as
+ready" as a trigger, so *On PR open* + undrafting stays the documented
+alternative if review quota ever needs conserving.

@@ -184,12 +184,19 @@ rate-limited*, not as *it found nothing*. Codex reads the
 apply without restating them per PR.
 
 If a review does not appear after a push, fall back to the `@codex review`
-comment. **Tested once, on PR #6 (2026-08-21):** the automatic trigger did not
-fire on PR open or on any of three pushes, and the first `@codex review`
-comment got no reply either; a second comment 43 minutes later produced a
-review within three minutes. Read that as: the connector was not ready yet,
-and the comment fallback works — but do not leave on the assumption that the
-push trigger is live until one PR has shown a review arriving unasked.
+comment. **Tested on PR #6 (2026-08-21), and the push trigger works** — the
+failure half of the sequence matters as much as the success, so both are here:
+nothing arrived on PR open or on the first three pushes; the first
+`@codex review` comment got no reply; a second, 43 minutes later, produced a
+review in three minutes; and **the next push after that was reviewed
+automatically four minutes later, with nobody asking.** So *On every push* is
+live, and the comment fallback works.
+
+Why the first hour was silent is **not** established. An unconnected repository
+and a silent rate limit look identical from GitHub — nothing is posted either
+way. If reviews stop again, check the connection **and** the quota at
+chatgpt.com/codex/settings/code-review before touching the trigger; changing
+the trigger cannot help if the cause is quota.
 
 Optional: `.github/workflows/claude.yml` lets `@claude` in a GitHub comment run
 a session on a runner. It needs the Claude GitHub App plus an
