@@ -50,9 +50,13 @@ description claims, and is the evidence real?*
    merely creates the branch has nothing to trigger on, and opening a draft was
    not observed to trigger a review either. Vercel builds a preview
    automatically.
-3. **Review — automatic.** With Codex set to review **on every push**, it
-   reviews as soon as Claude pushes, and again after any repair push. Lawrence
-   does nothing. `@codex review` remains available to force a re-review.
+3. **Review — ask for it, every time.** Codex's *on every push* setting works,
+   but not reliably: on 2026-08-21 it reviewed during one 86-minute window out
+   of three hours, and **PR #9 merged having never been reviewed** because
+   nobody noticed the silence. So the builder **comments `@codex review` on the
+   PR every time it opens one and every time it pushes to one.** One line, it
+   has never failed, and it converts "did the review fire?" from something
+   somebody has to notice into something somebody has already done.
    Codex reads the whole diff, does **not** edit on the first pass, and reports:
    blocking defects / non-blocking concerns / ready or not.
 4. **Repair — once, and this step is deliberately manual.** If there are
@@ -92,6 +96,10 @@ push notifications are what actually close the loop — check they are on.
   what you could not verify. Say plainly when something needs an eye.
 - Never claim a visual result. You have no display. The preview is for Lawrence.
 - Append a `HANDOFF.md` entry in the same PR.
+- **Comment `@codex review` after every push, including the one that opens the
+  PR.** Do not wait to see whether the automatic trigger fires; silence from
+  Codex is indistinguishable from a rate limit, and an unreviewed PR has merged
+  once already.
 
 **Reviewer (Codex)**
 - Read the whole diff, not the description. The description is the claim under
@@ -122,8 +130,8 @@ push notifications are what actually close the loop — check they are on.
   to Codex, which (on *On every push*) reviews pushes regardless of draft
   state. So: open the draft PR first, then land the finished change on it in
   **one** push. Not "build, then push once at the end" — that push would have
-  no open PR to trigger on. If the first review still does not arrive,
-  `@codex review`.
+  no open PR to trigger on. Then comment `@codex review` — always, not only
+  when the automatic trigger has visibly failed.
 - **One builder pass, one repair pass.** A phone is a bad place to review a
   400-line diff.
 - **One agent per working copy.** Two sessions sharing a checkout produced the
@@ -207,20 +215,27 @@ rate-limited*, not as *it found nothing*. Codex reads the
 `## Code Review Rules` section of `AGENTS.md`, so the criteria in this file
 apply without restating them per PR.
 
-If a review does not appear after a push, fall back to the `@codex review`
-comment. **Tested on PR #6 (2026-08-21), and the push trigger works** — the
-failure half of the sequence matters as much as the success, so both are here:
-nothing arrived on PR open or on the first three pushes; the first
-`@codex review` comment got no reply; a second, 43 minutes later, produced a
-review in three minutes; and **the next push after that was reviewed
-automatically four minutes later, with nobody asking.** So *On every push* is
-live, and the comment fallback works.
+`@codex review` is the **primary** trigger, not a fallback — see the loop above.
+The automatic setting is a bonus when it works, and the whole day's evidence is
+that it works *sometimes*:
 
-Why the first hour was silent is **not** established. An unconnected repository
-and a silent rate limit look identical from GitHub — nothing is posted either
-way. If reviews stop again, check the connection **and** the quota at
-chatgpt.com/codex/settings/code-review before touching the trigger; changing
-the trigger cannot help if the cause is quota.
+| window (2026-08-21, UTC) | automatic reviews |
+| --- | --- |
+| 12:49 – 14:18 | none, across 4 pushes and one ignored `@codex review` |
+| 14:18 – 15:44 | 6, each 3–4 minutes after a push |
+| 15:44 – 16:11 | none, across 5 pushes on two PRs |
+
+In the first dead window a second `@codex review` comment, 43 minutes after the
+first, produced a review in three minutes. In the second, one comment produced
+one in three minutes. **Every review today that was explicitly asked for
+eventually arrived; roughly half of the pushes that relied on the automatic
+trigger got nothing** — and PR #9 merged unreviewed as a result.
+
+Why it goes quiet is **not** established. An unconnected repository and a silent
+rate limit look identical from GitHub — nothing is posted either way. If reviews
+stop, check the connection **and** the quota at
+chatgpt.com/codex/settings/code-review; changing the trigger cannot help if the
+cause is quota. But do not spend the trip diagnosing it: just comment.
 
 Optional: `.github/workflows/claude.yml` lets `@claude` in a GitHub comment run
 a session on a runner. It needs the Claude GitHub App plus an

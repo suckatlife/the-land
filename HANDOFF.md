@@ -814,3 +814,33 @@ PR was already closed. Check `merged_at` before reporting a push as landed;
   check `merged_at` before calling anything landed.
 
 **Next:** Nothing pending. The trigger work is complete once this merges.
+
+---
+
+## Ask for the review, every time — claude — 2026-08-21
+
+Docs only, `REMOTE.md`. Prompted by Lawrence after noticing PR #10 had gone
+unreviewed.
+
+**Why:** the contract said Codex reviews on every push and Lawrence does
+nothing. Across today that held for one 86-minute window out of three-plus
+hours: 6 automatic reviews between 14:18 and 15:44, and nothing before or
+after, across 9 pushes. **PR #9 merged having never been reviewed at all**,
+and the agent that pushed it did not notice — it read the silence as "no
+findings" rather than "no review", which is exactly the failure this file
+already warns about and still walked into.
+
+Every review that was explicitly requested with an `@codex review` comment
+arrived, including twice during the dead windows.
+
+**Did:** Made the comment the primary trigger rather than the fallback. Step 3
+of the loop, the builder's obligations, and the draft-PR guardrail now all say
+the builder comments `@codex review` on opening a PR and on every push to it.
+Replaced the "the push trigger works" claim — written this morning off two
+observations — with the full day's table, which does not support it.
+
+**Verified:** Nothing to build. The table is from the GitHub API: review
+timestamps per PR against push timestamps.
+
+**Next:** Nothing pending. If the automatic trigger becomes reliable the rule
+costs one redundant comment per push, which is the right side to err on.
