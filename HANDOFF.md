@@ -763,6 +763,14 @@ added to STATE, the stale constraint annotated rather than rewritten (the file
 is a dated record), and STATE's pointer to `STATE_2026-06-10.md` repaired to its
 new archive path.
 
+**Spotted, not done — a real code bug, found by Codex while reviewing this
+doc PR:** `maybeGhost` (12s), `updateFestival` (45s) and `checkWarQuiet` (45s)
+in `src/main.ts` still timestamp their lifetimes with `Date.now()`, so they run
+while the world is paused and ignore the speed control. Turn 04 moved 12
+`performance.now()` lifetimes onto `worldClock` and missed these because they
+use a different call. Not fixed here — this PR touches no `src/`. The claim in
+`CLAUDE.md` has been narrowed to match reality instead.
+
 **Next:** Turn B — the master plan for shipping publicly and monetizing, now
 that the foundation says true things. Codex's commercial analysis (pricing, the
 soft-launch sequence, the argument against ads) should be an input to it, not

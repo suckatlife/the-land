@@ -1,8 +1,10 @@
 # CLAUDE.md
 
-Front door for agents working on this repository. Everything here was verified
-against the source on 2026-08-21; where a number appears, it was counted rather
-than copied.
+Front door for agents working on this repository. Structure, constants and
+invariants here were verified against the source on 2026-08-21; where a number
+appears, it was counted rather than copied. **Performance claims are the
+exception** — they are inherited from earlier measured runs, not re-measured on
+2026-08-21, and are dated where they appear.
 
 Also read `AGENTS.md` (shared rules and review criteria) and, before any remote
 work, `REMOTE.md` (the multi-agent contract). `HANDOFF.md` is the running log —
@@ -51,7 +53,8 @@ not** (sky, glaze, dread tint, vignette, stars). Pick a side deliberately.
 
 Performance is **fill-bound, not object-bound**. Hiding ~11k building sprites
 changes nothing measurable; the RT pass plus the curvature mesh is roughly half
-the frame. Sprite batching has been measured twice and is not the bottleneck.
+the frame. Sprite batching has been measured twice and is not the bottleneck. *(Measured in the June 2026 runs and the August atmosphere turns; not
+re-measured 2026-08-21. Treat as dated evidence, not current fact.)*
 
 ## Invariants (all verified present)
 
@@ -80,7 +83,12 @@ All of them run on **one clock**: a single per-frame `worldSeconds`, capped by
 `MAX_SIM_FRAME_MS` (1000) against stalls and multiplied by the speed control, so
 2x/4x/8x compresses the whole diorama rather than only its history. Lifetimes
 (battles, quiet zones, ruin decay) are timestamped against that clock, not
-`performance.now()`, so a paused world is genuinely still.
+`performance.now()`, so pausing freezes them. **Not all of them:** `maybeGhost`,
+`updateFestival` and `checkWarQuiet` still stamp their 12s/45s/45s lifetimes
+with `Date.now()`, so those keep running while the world is paused and are not
+compressed by the speed control. Turn 04 moved the `performance.now()`
+lifetimes and missed the `Date.now()` ones — the same "identical bug three
+lines away" pattern this project keeps hitting.
 
 ## World character
 
