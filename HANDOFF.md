@@ -1221,3 +1221,117 @@ kills regardless. Phase 2 owns that, along with `exodus`'s launches and
 **Next:** Lawrence watches a turnover on the preview. If the shape reads, phase
 2 is the cheap apocalypses (supervolcano, long winter) plus the three remaining
 quiet gestures.
+
+---
+
+## Ending follow-ups — claude — 2026-08-21
+
+Closes the five findings in issue #15, all from the review of #14.
+
+**The P1 mattered most.** For `garden`, `exodus` and `world_empire` the silence
+was not silent: those endings have no staged act 3, so `endingCheckpoints()`
+went straight from the omen to the turnover and civs kept expanding,
+conquering, founding cities and narrating through the beat that is the whole
+point of the sequence. My verified "livingCivs 0 across every sample of the
+silence" had been measured on `rewilded`, the only ending with a staged act 3 —
+so the claim was true of a quarter of the cases and I reported it as general.
+
+**Did.** `EndingState` gains `silent`; `beginSilence()` sets it at the act-4
+boundary for *every* ending, and `step()` then returns
+`{changes: [], events: [], biomeChanges: []}` immediately. Time still passes —
+the sky and the turnover clock run off `worldClock` in the renderer — but the
+world itself is finished.
+
+The other four:
+
+- Scheduled civs are held from ordinary death until their tick
+  (`advanceCivPhase(..., holdDeath)`). A civ whose decline timer expired during
+  the omen used to vanish before act 3 and out of the smallest-first order.
+- The skip now passes its events to `rememberWorldEvents()`. A skipped ending
+  was archiving an epitaph that undercounted its own deaths.
+- An omen spoken during a skip is re-spoken after the post-skip log reset;
+  `endingOmenSpoken` is latched, so it would otherwise never be seen.
+- The archive persists `apocalypse` alongside the title. Invisible while only
+  `quiet` ships, but the moment impact and ashfall both produce `ash`, saved
+  worlds could not say which ran.
+
+**Verified:** build clean. Headless on the previously-failing case — a forced
+`garden` ending — `silent` true through 24 samples of act 4, tick advancing 421
+while built (2029), ruin (619) and living (4) were all constant. The world is
+genuinely still. No page exceptions.
+
+**Could not verify:** still nothing visual. And the "held from ordinary death"
+path is asserted from the code rather than measured; it needs a civ whose
+decline timer happens to expire mid-omen, which I could not force.
+
+**A sixth finding, and the fix was incomplete without it:** freezing `step()`
+only froze the *sim*. The ticker still ran `updateFires`, `updatePlagues`,
+floods, droughts, volcanoes, festivals and `maybeChronicle` in `main.ts` —
+several of which mutate `biomeMap` or `simWorld.tiles` (fire turns forest to
+grass, plague turns built tiles to ruins) or push narration of their own. The
+silence could still visibly and permanently change. Those systems are now gated
+on the silent state; atmosphere, light and the drawing passes continue.
+
+My first test passed only because that run happened to have no fire or plague
+in flight — a gap in the test, not evidence. Re-measured by forcing a plague,
+fire, flood, drought and eruption ~260 ticks before act 4: built and ruin counts
+were **visibly moving right up to the boundary**, then held at 541 / 1793 / 6882
+across 15 samples while the tick advanced 397. `__dbg` now exposes the debug
+spawns so this case stays testable.
+
+Two narrator paths survived even that: `maybeGhost` pushes a line about
+shepherds at the ruins, and the celestial-event callback narrates comets,
+eclipses and auroras. Both are gated now — but only their *voices*. The ghost
+name still appears and the comet still crosses the sky, because a remembered
+name and a light moving against the stars are exactly what a silence should
+contain. Act 4 adds no story; it can still be looked at.
+
+Three more, and the first is the same lesson a fourth time: **succession is
+tick-driven.** `decaySoilMarks()` and `drawSuccession()` run off `simWorld.tick`,
+which deliberately keeps advancing through act 4, so ruins were sprouting and
+soil marks fading several times during the held snapshot. Gated. Also: the
+post-skip omen replay could fire *inside* the silence, and a world the viewer
+abandoned mid-ending (`left_behind`) was being archived with an apocalypse that
+never ran — the cause is now persisted only for an ending that actually
+resolved.
+
+**The pattern across all of them:** "hold the world" is not one switch. The sim,
+the renderer's world systems, the narrators, and the tick-derived land systems
+are four separate populations, and each had to be found on its own. Anything
+keyed to `simWorld.tick` is suspect during act 4 by construction.
+
+**A fifth and sixth system, and the fifth is the one my test was structurally
+unable to see.** `ruinAge` advances from `worldSeconds` in the building
+animation loop: ruin decay runs 30 seconds plus stagger, and the last scheduled
+death lands under 35 seconds before act 4, so buildings kept greying,
+collapsing and being reclaimed straight through the aftermath. **Tile counts
+stayed constant the whole time** — the tiles were already ruins — so every
+freeze test I ran passed while the screen was still visibly changing. Counting
+tiles was the wrong instrument for a claim about stillness.
+
+Also `checkWarQuiet()`, which crosses its own 45-second threshold and narrates
+"the border falls quiet" — a seventh narrator, found only because two surviving
+civs is a common way for `garden` to end.
+
+**Eighth system: farm growth.** Fields kept growing into view during act 4 —
+again invisible to a tile-count check. Held.
+
+**Deliberately not held:** the in-flight tile-colour, building-alpha and biome
+crossfades. Those are transitions *already committed* before the boundary, and
+freezing them mid-fade would leave half-drawn tiles standing through the
+aftermath, which looks broken rather than still. Letting a fade finish is not
+the world changing. That is a judgement call and the opposite one is defensible.
+
+**Systems nine, ten and eleven:** the blight ramp (driven by `cycleFrac`, which
+keeps climbing through act 4, so the land kept draining toward grey), the
+ice-memory repaint (`iceMemoryFade()` off `simWorld.tick`, so the pale ground
+kept fading), and `maybeNameConstellations()` — an eighth narrator.
+
+**The honest state of this PR:** eleven systems held across seven review rounds,
+and each round still found more. Everything keyed to `simWorld.tick`,
+`worldClock`, `worldSeconds` or `cycleFrac` is a candidate by construction, and
+there is no list of them. A future turn wanting real confidence should invert
+the approach — a single `worldIsHeld()` consulted by the clocks themselves,
+rather than a growing set of call-site guards found one review at a time.
+
+**Next:** the copy pass (Lawrence's next brief).

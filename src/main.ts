@@ -17,7 +17,7 @@ const WONDER_RADIUS: Record<NaturalWonderKind, number> = {
   atoll: 6, canyon: 8, dune_sea: 9,
 };
 import { drawTile, drawStateOverlayPersistent, redrawOverlay, redrawBiomeTile, lerpColor, gridToScreen, rgbToHsl, hslToRgb } from './iso';
-import { createSimWorld, beginEnding, rollCharacter, characterOf, step, tileOverlayColor, seedInitialCivs, applyCatastrophe, setVolcanoes, eruptVolcanoesNow, setWonderSites, iceDepthAt, SIM, CATASTROPHE, CITY, nearestCityDist, type SimWorld, type Civ, type CivCity, type SimEvent, type Era, type TileOverlay, type BiomeChange, type CatastropheType } from './sim';
+import { createSimWorld, beginEnding, beginSilence, rollCharacter, characterOf, step, tileOverlayColor, seedInitialCivs, applyCatastrophe, setVolcanoes, eruptVolcanoesNow, setWonderSites, iceDepthAt, SIM, CATASTROPHE, CITY, nearestCityDist, type SimWorld, type Civ, type CivCity, type SimEvent, type Era, type TileOverlay, type BiomeChange, type CatastropheType } from './sim';
 import { createAtmosphere, ATMOS } from './atmosphere';
 import { initializeAnalytics, trackEvent } from './analytics';
 import {
@@ -1718,6 +1718,9 @@ interface ArchivedWorld {
   name: string;
   endedAt: number;
   ending: WorldEnding;
+  // Which sequence actually ran. `ending` is only the title, and two causes can
+  // share one — an impact and a supervolcano both leave a world of ash.
+  apocalypse?: ApocalypseKind;
   ticksLived: number;
   civilizations: number;
   survivingCivilizations: number;
@@ -1877,6 +1880,8 @@ function endingCheckpoints(): boolean {
     endingOmenSpoken = true;
     pushNarration(ENDING_OMENS[committedEnding.ending], { priority: 'high' });
   }
+  // Act 4 applies to every ending, not only the ones with a staged act 3.
+  if (committedEnding && simWorld.tick >= acts.silence) beginSilence(simWorld);
   if (simWorld.tick >= currentWorldFate.endTick) {
     beginWorldEnding();
     return true;
@@ -6474,7 +6479,11 @@ function maybeGhost(dt: number, nightness: number) {
     ghostStart = now;
     ghostUntil = now + 12;
     if (Math.random() < 0.18) {
-      pushNarration(`Shepherds at the ruins of ${mem.name} say the stones hum.`, { priority: 'low', anchor: { row: mem.row, col: mem.col } });
+      // The ghost text itself is welcome in a silence — a remembered name is
+      // the right thing to see. Its narration line is not: act 4 adds no story.
+      if (!simWorld.ending?.silent) {
+        pushNarration(`Shepherds at the ruins of ${mem.name} say the stones hum.`, { priority: 'low', anchor: { row: mem.row, col: mem.col } });
+      }
     }
     return;
   }
@@ -7001,6 +7010,10 @@ function archiveCurrentWorld(ending: WorldEnding, outcome?: ResolvedWorldEnding)
     name: currentWorldName,
     endedAt: Date.now(),
     ending,
+    // Only for a world that actually resolved. A viewer who hits "new" mid-
+    // ending gets `left_behind` and no outcome, and that world did not have an
+    // apocalypse — it was walked away from before one ran.
+    apocalypse: outcome ? committedEnding?.apocalypse : undefined,
     ticksLived: simWorld.tick,
     civilizations,
     survivingCivilizations,
@@ -7138,6 +7151,8 @@ function beginWorldEnding() {
 
 // Rare celestial events get a narrated line — wonder, not warning.
 atmos.onCelestialEvent((kind) => {
+  // A comet still crosses the sky during the silence; nobody narrates it.
+  if (simWorld.ending?.silent) return;
   const lines: Record<string, string[]> = {
     comet: [
       'A comet crosses the night. The wise disagree on what it intends.',
@@ -7249,7 +7264,9 @@ app.ticker.add((ticker) => {
     }
   }
   updateAtmosphere(worldSeconds * 1000);
-  updatePollution();
+  // Blight ramps on cycleFrac, which keeps climbing through act 4, so the land
+  // would keep draining toward grey during the held beat.
+  if (!(simWorld.ending?.silent)) updatePollution();
   // Sky + glaze + weather + scar fades. The sky leans toward the last dread
   // hue while curDread eases, so it releases smoothly after a catastrophe.
   atmos.update(worldSeconds * 1000, curDread, curHue.vignette, dominantEra(simWorld));
@@ -7299,7 +7316,11 @@ app.ticker.add((ticker) => {
     blackoutGfx.visible = false;
   }
   updateSmoke(dtSec);
-  updateFarmGrowth(simWorld.tick);
+  // Declared here rather than lower down so the land transitions below can be
+  // gated too: a field growing into view during act 4 is the world still
+  // changing, whatever the tile counts say.
+  const worldHeld = simWorld.ending?.silent === true;
+  if (!worldHeld) updateFarmGrowth(simWorld.tick);
   updateBiomeTrans();
   flushBiomeChanges(simWorld.tick);
   drawRoads(dtSec);
@@ -7319,18 +7340,26 @@ app.ticker.add((ticker) => {
   updateOrbitalRing(dtSec, nowSec, n);
   drawCauseways();
   drawLighthouses(nowSec, n);
-  updateFires(dtSec, nowSec, n);
-  maybeEruptVolcano(dtSec);
-  updateVolcanoes(dtSec, nowSec, n);
-  maybeOutbreak(dtSec, nowSec);
-  updatePlagues(nowSec);
-  maybeAwaken(dtSec, nowSec);
-  updateFaiths(nowSec, n);
-  maybeFlood(dtSec);
-  updateFloods(dtSec, nowSec, n);
-  maybeGrowDelta(dtSec);
-  maybeDrought(dtSec);
-  updateDroughts(dtSec, nowSec);
+  // Act 4 holds the world, and freezing step() was not enough to do it: these
+  // systems live in the renderer but mutate the map — fire turns forest to
+  // grass, plague turns built tiles to ruins, floods and droughts rewrite
+  // biomes — or push narration of their own. Left running, the silence could
+  // still visibly and permanently change. Atmosphere, light and the drawing
+  // passes continue; the world does not.
+  if (!worldHeld) {
+    updateFires(dtSec, nowSec, n);
+    maybeEruptVolcano(dtSec);
+    updateVolcanoes(dtSec, nowSec, n);
+    maybeOutbreak(dtSec, nowSec);
+    updatePlagues(nowSec);
+    maybeAwaken(dtSec, nowSec);
+    updateFaiths(nowSec, n);
+    maybeFlood(dtSec);
+    updateFloods(dtSec, nowSec, n);
+    maybeGrowDelta(dtSec);
+    maybeDrought(dtSec);
+    updateDroughts(dtSec, nowSec);
+  }
   updateRiverCraft(dtSec, n);
   drawEnergyFarms(nowSec, n);
   drawMegastructures(nowSec, n);
@@ -7339,8 +7368,10 @@ app.ticker.add((ticker) => {
   drawEraSkylines(nowSec, n);
   updateBirdFlocks(dtSec, nowSec, n);
   maybeGhost(dtSec, n);
-  updateFestival(n);
-  maybeChronicle();
+  if (!worldHeld) {
+    updateFestival(n);   // a festival narrates when it starts
+    maybeChronicle();
+  }
   // The camera breathes — whole-stage lens scale, leaning in with dread.
   breathT += worldSeconds;   // camera breathing on the world's clock
   app.stage.scale.set(
@@ -7359,10 +7390,15 @@ app.ticker.add((ticker) => {
     atmos.setStormRate(characterOf(simWorld).storm);
     // Reclamation creeps on its own slow cadence (drawSuccession early-returns
     // between bakes), and the soil marks age with it.
-    if (simWorld.tick - lastSuccessionBake >= SUCCESSION.rebakeTicks) { decaySoilMarks(); drawSuccession(); }
+    // Succession growth is derived from simWorld.tick, which deliberately keeps
+    // advancing through act 4 — so without this the ruins would sprout and the
+    // soil marks fade several times during the held snapshot.
+    if (!worldHeld && simWorld.tick - lastSuccessionBake >= SUCCESSION.rebakeTicks) { decaySoilMarks(); drawSuccession(); }
     // The ice front is checked on the same cadence; drawIce early-returns
     // unless it has actually moved past ICE.redrawStep, so this is nearly free.
-    drawIce();
+    // Held in act 4: iceMemoryFade() is derived from simWorld.tick, so the pale
+    // ground and moraine would keep fading through the aftermath.
+    if (!worldHeld) drawIce();
     // The wounds heal on the same cadence: the silhouette pulls in, and the
     // building pass below picks up the receding quiet for free.
     if (quietZones.length) drawQuietZones();
@@ -7400,8 +7436,10 @@ app.ticker.add((ticker) => {
     trailDecay(seaTrail, 0.99); trailDecay(landTrail, 0.99); trailDecay(airTrail, 0.988);
     redrawTrails();
     queueFestivals();
-    checkWarQuiet();
-    maybeNameConstellations();
+    // checkWarQuiet pushes "the border falls quiet" on its own 45-second
+    // threshold, which two surviving civs can cross during act 4.
+    if (!worldHeld) checkWarQuiet();
+    if (!worldHeld) maybeNameConstellations();   // narrates a new constellation
   }
   // Animate tile color/alpha toward targets. Capped per frame: a "skip 5k" or
   // catastrophe can flood thousands of tiles into animation at once, and
@@ -7502,7 +7540,12 @@ app.ticker.add((ticker) => {
         // A ruin's life: drain to grey stone, collapse the upper floors into a
         // low rubble stub, then let the land reclaim it. Hold at age 0 (intact)
         // until this tile's staggered start, so a fallen city crumbles in a ripple.
-        if (nowSec >= bts.ruinStartAt) {
+        // Held in act 4 with everything else. Ruin decay runs 30s plus stagger
+        // and the last scheduled death lands under 35s before the silence, so
+        // without this, buildings keep greying and collapsing right through the
+        // aftermath — invisible to a tile-count check, because the tiles are
+        // already ruins.
+        if (nowSec >= bts.ruinStartAt && !(simWorld.ending?.silent)) {
           bts.ruinAge[s] = Math.min(1, bts.ruinAge[s] + worldSeconds / RUIN_DECAY_SECONDS);
         }
         const age = bts.ruinAge[s];
@@ -7735,6 +7778,12 @@ const DBG_SPAWNS: Array<[string, (() => void) | null]> = [
   ['— clear —', null],
   ['Clear debug spawns', () => { debugMegas.length = 0; debugWonders.length = 0; debugRing = false; }],
 ];
+// The same spawns, callable from the console, so the ending's hold can be
+// tested against an event that is actually in flight.
+(window as any).__dbg = Object.fromEntries(
+  DBG_SPAWNS.filter(([, fn]) => fn).map(([label, fn]) => [label, fn!]),
+);
+
 
 const hud = document.createElement('div');
 hud.style.cssText = `
@@ -8544,7 +8593,11 @@ document.getElementById('skip')!.addEventListener('click', () => {
   const wasRunning = running;
   running = false;
   for (let i = 0; i < SKIP_TICKS; i++) {
-    step(simWorld, biomeMap, elevationMap);
+    const { events } = step(simWorld, biomeMap, elevationMap);
+    // The skipped ticks are still history: without this a skipped ending
+    // archives an epitaph that undercounts its own deaths, and a commitment
+    // reached mid-skip is scored against stale history.
+    rememberWorldEvents(currentWorldHistory, events);
     // The ending's boundaries live inside the skip as well; crossing one here
     // and only noticing on the next frame would bypass the whole sequence.
     if (endingCheckpoints()) break;
@@ -8575,6 +8628,15 @@ document.getElementById('skip')!.addEventListener('click', () => {
   seedSuccessionAfterSkip();
   drawCityMarkers();
   eventLog.length = 0;
+  // The reset above clears the log, which would swallow an omen the skip had
+  // just spoken — and `endingOmenSpoken` is latched, so it would never be said
+  // again. If the skip landed inside the ending, say it now instead.
+  // ...but not once act 4 has opened: the silence adds no story, including a
+  // replayed one.
+  if (committedEnding && endingOmenSpoken
+      && simWorld.tick < endingActTicks(currentWorldFate.endTick).silence) {
+    pushNarration(ENDING_OMENS[committedEnding.ending], { priority: 'high' });
+  }
   accumulator = 0;
   running = wasRunning;
   updateHud();

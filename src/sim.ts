@@ -448,6 +448,11 @@ export interface WonderSite {
 // systems, and the rally. The ending is the only thing happening.
 export interface EndingState {
   startedTick: number;
+  // Act 4. Once set the world genuinely stops: step() advances the tick and
+  // returns nothing. Without it, endings with no staged act 3 (garden, exodus,
+  // world_empire) keep expanding, conquering, founding cities and narrating
+  // straight through the beat that is supposed to be still.
+  silent: boolean;
   // civId -> the tick it falls. Scheduled falls bypass the decline timer, so
   // the lights go out inside the act where they can be seen.
   fade: Map<number, number>;
@@ -951,9 +956,15 @@ function spawnCiv(world: SimWorld, row: number, col: number): Civ {
 // an empty map for endings where nothing dies. Clears the brewing catastrophe
 // and any nomad bands still walking, so nothing unrelated arrives afterwards.
 export function beginEnding(world: SimWorld, fade: Map<number, number>) {
-  world.ending = { startedTick: world.tick, fade };
+  world.ending = { startedTick: world.tick, fade, silent: false };
   world.brewing = null;
   world.pendingSettlements.length = 0;
+}
+
+// Open act 4. The aftermath is the point of the sequence, so nothing may move
+// in it — including the endings that have no staged act 3 of their own.
+export function beginSilence(world: SimWorld) {
+  if (world.ending) world.ending.silent = true;
 }
 
 // --- Phase + fortune transitions ---
@@ -977,7 +988,11 @@ export function enterPhase(civ: Civ, phase: CivPhase) {
   civ.phaseDuration = rollPhaseDuration(phase);
 }
 
-function advanceCivPhase(civ: Civ, tileCount: number) {
+// `holdDeath` keeps a civ that the ending has scheduled from dying early of
+// ordinary causes: without it a civ whose decline timer happens to expire during
+// the omen or onset vanishes before act 3 and out of the smallest-first order,
+// which can leave the unmaking with nothing visible to show.
+function advanceCivPhase(civ: Civ, tileCount: number, holdDeath = false) {
   civ.phaseAge++;
   let target = 0;
   switch (civ.phase) {
@@ -1002,7 +1017,7 @@ function advanceCivPhase(civ: Civ, tileCount: number) {
     enterPhase(civ, 'stable');
   } else if (civ.phase === 'stable' && civ.phaseAge > civ.phaseDuration) {
     enterPhase(civ, 'declining');
-  } else if (civ.phase === 'declining' && civ.phaseAge > civ.phaseDuration) {
+  } else if (civ.phase === 'declining' && civ.phaseAge > civ.phaseDuration && !holdDeath) {
     enterPhase(civ, 'dead');
   }
 }
@@ -1919,6 +1934,11 @@ export function step(
   elevation: number[][]
 ): { changes: Array<{ row: number; col: number }>; events: SimEvent[]; biomeChanges: BiomeChange[] } {
   world.tick++;
+
+  // The silence. Time still passes — the sky, the light and the turnover clock
+  // all run off the world clock in the renderer — but the world itself is done
+  // changing, so there is nothing left to compute or to narrate.
+  if (world.ending?.silent) return { changes: [], events: [], biomeChanges: [] };
   const changed: Array<{ row: number; col: number }> = [];
   const biomeChanges: BiomeChange[] = [];
   const events: SimEvent[] = [];
@@ -1949,7 +1969,7 @@ export function step(
   for (const civ of world.civs.values()) {
     const tileCount = civTileCounts.get(civ.id) || 0;
     const prevPhase = civ.phase;
-    advanceCivPhase(civ, tileCount);
+    advanceCivPhase(civ, tileCount, world.ending?.fade.has(civ.id) ?? false);
     advanceCivFortune(civ);
     if (civ.phase !== 'dead') { eraRankSum += eraRank(civ.era); eraRankCount++; }
     if (prevPhase !== 'declining' && prevPhase !== 'dead' && civ.phase === 'declining') {
