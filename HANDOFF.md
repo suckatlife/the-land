@@ -843,7 +843,11 @@ That does not change the rule, but it does change what to check first.
 
 **Did:** Made the comment the primary trigger rather than the fallback. Step 3
 of the loop, the builder's obligations, and the draft-PR guardrail now all say
-the builder comments `@codex review` on opening a PR and on every push to it.
+the builder comments `@codex review` on every push that lands **finished**
+work — the first complete push and each repair push — but not on the
+draft-opening push, which step 2 makes deliberately incomplete. Then it
+confirms a review by **Codex** exists at the current head, since that API
+endpoint lists every reviewer.
 Replaced the "the push trigger works" claim — written this morning off two
 observations — with the full day's table, which does not support it.
 

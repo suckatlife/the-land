@@ -63,10 +63,14 @@ description claims, and is the evidence real?*
 
    ```
    gh api repos/suckatlife/the-land/pulls/<n>/reviews \
-     --jq '.[] | "\(.submitted_at) \(.commit_id[0:7])"'
+     --jq '.[] | select(.user.login == "chatgpt-codex-connector[bot]")
+                 | "\(.submitted_at) \(.commit_id[0:7])"'
    ```
 
-   A review counts only if its `commit_id` is the current head. If nothing has
+   The `select` is not optional: that endpoint lists **every** review on the PR,
+   so without it a review by Lawrence — or any bot — reads as a Codex review. A
+   review counts only if it is Codex's *and* its `commit_id` is the current
+   head. If nothing has
    appeared after ~5 minutes, comment again. If a second request also goes
    unanswered, **say so in the PR and to Lawrence** — an unreviewed PR is a
    thing to escalate, never a thing to report as done.
