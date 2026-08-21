@@ -114,7 +114,8 @@ push notifications are what actually close the loop — check they are on.
   by accident — can push straight to production.
 - **Agents use `claude/*`, `codex/*` or `agent/*` branches.** Never `main`.
 - **Draft PRs** while the builder is still working — a signal to the human, not
-  to Codex, which reviews on pushes regardless of draft state.
+  to Codex, which (on *On every push*) reviews pushes regardless of draft
+  state. So: build, then push once.
 - **One builder pass, one repair pass.** A phone is a bad place to review a
   400-line diff.
 - **Anchor tags** are the way back: `known-good-2026-08-18` (pre-loop state),
@@ -160,11 +161,21 @@ not in the ChatGPT mobile app:
    and depth is the entire reason Codex is in this loop.
 
 The trigger options are *On PR open*, *On every push*, and *Smart detect
-(experimental)*. There is **no "when marked ready for review"** option, so
-drafting is not a signal Codex can see. *On every push* is the right choice: it
-covers both the first review and the re-review after a repair push, without
-anyone having to ask. Avoid *Smart detect* while unattended — experimental
-behaviour is a poor bet when nobody is watching.
+(experimental)*. There is no "when marked ready for review" option in that
+dropdown — but Codex's own review banner lists "Mark a draft as ready" among
+the events that trigger it, so under *On PR open* undrafting almost certainly
+counts as opening. That gives two honest configurations:
+
+- ***On every push*** (chosen): covers the first review and the re-review
+  after a repair push with no human action at either. Cost: a draft gets
+  reviewed too, so the builder should push **once, when the change is whole**,
+  not in pieces — each push spends review quota.
+- ***On PR open***: draft → ready becomes the baton, and nothing is reviewed
+  while Claude is still working. Cost: the re-review after a repair push needs
+  a manual `@codex review`.
+
+Avoid *Smart detect* while unattended — experimental behaviour is a poor bet
+when nobody is watching.
 
 **Rate limits are silent.** With *Enable credits use* off, reviews simply stop
 once limits are hit. Treat "Codex said nothing" as *check whether it is
@@ -173,7 +184,12 @@ rate-limited*, not as *it found nothing*. Codex reads the
 apply without restating them per PR.
 
 If a review does not appear after a push, fall back to the `@codex review`
-comment, which always works. Worth testing once before relying on it.
+comment. **Tested once, on PR #6 (2026-08-21):** the automatic trigger did not
+fire on PR open or on any of three pushes, and the first `@codex review`
+comment got no reply either; a second comment 43 minutes later produced a
+review within three minutes. Read that as: the connector was not ready yet,
+and the comment fallback works — but do not leave on the assumption that the
+push trigger is live until one PR has shown a review arriving unasked.
 
 Optional: `.github/workflows/claude.yml` lets `@claude` in a GitHub comment run
 a session on a runner. It needs the Claude GitHub App plus an

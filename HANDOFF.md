@@ -670,3 +670,30 @@ expanding coverage.
 > push, merge, or deploy until Lawrence explicitly authorizes it. Finally,
 > append your own concise entry to `HANDOFF.md` describing what you reviewed,
 > changed, verified, could not verify, and recommend next.
+
+---
+
+## Remote review trigger — claude — 2026-08-21
+
+Outside the visual loop; docs only (`REMOTE.md`, PR #6).
+
+**Did:** Recorded how Codex gets started. Neither agent can start the other.
+Codex's *Auto review* (chatgpt.com/codex/settings/code-review, desktop only)
+is set to **On every push**, so it reviews the first push and any repair push
+unasked; drafts are a signal to Lawrence, not to Codex, so the builder pushes
+once, when the change is whole. The repair step stays manual on purpose:
+Claude auto-fix + Codex review-on-push would close a loop with no human in it.
+
+**Verified:** On PR #6 itself the automatic trigger did **not** fire on open
+or on three pushes; the first `@codex review` got no reply; the second, 43 min
+later, produced a review in 3 min. So the comment fallback works. The push
+trigger is **not yet shown** working — the first PR that gets a review
+unasked is the proof. Codex's own review banner lists "Mark a draft as ready"
+as a trigger, so *On PR open* + undrafting is the documented alternative.
+
+**Could not verify:** Whether the silent no-reply was a rate limit or an
+unconnected repo. Rate limits are silent with credits use off.
+
+**Next:** Open the next real PR as usual and watch whether a review arrives
+without `@codex review`. If not, set the trigger to *On PR open* and use
+draft → ready as the baton.
