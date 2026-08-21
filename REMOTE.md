@@ -126,6 +126,22 @@ push notifications are what actually close the loop — check they are on.
   `@codex review`.
 - **One builder pass, one repair pass.** A phone is a bad place to review a
   400-line diff.
+- **One agent per working copy.** Two sessions sharing a checkout produced the
+  worst confusion this repo has seen. On 2026-08-21 one session committed while
+  the other had switched the branch underneath it, so the commit landed on the
+  *other* session's branch; the first session then read its own commit in a
+  diff, concluded the other PR "already contained" the fix, and reported that
+  twice before the branch refs were checked. Nothing was lost, but the status
+  reports were wrong both times. If two agents must run at once give each its
+  own clone or `git worktree`, and never assume the branch you checked out is
+  still the branch you are on — re-read `git rev-parse --abbrev-ref HEAD`
+  before you commit.
+- **Confirm a push actually landed.** `git push` exiting 0 is not proof your
+  commit reached the PR: it may have pushed a different branch. Check
+  `git rev-parse origin/<branch>` afterwards. And check the PR's `merged_at`
+  before reporting anything as landed — on a merged PR `updated_at` equals the
+  merge time and reads exactly like a fresh update, which is how a fix once got
+  pushed to a PR that had closed 18 minutes earlier.
 - **Anchor tags** are the way back: `known-good-2026-08-18` (pre-loop state),
   `live-2026-08-18` (what was live then). `git reset --hard <tag>` on a branch,
   or revert the merge commit from the GitHub UI.

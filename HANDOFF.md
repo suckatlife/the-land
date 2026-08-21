@@ -730,4 +730,15 @@ own observed behaviour, recorded in the entry above.
 PR was already closed. Check `merged_at` before reporting a push as landed;
 `updated_at` on a merged PR equals the merge time and reads like an update.
 
+**Also in this PR — two new guardrails, both earned today:**
+
+- *One agent per working copy.* Two sessions shared this checkout. One
+  committed while the other had switched branches underneath it, so the commit
+  landed on the wrong branch; the first session then read its own commit in a
+  diff and twice reported that the other PR already contained the fix. It did
+  not. Caught by comparing `origin/<branch>` refs directly.
+- *Confirm a push actually landed.* `git push` exiting 0 proved nothing here —
+  it had pushed a different branch. Check `git rev-parse origin/<branch>`, and
+  check `merged_at` before calling anything landed.
+
 **Next:** Nothing pending. The trigger work is complete once this merges.
