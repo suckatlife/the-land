@@ -54,9 +54,20 @@ description claims, and is the evidence real?*
    but not reliably: on 2026-08-21 it reviewed during one 86-minute window out
    of three hours, and **PR #9 merged having never been reviewed** because
    nobody noticed the silence. So the builder **comments `@codex review` on the
-   PR every time it opens one and every time it pushes to one.** One line, it
-   has never failed, and it converts "did the review fire?" from something
-   somebody has to notice into something somebody has already done.
+   PR every time it opens one and every time it pushes to one** — and then
+   **confirms the review actually arrived for that commit.** Asking is not the
+   same as being reviewed: requests have been ignored too. Confirmation is one
+   API call:
+
+   ```
+   gh api repos/suckatlife/the-land/pulls/<n>/reviews \
+     --jq '.[] | "\(.submitted_at) \(.commit_id[0:7])"'
+   ```
+
+   A review counts only if its `commit_id` is the current head. If nothing has
+   appeared after ~5 minutes, comment again. If a second request also goes
+   unanswered, **say so in the PR and to Lawrence** — an unreviewed PR is a
+   thing to escalate, never a thing to report as done.
    Codex reads the whole diff, does **not** edit on the first pass, and reports:
    blocking defects / non-blocking concerns / ready or not.
 4. **Repair — once, and this step is deliberately manual.** If there are
@@ -97,9 +108,11 @@ push notifications are what actually close the loop — check they are on.
 - Never claim a visual result. You have no display. The preview is for Lawrence.
 - Append a `HANDOFF.md` entry in the same PR.
 - **Comment `@codex review` after every push, including the one that opens the
-  PR.** Do not wait to see whether the automatic trigger fires; silence from
-  Codex is indistinguishable from a rate limit, and an unreviewed PR has merged
-  once already.
+  PR — then confirm a review arrived for that commit.** Do not wait on the
+  automatic trigger; silence from Codex is indistinguishable from a rate limit,
+  and an unreviewed PR has merged once already. Requests get ignored too, so
+  "I asked" is not evidence. State plainly in the PR when a review could not be
+  obtained; never let that pass silently.
 
 **Reviewer (Codex)**
 - Read the whole diff, not the description. The description is the claim under
@@ -116,6 +129,9 @@ push notifications are what actually close the loop — check they are on.
 - First pass is read-only. Report; do not fix.
 
 **Gate (Lawrence)**
+- **Check there is a Codex review against the commit being merged.** PR #9
+  merged unreviewed because nobody looked. The review list is on the PR page;
+  a review of an earlier commit is not a review of this one.
 - Open the preview before merging. It is the only real visual check.
 - Merge deliberately: `main` deploys to the live site in about ten seconds.
 - If an agent says it verified something visual, disbelieve it.
@@ -227,9 +243,11 @@ that it works *sometimes*:
 
 In the first dead window a second `@codex review` comment, 43 minutes after the
 first, produced a review in three minutes. In the second, one comment produced
-one in three minutes. **Every review today that was explicitly asked for
-eventually arrived; roughly half of the pushes that relied on the automatic
-trigger got nothing** — and PR #9 merged unreviewed as a result.
+one in three minutes. **Explicit requests are far more reliable than the automatic
+trigger, but they are not certain either:** of six `@codex review` comments,
+two went unanswered — one at 13:32 and one at 16:16 — while roughly half of the
+pushes relying on the automatic trigger got nothing at all. PR #9 merged
+unreviewed as a result. Ask, then check; do not assume either path worked.
 
 Why it goes quiet is **not** established. An unconnected repository and a silent
 rate limit look identical from GitHub — nothing is posted either way. If reviews

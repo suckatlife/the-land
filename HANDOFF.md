@@ -842,5 +842,15 @@ observations — with the full day's table, which does not support it.
 **Verified:** Nothing to build. The table is from the GitHub API: review
 timestamps per PR against push timestamps.
 
+**Corrected in review:** the first version of this rule said to comment and not
+wait, and claimed the comment "has never failed". Codex pointed out that my own
+evidence table recorded an ignored request, so the rule as written could still
+let an unreviewed PR reach the gate — the exact failure it was meant to stop.
+While fixing that, a second request went unanswered live, on PR #10's `39d1360`.
+So the rule is now ask **and confirm**: check that a review exists whose
+`commit_id` is the current head, comment again after ~5 minutes, and escalate
+rather than proceed if a second request is also ignored. The gate section now
+tells Lawrence to check for a review against the commit he is merging.
+
 **Next:** Nothing pending. If the automatic trigger becomes reliable the rule
 costs one redundant comment per push, which is the right side to err on.
