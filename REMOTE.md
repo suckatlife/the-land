@@ -52,6 +52,25 @@ reviewing a large diff on a phone, which is where mistakes get merged.
 
 ## Driving Claude
 
+**The simple way, and the one to use: the Claude app.** Open Claude on your
+phone, go to Code (claude.ai/code), pick this repository, and describe the task.
+The session runs on Anthropic's infrastructure, survives you closing the app or
+losing signal, and you monitor it from the same phone. It can open a pull
+request when it is done.
+
+Two things worth knowing:
+- It bills against your **Claude subscription**, with no separate charge for the
+  cloud machine. The GitHub Action below uses an API key and bills separately.
+- It needs a **Pro or Max plan**, and GitHub connected to your Claude account.
+  **Test this before you leave** — it is the whole plan, and it is the one piece
+  I cannot verify for you.
+- The "Claude GitHub App" is NOT a phone app. It is a permission grant you
+  install on the repo at github.com/apps/claude, like connecting Vercel. Cloud
+  sessions do not require it. It only adds auto-fix, where Claude watches a PR
+  and responds to failing checks by itself.
+
+### The GitHub-comment alternative (optional)
+
 Comment on any issue or PR in the repo, from the GitHub mobile app or the
 browser:
 
