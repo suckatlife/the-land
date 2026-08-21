@@ -149,6 +149,26 @@ terminal path:
 3. **A terminal transition, not a faster decline.** A civ reduced below a tile
    threshold by the apocalypse goes to `dead` directly, so the deaths land
    inside act 3 where they can be seen, instead of trickling through act 4.
+4. **The ember guarantee has to become a parameter.** `applyCatastrophe()` pads
+   `safeIds` up to `CATASTROPHE.emberCount` (`sim.ts:1600-1615`), and safe civs
+   are skipped by *both* tile destruction and vitality damage. With one or two
+   civs left alive — the normal state late in a world — **every** civ is
+   protected from **every** hit, so the tile threshold in (3) could never fire
+   and act 4 would begin with all of them intact. The guarantee exists so a
+   regional disaster never wipes the world; the apocalypse is precisely the
+   case it was written to exclude. Make `emberCount` an argument rather than a
+   constant, and let each apocalypse pass **its own survivor count** — which is
+   exactly the "survivor profile" below, expressed as a number: the Deluge
+   passes 1–2 (lights above the sea), a full rewilding passes 0.
+5. **Freeze the birth paths at `commitTick`.** `step()` keeps rolling
+   `baseCivSpawnChance` and settling `pendingSettlements` (`sim.ts:2221-2242`),
+   and a desperate expedition can found a successor after its parent dies
+   (`sim.ts:1058-1076`). A civ born during act 3 is in no schedule and no
+   catalogue, and will still have lit cities in the silence. Gate the spawn
+   roll and clear `pendingSettlements` when the ending begins. (A migration
+   band walking into an apocalypse is a good image; a civilisation *founded*
+   during one is a bug. If we want the image, let existing bands walk but never
+   settle.)
 
 **But the requirement is not "everything dies."** `drowned` reads *"the last
 cities keep their lights above a rising sea"*; survivors on high ground are the
@@ -162,6 +182,15 @@ entry below should state its intended survivor profile.
 ## 6. The catalogue
 
 Six candidates. **Not** one per `WORLD_ENDINGS` kind — see §7.
+
+**A note that applies to all of them:** an apocalypse implemented as repeated
+catastrophe events will corrupt its own epitaph. `rememberWorldEvents()`
+(`endings.ts:156-169`) increments `severeCatastrophes`, `floods`, `volcanoes`
+and `asteroids` once **per event**, and the ash and drowned epitaphs interpolate
+those counts — so one Impact spread over ten front updates is archived as *"10
+great disasters remade the land"*. Fragment events must be flagged and skipped
+by `rememberWorldEvents()`, with exactly one history-bearing event emitted for
+the whole sequence.
 
 **1. Impact — *The World of Ash***
 One light grows over ~12s, arrives off-centre, then a ring of destruction walks
@@ -223,7 +252,9 @@ begin with cities still lit — the one thing the quiet end promises not to do.
 Proposal: at `commitTick` the quiet end takes a **fade schedule** — surviving
 civs are ordered (smallest first, or furthest from the last capital) and given
 death ticks spread across act 3, so the lights go out one by one and the last
-goes out before the silence. Rallies suppressed for the same window. The quiet
+goes out before the silence. Rallies suppressed for the same window, and the
+birth paths frozen per §5a.5 — otherwise a civ born during act 3 is unscheduled
+and outlives the ending. The quiet
 end is *scheduled*, not merely *unforced* — otherwise it is indistinguishable
 from the anticlimax we are trying to fix.
 
@@ -299,6 +330,26 @@ Split it in two:
 The scoring is shared, so the two cannot disagree about what happened — only
 about when it was decided.
 
+### 8a-bis. The committed value is the *cause*, not the title
+
+`WorldEndingKind` cannot select the catalogue. It has seven members and none of
+them is an earthquake, so **The Shaking is unreachable**; and its single `ash`
+covers both Impact and Supervolcano, so the coherence check in §10.5 could
+never tell which one ran. The two vocabularies are different things:
+
+- **`ApocalypseKind`** — what *happens*: `impact | deluge | shaking | ashfall |
+  freeze | quiet`. This is what is committed at `commitTick`, what act 2 and 3
+  read, and what determinism is asserted on.
+- **`WorldEndingKind`** — what the card *says*, and what the archive labels.
+
+An explicit `APOCALYPSE_TO_ENDING` map joins them, and the archive record gains
+an `apocalypse` field so the Chronicle records the cause as well as the title.
+`shaking` needs a title no existing kind provides — propose an eighth,
+`sundered` ("the ground remembered it was not solid"). `impact` and `ashfall`
+may legitimately share `ash`: both leave a world under a dark sky, and the
+titles are honest for either. Where two causes share a title, §10.5 asserts
+agreement **through the map**, not identity.
+
 ### 8b. Derive the commit tick from the sequence, not from a life fraction
 
 "~85% of life" does not survive contact with the short worlds.
@@ -352,7 +403,12 @@ Headless, since none of this can be judged by an agent's eye:
 3. **Pacing** — assert the four acts fire in order with the intended
    world-second durations under pause and at 4x.
 4. **Frame cost** — FPS through act 3 vs the preceding minute.
-5. **Coherence** — the printed ending title matches the apocalypse that ran.
+5. **Coherence** — the printed title is the one `APOCALYPSE_TO_ENDING` maps the
+   committed `ApocalypseKind` to, and the archive records both.
+5b. **The epitaph counts one disaster, not ten** — assert
+   `history.severeCatastrophes` rises by at most 1 across the whole sequence.
+5c. **Nothing is born during the ending** — assert civ count never rises after
+   `commitTick`, and that `pendingSettlements` is empty in act 4.
 6. **Deaths land in act 3** — no civ killed by the apocalypse is still in
    `declining` when act 4 begins, and no `rally` fires during the sequence. For
    the quiet end, assert the last scheduled death precedes act 4.
@@ -397,6 +453,12 @@ working structure; if it doesn't, we learn that before building four disasters.
    through a separate terminal transition?
 7. Should any apocalypse ever leave **zero** survivors, or is a witness always
    part of the picture?
+9. §8a-bis proposes an eighth `WorldEndingKind` (`sundered`) for The Shaking.
+   Is a new title right, or should a shattered world be archived as `ash` or
+   `rewilded` and the distinction live only in the `apocalypse` field?
+10. §5a.4 turns the ember guarantee into a per-apocalypse survivor count. Is
+   "how many civs live through this" the right dial to expose, or should
+   survival fall out of the physics?
 8. §8b sizes the sequence at 3,060 ticks. If review shortens act 1 the commit
    moves later and the world gets less warning — is 40s of omen the part to
    protect, or the part to cut?

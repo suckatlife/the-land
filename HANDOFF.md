@@ -1068,4 +1068,26 @@ without applying that replacement — so two open questions were missing from th
 previous commit and I did not notice until re-reading the file. Assert on every
 replacement, and diff the result rather than trusting the script exited 0.
 
+**Round four — the most valuable one.** Four findings, and one of them broke
+the plan's selection mechanism outright: `WorldEndingKind` has no earthquake
+member and one `ash` member, so The Shaking was unreachable and Impact vs
+Supervolcano was undecidable. The plan now separates `ApocalypseKind` (what
+happens, committed at `commitTick`) from `WorldEndingKind` (what the card says),
+joined by an explicit map, with `sundered` proposed as an eighth title.
+
+Also: the ember guarantee (`sim.ts:1600-1615`) pads protected civs up to
+`emberCount` and skips them for both tile damage and vitality — so late in a
+world, when one or two civs remain, *every* civ is immune to *every* hit and the
+proposed terminal threshold could never fire. It becomes a per-apocalypse
+survivor count. Birth paths keep running during the ending, so a civ founded in
+act 3 outlives it. And repeated fragment events would inflate
+`severeCatastrophes`, archiving one impact as "10 great disasters" — the
+epitaphs interpolate those counts.
+
+The pattern across all four rounds is one mistake repeated: **assuming existing
+machinery will do something it was explicitly written not to do.** The vitality
+floor, the ember guarantee, the decline timer and the birth loop are all working
+as designed; the plan just wanted them to behave differently at the end of the
+world.
+
 **Next:** review, then phase 1 if the shape survives.
