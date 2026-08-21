@@ -845,9 +845,19 @@ Two epoch artefacts preserved on purpose: `lastWarNarrationTs` starts at
 
 **Left on `Date.now()` deliberately:** `worldStartedAt`/`observedMs` and the
 archive's `endedAt` — real viewing time and a persisted timestamp. The event
-log's lifetime, dedup window and civ-mention highlight — chrome keyed to the
-reader's attention, not world time. A paused world should still let a line
-finish fading while someone reads it.
+log's lifetime, dedup window and civ-mention highlight stay on the wall clock
+too, but for a narrower reason than I first wrote: the dedup window governs how
+often a *person* sees a repeated line, and at 8x a world-clock lifetime would
+cull a line after 1.2 wall seconds, which is unreadable.
+
+**A correction to that rationale, found in review:** I first justified it as
+"a paused world should still let a line finish fading while someone reads it".
+That is false. `updateEventLog()` and `updateBars()` are called at
+`src/main.ts:7453-7454`, *after* the `if (!running) return` at 7017, so during
+a pause the log does not fade — it freezes, and the first resumed tick culls
+everything older than `LOG_LIFETIME_MS` (9.5 s) at once. The wall clock is
+still the right choice for readability at speed, but the pause behaviour is
+freeze-then-cull, not graceful fade.
 
 **Verified:** Build clean. Measured headless against the built bundle through a
 new `__clocks()` handle — running 3s → world +3.08s / wall +3125ms; **paused
@@ -867,6 +877,13 @@ surfaces; whether a festival that now gets its full 45 s of *world* time reads
 well at 4x is a preview judgement. One pre-existing console 404, unrelated.
 
 **Spotted, not done:**
+- **The event log culls on resume.** Pause for longer than 9.5 s and every
+  visible narration line vanishes on the first resumed tick — the same
+  freeze-then-expire shape this turn fixed elsewhere. Three ways out and they
+  are a taste call, not an obvious truth, so I left it: move it to `worldClock`
+  (pause holds, but at 8x lines last 1.2 wall seconds); drive the chrome from
+  an *ungated* ticker so it fades normally even while paused (probably the
+  right answer, and the largest change); or accept it. Lawrence's call.
 - The verification was a throwaway script. This project has now had four clock
   bugs (Turns 01, 02, 04, this one) and each was verified ad hoc. A permanent
   `scripts/verify-clocks.mjs` would be proportionate; left out to keep this
