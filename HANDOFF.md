@@ -1281,4 +1281,16 @@ it belongs to Lawrence.
   construction, so the uniformity is in *length*, not sentence count, and
   varying sentence count alone will not fix it.
 
+**A fourth correction, and the sharpest one:** the "127 narration lines, SD 2.8"
+figure was neither narration nor a clean population. The script dropped every
+string containing `${...}`, which silently excluded most real narration, while
+sweeping in unrelated UI strings like the archive's "No worlds..." message. So
+the number used to justify leaving that surface alone did not measure it.
+
+Rewritten to report three populations honestly: ending cards (7, SD 1.2),
+narration provably reaching `pushNarration()` (17, SD 3.2), and every
+sentence-shaped literal in `main.ts` (218, SD 2.7). The conclusion survives —
+both prose subsets scatter roughly twice as widely as the ending cards — but it
+now rests on a measurement that says what it means.
+
 **Next:** review, then apply whichever options survive.

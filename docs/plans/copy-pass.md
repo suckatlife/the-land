@@ -39,7 +39,8 @@ at 10–30 tokens ("register leveling", PMC11422446).
 | all five pages | 65 | 14.4 | 6.3 | **83%** |
 | `terms/index.html` | 18 | 14.2 | **4.9** | — |
 | **`endings.ts` descriptions** | **7** | **15.0** | **1.2** | **100%** |
-| `main.ts` narration | 127 | 8.9 | 2.8 | — |
+| narration reached via `pushNarration()` | 17 | 8.6 | **3.2** | — |
+| all sentence-shaped literals in `main.ts` | 218 | 9.1 | **2.7** | — |
 
 Two things stand out.
 
@@ -58,9 +59,16 @@ uniformity lives in **length**, not in sentence count. This is the most uniform
 prose in the project and it sits on the most important screen — the card a
 viewer reads when a world they watched for fifteen minutes ends.
 
-**The in-world narration is the healthiest text here** (SD 2.8 on a mean of
-8.9, with 48 lines under eight words). It scatters, it's short, it's concrete.
-Whatever process produced it should be the model for the rest.
+**The in-world prose is the healthiest text here.** Both populations agree in
+shape: short, scattered, concrete, with 73 of 218 literals under eight words and
+almost nothing above 25. They are reported separately and honestly because
+neither is cleanly "the narration" — the 17 are those I can prove reach
+`pushNarration()`, and the 218 are every sentence-shaped literal in the file,
+which also sweeps in HUD and archive strings. An earlier draft of this document
+reported a single figure of "127 narration lines, SD 2.8"; that number was a
+filtered mix of the two and was mislabelled. The conclusion survives the
+correction — both subsets scatter roughly twice as widely as the ending cards —
+but the claim needed to match the measurement.
 
 ---
 
@@ -251,9 +259,10 @@ where a person is visibly present.
 
 ## 5. What I am deliberately not proposing
 
-- No changes to the 127 in-world narration lines. They already have the best
-  measured rhythm in the project (SD 2.8, 48 lines under 8 words). Touching them
-  is the highest-risk, lowest-value edit available.
+- No changes to the in-world narration. It already has the best measured rhythm
+  in the project — SD 3.2 on the lines provably reaching `pushNarration()`, 2.7
+  across all 218 sentence-shaped literals, against 1.2 for the ending cards.
+  Touching it is the highest-risk, lowest-value edit available.
 - No word blacklist and no automated find-and-replace anywhere.
 - No punctuation changes at all.
 - No changes to Terms.
