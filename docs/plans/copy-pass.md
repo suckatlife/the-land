@@ -58,7 +58,7 @@ prose clusters at 10–30 tokens ("register leveling", PMC11422446). Measured pe
 | surface | sentences | mean | **SD** | under 8 words |
 | --- | --- | --- | --- | --- |
 | the five HTML pages | 81 | 10.4 | **6.6** | 33 |
-| the doorway | 5 | 8.6 | **5.0** | 2 |
+| **the doorway** | **3** | **12.3** | **2.5** | **0** |
 | **the seven ending cards** | **12** | **8.8** | **3.4** | **5** |
 | all prose literals in `main.ts` | 331 | 6.7 | **2.4** | 229 |
 
@@ -141,7 +141,14 @@ entirely about rhythm and specificity.**
 
 ## 4. Proposed changes, by surface
 
-### 4a. The doorway — highest value, first thing anyone reads
+### 4a. The doorway — highest value, first thing anyone reads, and the flattest
+
+Once the button label and the eyebrow are excluded — they are labels, not
+sentences — the doorway's three real sentences run 9, 13 and 15 words: **SD 2.5,
+the flattest prose measured anywhere in the project.** That is a genuine finding
+and it happens to land on the surface this section was already arguing about,
+for unrelated reasons. It is also the one place where a visitor is reading
+*instead of* watching, so an even rhythm has the least excuse.
 
 Current:
 
@@ -260,7 +267,10 @@ modifiers on one noun. Proposed:
 
 ### 4e. Privacy and Terms — leave almost entirely alone
 
-Terms has the flattest rhythm in the project (SD 4.9), and **that is correct.**
+Terms is not, as an earlier draft of this document claimed, the flattest prose
+in the project — that was measured before the extractor was fixed, and Terms now
+scores 6.1 against About's 5.7. Its rhythm is unremarkable and **that is
+correct**:
 Legal copy should be uniform and boring; varying the sentence rhythm of a
 privacy policy to look less like an AI wrote it would be a genuinely bad trade
 against clarity. The Privacy page is specific, honest, and unusually readable

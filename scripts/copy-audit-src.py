@@ -20,6 +20,9 @@ def strip_comments(s):
     return re.sub(r'/\*.*?\*/', '', s, flags=re.S)
 
 def detemplate(lit):
+    # Curly apostrophes are correct typography here; normalise so the lexical
+    # word regex does not split "what's" into "what" and "s".
+    lit = lit.replace('\u2019', "'").replace('\u2018', "'")
     return ' '.join(re.sub(r'\$\{[^}]*\}', 'Xxxx', lit).split())
 
 def ending_cards():
@@ -50,8 +53,12 @@ def doorway():
     if not m:
         return []
     inner = re.sub(r'<[^>]+>', '\n', m.group(1))
+    # Sentences only: the eyebrow ("a world in motion") and the button
+    # ("start watching") are labels, and counting them as sentences drags the
+    # mean down and inflates the spread.
     return [detemplate(l) for l in inner.split('\n')
-            if len(l.strip()) > 8 and not l.strip().startswith('$')]
+            if len(l.strip()) > 8 and not l.strip().startswith('$')
+            and re.search(r'[.!?]\s*$', l.strip())]
 
 for name, lits in (('doorway      ', doorway()),
                   ('ending cards ', ending_cards()),
