@@ -1444,3 +1444,42 @@ of `narrateEvent()`'s table: 290 sentences became 331.
 **Next:** review, then apply whichever options survive — but the case for
 changing anything is now much weaker than when this started, and that should be
 said out loud rather than buried.
+
+---
+
+## The copy pass, applied — claude — 2026-08-22
+
+Applies `docs/plans/copy-pass.md`. `src/main.ts`, `src/endings.ts`,
+`public/about/`, `public/privacy/`. No sim changes.
+
+**Doorway** — option B from the plan, Lawrence's pick being "make the change"
+against a recommendation of B. Kept the hover hint that B dropped: losing a
+discoverability affordance is a product decision, not a copy one, and nothing in
+the brief asked for it.
+
+**Ending cards** — all seven sat in a 13–17 word band. Now 6 to 24. Sentence SD
+**3.4 → 5.6**.
+
+**Omen lines** — three of the four `…, and …` shapes split into two sentences.
+One remains, which is the point: the device is fine, saturation was the problem.
+
+**About** — the tricolon of near-synonyms ("a second screen, an idle display, or
+a few minutes of close observation") replaced.
+
+**Privacy** — "to understand whether the experience is useful" became "so I can
+tell whether anyone is actually watching". This is the only first-person
+sentence on the site and the most reversible change here.
+
+**The audit caught me making it worse.** My first doorway rewrite scored
+**SD 0.8** — flatter than the 2.5 it was replacing, which was the entire reason
+the doorway was on the list. Four sentences of 7, 9, 7 and 8 words. Rewritten
+with real variance: 3, 7, 8, 24 → **SD 8.0**. The script earned its place in the
+repo on its first real use, against its own author.
+
+**Verified:** build clean. Measured before/after with the committed scripts.
+Pages unchanged at SD 6.6 (the About edit is one sentence in 82).
+
+**Could not verify:** whether any of it is *better*. Every line here is a taste
+call. The two I would query first are `garden`'s "That turned out to be the hard
+part" — a dry joke against a painterly brief — and the first-person Privacy
+sentence.
