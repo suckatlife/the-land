@@ -1487,6 +1487,12 @@ a population in the audit script now, so the surface cannot be missed again.
 **Verified:** build clean. Measured before/after with the committed scripts.
 Pages unchanged at SD 6.6 (the About edit is one sentence in 82).
 
+**One correction where accuracy outranked voice:** the Privacy rewrite said the
+site "counts visits and a handful of button presses". It also emits
+`engagement_reached` at 1, 5 and 10 visible minutes (`src/analytics.ts:72-92`),
+so that understated the passive tracking — on the one page where understating is
+a real problem rather than a stylistic one. It now names the time on screen too.
+
 **Could not verify:** whether any of it is *better*. Every line here is a taste
 call. The two I would query first are `garden`'s "That turned out to be the hard
 part" — a dry joke against a painterly brief — and the first-person Privacy
