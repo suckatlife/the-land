@@ -50,14 +50,14 @@ export const WORLD_ENDINGS: Record<WorldEndingKind, WorldEndingProfile> = {
     kind: 'drowned',
     title: 'The Drowned World',
     eyebrow: 'the waters did not recede',
-    description: 'Old roads end at the shore. The last cities keep their lights above a rising sea.',
+    description: 'Old roads end at the shore.',
     archiveLabel: 'drowned',
   },
   long_winter: {
     kind: 'long_winter',
     title: 'The Long Winter',
     eyebrow: 'the thaw never came',
-    description: 'The warm country narrowed to a few valleys, and every surviving fire became a capital.',
+    description: 'The warm country narrowed to a few valleys. Every surviving fire became a capital, and the people who kept one were counted rich.',
     archiveLabel: 'froze',
   },
   ash: {
@@ -71,28 +71,28 @@ export const WORLD_ENDINGS: Record<WorldEndingKind, WorldEndingProfile> = {
     kind: 'rewilded',
     title: 'The Green Silence',
     eyebrow: 'the land outlived its makers',
-    description: 'Roots opened the roads. Forest and grass crossed the old borders without learning their names.',
+    description: 'Roots opened the roads. Nothing came to fix them.',
     archiveLabel: 'returned to the wild',
   },
   world_empire: {
     kind: 'world_empire',
     title: 'The World Empire',
     eyebrow: 'one banner reached every shore',
-    description: 'For a brief age the maps had no edges, only provinces—and one name spoken everywhere.',
+    description: 'For a brief age the maps had no edges, only provinces—and one name spoken everywhere, in accents that no longer knew they were foreign.',
     archiveLabel: 'was unified',
   },
   exodus: {
     kind: 'exodus',
     title: 'The Great Departure',
     eyebrow: 'the cities looked upward',
-    description: 'The last launches rose beyond the weather. Their lights remained in orbit after the streets went dark.',
+    description: 'The last launches rose beyond the weather. Their lights stayed in orbit long after the streets below went dark.',
     archiveLabel: 'was left for the stars',
   },
   garden: {
     kind: 'garden',
     title: 'The Garden World',
     eyebrow: 'an age learned how to remain',
-    description: 'Cities grew quieter instead of larger. The old wilderness returned, this time by invitation.',
+    description: 'Cities stopped growing. That turned out to be the hard part.',
     archiveLabel: 'found a balance',
   },
 };
@@ -375,15 +375,15 @@ export function resolveWorldEnding(
 
   let epitaph = profile.description;
   if (kind === 'world_empire' && m.dominantName) {
-    epitaph = `${m.dominantName} joined the known world beneath one banner. For a time, there were no foreign shores.`;
+    epitaph = `${m.dominantName} joined the known world beneath one banner, and for a time there were no foreign shores — only provinces, and a very long list of names for the same road.`;
   } else if (kind === 'exodus' && m.dominantName) {
-    epitaph = `${m.dominantName} sent the last lights upward. The cities below became constellations seen from orbit.`;
+    epitaph = `${m.dominantName} sent the last lights upward.`;
   } else if (kind === 'rewilded' && history.died > 0) {
-    epitaph = `${history.died} civilizations passed away. In the end, the roads belonged to roots and rain.`;
+    epitaph = `${history.died} civilizations passed away. The roads belonged to roots and rain.`;
   } else if (kind === 'ash' && history.severeCatastrophes > 0) {
-    epitaph = `${history.severeCatastrophes} great disasters remade the land. The survivors measured history from the last dark sky.`;
+    epitaph = `${history.severeCatastrophes} great disasters remade the land. Afterwards the survivors dated everything from the last dark sky, as though the world had agreed to start again.`;
   } else if (kind === 'drowned' && history.floods > 0) {
-    epitaph = `${history.floods} great floods moved the shoreline inland. The old capitals became names for reefs.`;
+    epitaph = `${history.floods} great floods moved the shoreline inland. The old capitals are names for reefs now.`;
   }
 
   return {

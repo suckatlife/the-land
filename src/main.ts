@@ -1813,9 +1813,9 @@ let endingOmenSpoken = false;
 const ENDING_OMENS: Record<WorldEndingKind, string> = {
   drowned: 'The tide comes further inland than the oldest maps allow.',
   long_winter: 'The frost does not lift at noon any more.',
-  ash: 'There is a taste of iron on the wind, and the birds have gone.',
-  rewilded: 'The roads are quieter each year, and the grass is patient.',
-  world_empire: 'One banner is answered everywhere, and no one remembers the others.',
+  ash: 'There is a taste of iron on the wind. The birds left a week ago.',
+  rewilded: 'The roads are quieter every year. The grass is patient.',
+  world_empire: 'One banner is answered everywhere now. No one remembers the others.',
   exodus: 'The cities have begun to look upward, and to build for leaving.',
   garden: 'Nothing is being built that was not asked for.',
 };
@@ -8467,11 +8467,10 @@ if (shouldShowIntro) {
   intro.setAttribute('aria-labelledby', 'world-intro-title');
   intro.innerHTML = `
     <div class="world-intro__card">
-      <p class="world-intro__eyebrow">a world in motion</p>
       <p class="world-intro__world">${currentWorldName} · seed ${currentSeed}</p>
       <h1 id="world-intro-title">The Land</h1>
-      <p>Watch civilizations settle, spread, trade, fight, and sometimes disappear.</p>
-      <p class="world-intro__aside">Each world runs for 10–17 minutes and can end in a different way. Leave it on a second screen, or hover over the map to see what’s happening.</p>
+      <p>A world that carries on without you.</p>
+      <p class="world-intro__aside">Ten to seventeen minutes is a whole history here: cities, wars, ruins, and a last civilisation that does not know it is the last. Then it ends. Hover to see what a place is called.</p>
       <button type="button">start watching</button>
     </div>
   `;

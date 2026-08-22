@@ -33,3 +33,7 @@ dist-ssr
 /.loop-runs/
 /scripts/loop/self_rotate.txt
 /.loop-worktrees/
+
+# Python cache from the copy-audit scripts
+__pycache__/
+*.pyc
