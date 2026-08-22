@@ -1476,6 +1476,14 @@ the doorway was on the list. Four sentences of 7, 9, 7 and 8 words. Rewritten
 with real variance: 3, 7, 8, 24 → **SD 8.0**. The script earned its place in the
 repo on its first real use, against its own author.
 
+**And I had largely edited the wrong text.** `resolveWorldEnding()` replaces a
+card's `description` with a generated **epitaph** for five of the seven endings
+— world_empire, exodus, rewilded, and ash/drowned whenever their event counts
+are non-zero. So the descriptions I varied are often not what a viewer reads.
+The epitaphs had exactly the same uniformity problem (five templates, all two
+sentences, all 15–16 words) and are now 4 to 31 words, **SD 8.7**. They are also
+a population in the audit script now, so the surface cannot be missed again.
+
 **Verified:** build clean. Measured before/after with the committed scripts.
 Pages unchanged at SD 6.6 (the About edit is one sentence in 82).
 

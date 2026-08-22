@@ -375,15 +375,15 @@ export function resolveWorldEnding(
 
   let epitaph = profile.description;
   if (kind === 'world_empire' && m.dominantName) {
-    epitaph = `${m.dominantName} joined the known world beneath one banner. For a time, there were no foreign shores.`;
+    epitaph = `${m.dominantName} joined the known world beneath one banner, and for a time there were no foreign shores — only provinces, and a very long list of names for the same road.`;
   } else if (kind === 'exodus' && m.dominantName) {
-    epitaph = `${m.dominantName} sent the last lights upward. The cities below became constellations seen from orbit.`;
+    epitaph = `${m.dominantName} sent the last lights upward.`;
   } else if (kind === 'rewilded' && history.died > 0) {
-    epitaph = `${history.died} civilizations passed away. In the end, the roads belonged to roots and rain.`;
+    epitaph = `${history.died} civilizations passed away. The roads belonged to roots and rain.`;
   } else if (kind === 'ash' && history.severeCatastrophes > 0) {
-    epitaph = `${history.severeCatastrophes} great disasters remade the land. The survivors measured history from the last dark sky.`;
+    epitaph = `${history.severeCatastrophes} great disasters remade the land. Afterwards the survivors dated everything from the last dark sky, as though the world had agreed to start again.`;
   } else if (kind === 'drowned' && history.floods > 0) {
-    epitaph = `${history.floods} great floods moved the shoreline inland. The old capitals became names for reefs.`;
+    epitaph = `${history.floods} great floods moved the shoreline inland. The old capitals are names for reefs now.`;
   }
 
   return {

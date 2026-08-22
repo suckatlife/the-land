@@ -25,6 +25,13 @@ def detemplate(lit):
     lit = lit.replace('\u2019', "'").replace('\u2018', "'")
     return ' '.join(re.sub(r'\$\{[^}]*\}', 'Xxxx', lit).split())
 
+def epitaphs():
+    """resolveWorldEnding() replaces a card's description with one of these for
+    five of the seven endings, so these — not the descriptions — are what most
+    viewers actually read."""
+    s = strip_comments(open('src/endings.ts').read())
+    return [detemplate(e) for e in re.findall(r"epitaph = `([^`]+)`;", s)]
+
 def ending_cards():
     s = strip_comments(open('src/endings.ts').read())
     return [detemplate(d) for d in re.findall(r"description: '([^']+)'", s)]
@@ -62,6 +69,7 @@ def doorway():
 
 for name, lits in (('doorway      ', doorway()),
                   ('ending cards ', ending_cards()),
+                  ('epitaphs     ', epitaphs()),
                   ('main.ts prose', main_prose())):
     print(f"\n--- {name.strip()}")
     report_lexical("  lexical", " ".join(lits))
