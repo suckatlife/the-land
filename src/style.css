@@ -452,10 +452,13 @@ canvas {
     /* The bar wraps to two rows on a phone and three at ~320px, so no fixed
        offset is safe. --controls-height is published from the measured element
        (see publishControlsHeight in main.ts); the fallback covers two rows. */
-    bottom: calc(var(--controls-height, 86px) + 24px);
+    /* Same inset term the bar itself uses: in an installed PWA the safe area is
+       34px on iPhone, and a flat 24px clearance left the archive 10px over the
+       controls. 12px of that is the gap between the two. */
+    bottom: calc(var(--controls-height, 86px) + max(12px, env(safe-area-inset-bottom)) + 12px);
     left: 12px;
     width: auto;
-    max-height: calc(100vh - var(--controls-height, 86px) - 48px);
+    max-height: calc(100vh - var(--controls-height, 86px) - max(12px, env(safe-area-inset-bottom)) - 24px);
   }
 
   .world-epitaph {

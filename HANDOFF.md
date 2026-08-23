@@ -1548,7 +1548,16 @@ variable tracking each exactly; **0 off-screen buttons and 0px archive overlap
 everywhere**; and the hover sentence present only where the inspector actually
 renders (1440 only).
 
-**Could not verify:** real-device performance. My harness is software-rendered,
+**And the safe-area inset**, which matters precisely because this is an
+installable PWA: the bar sits at `max(12px, env(safe-area-inset-bottom))`, and
+on an installed iPhone that is 34px — so a flat 24px clearance put the archive
+10px over the controls again. Both the offset and the max-height now carry the
+same inset term. No change without an inset (12px gap on iPhone 13 viewport,
+0px overlap; desktop unaffected).
+
+**Could not verify:** real-device performance, and the safe-area case itself —
+a headless viewport reports no inset, so that fix rests on the arithmetic rather
+than a measurement. It wants one look at the installed PWA. My harness is software-rendered,
 so its FPS says nothing about a phone. Still needs Lawrence's hardware.
 
 **Spotted, not done — the actual mobile question:** the field guide is the thing
