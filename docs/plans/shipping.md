@@ -19,15 +19,35 @@ the Privacy page a description of things that never happen.
 | Web Analytics on the project | **enabled** (`webAnalytics.id` present) |
 | Speed Insights | enabled, `hasData: false` |
 
-**So measurement works.** Custom events are supported, the analytics shipped in
-#3 is functioning, and the Privacy page is accurate as written. The open
-question from that handoff is closed.
+**So the Hobby contingency is dead:** custom events are supported by the plan,
+Web Analytics is enabled on the project, and the Privacy page describes a
+configuration that exists.
 
-What I could not read is the **data** — the analytics overview endpoint is not
-public, so current traffic is unknown to me and visible to Lawrence in the
-dashboard. Two numbers would change several answers below, and it is worth
-looking before deciding anything: how many people have arrived, and whether any
-of them reached the 10-minute engagement event.
+**But eligible and configured is not the same as delivering, and I could not
+prove delivery.** A headless run against the live site loads
+`/_vercel/insights/script.js` (200) and then sends nothing — no pageview, no
+custom event — with `window.vaq` left holding two undrained entries. That looked
+like a fault until I read the script, which opens with:
+
+```js
+function t(){return!!(navigator.webdriver||navigator.userAgent.includes("Headless"))}
+```
+
+Vercel Analytics **deliberately declines to send from automated browsers**. The
+silence is the product working as designed, and it means **no headless harness
+can ever confirm this** — mine or a future one's.
+
+**So this is the one prerequisite that needs a human, and it takes a minute.**
+Open the live site in a normal browser, DevTools → Network, filter `insights`,
+and look for a `POST` to `/_vercel/insights/view` on load and another on a
+control press. Or simply open the Vercel dashboard and see whether any events
+have arrived at all. Until that is done, treat §5's metrics as *planned* rather
+than *available* — the rest of this plan stands either way, but the stopping
+condition depends on numbers actually existing.
+
+The **traffic itself** is likewise invisible to me; the overview endpoint is not
+public. Two numbers would change several answers below: how many people have
+arrived, and whether any reached the 10-minute engagement event.
 
 ---
 

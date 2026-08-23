@@ -27,4 +27,8 @@ The Land uses Vercel Web Analytics through `src/analytics.ts`. The wrapper keeps
 
 Web Analytics must be enabled for the Vercel project before deployment. Vercel limits custom events to Pro and Enterprise plans; pageviews still work on supported plans.
 
-**Resolved 2026-08-23:** the project is on the **Pro** plan and Web Analytics is enabled on it, so custom events are supported and every event in the table above is live. The Hobby contingency — swapping the provider inside `src/analytics.ts` while keeping the call sites unchanged — is no longer needed, but the wrapper still makes it a one-file change if the plan ever lapses.
+**Plan resolved 2026-08-23:** the project is on the **Pro** plan and Web Analytics is enabled on it, so custom events are supported. The Hobby contingency — swapping the provider inside `src/analytics.ts` while keeping the call sites unchanged — is not needed, though the wrapper keeps it a one-file change if the plan ever lapses.
+
+**Delivery is a separate question and is still unconfirmed.** Eligibility and configuration do not prove that events arrive. It cannot be checked from an automated browser: the served `/_vercel/insights/script.js` begins with `navigator.webdriver || navigator.userAgent.includes("Headless")` and sends nothing when either is true, so a headless run loads the script, queues events in `window.vaq`, and posts none of them. That silence is by design, not a fault.
+
+To confirm, in a normal browser: DevTools → Network, filter `insights`, expect a `POST` to `/_vercel/insights/view` on load and another on a tracked control. Or check the dashboard for arrived events.

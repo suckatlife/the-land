@@ -1580,8 +1580,24 @@ Analytics is **enabled** on the project. So the analytics works, the Privacy pag
 is accurate, and the plan has a feedback loop. `ANALYTICS.md` now says so instead
 of asking.
 
-I could not read the traffic itself — the overview endpoint is not public — so
-current numbers are unknown to me and visible to Lawrence.
+**Review then caught me closing it too far, and the follow-up was the more
+interesting result.** Eligibility and configuration are not delivery. A headless
+run against the live site loaded the insights script (200) and then sent
+nothing — no pageview, no custom event, `window.vaq` left holding two undrained
+entries. That reads exactly like a broken integration, and I was a step from
+reporting it as one. The script's own second function is
+`navigator.webdriver || navigator.userAgent.includes("Headless")`: **Vercel
+Analytics deliberately refuses to send from automated browsers.** The silence
+was the product working.
+
+Which means **no headless harness can ever confirm delivery here** — this one or
+a later one. It is now the single prerequisite in the plan that explicitly needs
+a human, with the one-minute DevTools recipe written down. Worth remembering as
+a general shape: an instrument that is designed to ignore you produces the same
+output as a thing that is broken.
+
+I could not read the traffic itself either — the overview endpoint is not
+public — so current numbers are unknown to me and visible to Lawrence.
 
 **The plan's substance**, briefly, since it is meant to be read rather than
 summarised: launch as a moment rather than a state, on the grounds that
