@@ -1497,3 +1497,40 @@ a real problem rather than a stylistic one. It now names the time on screen too.
 call. The two I would query first are `garden`'s "That turned out to be the hard
 part" — a dry joke against a painterly brief — and the first-person Privacy
 sentence.
+
+---
+
+## Mobile, part one — claude — 2026-08-23
+
+The two unambiguous defects from the launch-readiness look. `src/style.css`,
+`src/main.ts`. Tap-to-inspect is deliberately **not** here — it is a design
+question for Lawrence, not something to assume.
+
+**Found by measuring the live site on phone viewports**, not by reading code:
+
+- **~200px of the control bar was off-screen.** `scrollWidth - clientWidth` was
+  **203** on iPhone 13 and **200** on Pixel 5. The bar had `overflow-x: auto`,
+  so it technically scrolled — but the scrollbar is hidden by design and the
+  chrome idles at 12% opacity, so **share, stay awake and fullscreen were
+  invisible with nothing to suggest they existed.** Share is the growth
+  mechanism.
+- **The doorway told every visitor to hover.** `matchMedia('(hover: hover)')` is
+  false on both devices, and the field guide is explicitly disabled for
+  `pointerType === 'touch'`. So the instruction was impossible *and* the feature
+  behind it absent. That line was mine, shipped the day before.
+
+**Did:** the bar wraps below 720px instead of scrolling, and the doorway builds
+its aside from `matchMedia('(hover: hover)')` — the sentence is simply omitted
+on touch rather than promising something that does not exist yet.
+
+**Verified:** on iPhone 13 and Pixel 5 — 8 buttons, **0 off-screen**, scroll
+overflow **203 → 0**, bar 86px in two rows. Desktop unchanged: one row, 43px,
+`nowrap`, hover sentence intact.
+
+**Could not verify:** real-device performance. My harness is software-rendered,
+so its FPS says nothing about a phone. Still needs Lawrence's hardware.
+
+**Spotted, not done — the actual mobile question:** the field guide is the thing
+that makes the world legible and touch has no path to it. And the portrait
+framing shows a fragment of coastline rather than a world, which undercuts the
+"glance at it" pitch. Both are design calls.

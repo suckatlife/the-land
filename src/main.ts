@@ -8462,6 +8462,10 @@ const shouldShowIntro =
   (_qp.get('intro') === '1' || localStorage.getItem('theLand:introSeen') !== '1');
 if (shouldShowIntro) {
   running = false;
+  // The field guide is pointer-only (see the touch check in the pointermove
+  // handler), so on a phone this sentence told the visitor to do something the
+  // device cannot do and the app would not answer.
+  const canHover = window.matchMedia('(hover: hover)').matches;
   const intro = document.createElement('section');
   intro.className = 'world-intro';
   intro.setAttribute('aria-labelledby', 'world-intro-title');
@@ -8470,7 +8474,7 @@ if (shouldShowIntro) {
       <p class="world-intro__world">${currentWorldName} · seed ${currentSeed}</p>
       <h1 id="world-intro-title">The Land</h1>
       <p>A world that carries on without you.</p>
-      <p class="world-intro__aside">Ten to seventeen minutes is a whole history here: cities, wars, ruins, and a last civilisation that does not know it is the last. Then it ends. Hover to see what a place is called.</p>
+      <p class="world-intro__aside">Ten to seventeen minutes is a whole history here: cities, wars, ruins, and a last civilisation that does not know it is the last. Then it ends.${canHover ? ' Hover to see what a place is called.' : ''}</p>
       <button type="button">start watching</button>
     </div>
   `;

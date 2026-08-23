@@ -463,6 +463,14 @@ canvas {
     left: 12px;
     right: 12px;
     transform: none;
+    /* Eight controls do not fit one phone-width row. The bar scrolled, but the
+       scrollbar is hidden and the chrome idles at 12% opacity, so share, stay
+       awake and fullscreen were simply invisible — about 200px of the bar sat
+       off-screen with nothing to suggest it was there. Wrap instead. */
+    flex-wrap: wrap;
+    justify-content: center;
+    overflow-x: visible;
+    row-gap: 2px;
   }
 
   .viewer-controls button {
