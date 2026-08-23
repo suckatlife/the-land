@@ -1497,3 +1497,70 @@ a real problem rather than a stylistic one. It now names the time on screen too.
 call. The two I would query first are `garden`'s "That turned out to be the hard
 part" — a dry joke against a painterly brief — and the first-person Privacy
 sentence.
+
+---
+
+## Mobile, part one — claude — 2026-08-23
+
+The two unambiguous defects from the launch-readiness look. `src/style.css`,
+`src/main.ts`. Tap-to-inspect is deliberately **not** here — it is a design
+question for Lawrence, not something to assume.
+
+**Found by measuring the live site on phone viewports**, not by reading code:
+
+- **~200px of the control bar was off-screen.** `scrollWidth - clientWidth` was
+  **203** on iPhone 13 and **200** on Pixel 5. The bar had `overflow-x: auto`,
+  so it technically scrolled — but the scrollbar is hidden by design and the
+  chrome idles at 12% opacity, so **share, stay awake and fullscreen were
+  invisible with nothing to suggest they existed.** Share is the growth
+  mechanism.
+- **The doorway told every visitor to hover.** `matchMedia('(hover: hover)')` is
+  false on both devices, and the field guide is explicitly disabled for
+  `pointerType === 'touch'`. So the instruction was impossible *and* the feature
+  behind it absent. That line was mine, shipped the day before.
+
+**Did:** the bar wraps below 720px instead of scrolling, and the doorway builds
+its aside from `matchMedia('(hover: hover)')` — the sentence is simply omitted
+on touch rather than promising something that does not exist yet.
+
+**Verified:** on iPhone 13 and Pixel 5 — 8 buttons, **0 off-screen**, scroll
+overflow **203 → 0**, bar 86px in two rows. Desktop unchanged: one row, 43px,
+`nowrap`, hover sentence intact.
+
+**One knock-on caught in review:** the archive panel sat 62px from the bottom,
+sized for a one-row bar, so wrapping put it over the bar's first row of
+controls. Now 110px with the max-height adjusted to match. Verified: archive
+bottom 554 against a bar top of 566 on iPhone 13, and 617 against 629 on
+Pixel 5 — **0px overlap**, panel still fully on screen.
+
+**Two more from review, and the second killed my fixed offset:** at 320px the
+bar wraps to *three* rows (124px), not two, so `bottom: 110px` overlapped again.
+No fixed number is safe. `main.ts` now publishes the measured bar height as
+`--controls-height` (ResizeObserver plus a resize listener) and the archive
+positions against it. And `canHover` had to mirror the CSS exactly — the
+inspector is hidden at `(max-width: 720px), (hover: none)`, so a **narrow
+desktop window** has a pointer and no inspector, and was still being told to
+hover.
+
+**Verified across five viewports** — iPhone 13, Pixel 5, 320×568 touch, 700×800
+desktop, 1440×900 desktop. Bar heights 86 / 86 / 124 / 48 / 43px, the CSS
+variable tracking each exactly; **0 off-screen buttons and 0px archive overlap
+everywhere**; and the hover sentence present only where the inspector actually
+renders (1440 only).
+
+**And the safe-area inset**, which matters precisely because this is an
+installable PWA: the bar sits at `max(12px, env(safe-area-inset-bottom))`, and
+on an installed iPhone that is 34px — so a flat 24px clearance put the archive
+10px over the controls again. Both the offset and the max-height now carry the
+same inset term. No change without an inset (12px gap on iPhone 13 viewport,
+0px overlap; desktop unaffected).
+
+**Could not verify:** real-device performance, and the safe-area case itself —
+a headless viewport reports no inset, so that fix rests on the arithmetic rather
+than a measurement. It wants one look at the installed PWA. My harness is software-rendered,
+so its FPS says nothing about a phone. Still needs Lawrence's hardware.
+
+**Spotted, not done — the actual mobile question:** the field guide is the thing
+that makes the world legible and touch has no path to it. And the portrait
+framing shows a fragment of coastline rather than a world, which undercuts the
+"glance at it" pitch. Both are design calls.

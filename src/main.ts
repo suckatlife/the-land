@@ -7939,6 +7939,18 @@ viewerControls.innerHTML = `
 `;
 document.body.appendChild(viewerControls);
 
+// The control bar wraps to two rows on a phone and three at ~320px, so anything
+// sitting above it cannot assume a height. Publish the measured one and let the
+// CSS position against it.
+const publishControlsHeight = () => {
+  document.documentElement.style.setProperty(
+    '--controls-height', `${Math.round(viewerControls.getBoundingClientRect().height)}px`,
+  );
+};
+publishControlsHeight();
+if ('ResizeObserver' in window) new ResizeObserver(publishControlsHeight).observe(viewerControls);
+window.addEventListener('resize', publishControlsHeight);
+
 const worldArchivePanel = document.createElement('section');
 worldArchivePanel.className = 'world-archive';
 worldArchivePanel.hidden = true;
@@ -8462,6 +8474,11 @@ const shouldShowIntro =
   (_qp.get('intro') === '1' || localStorage.getItem('theLand:introSeen') !== '1');
 if (shouldShowIntro) {
   running = false;
+  // Must match the CSS that hides .world-inspector exactly — which is
+  // `(max-width: 720px), (hover: none)`. A narrow but hover-capable desktop
+  // window has a pointer and no inspector, so asking it to hover is the same
+  // broken promise as asking a phone.
+  const canHover = window.matchMedia('(hover: hover) and (min-width: 721px)').matches;
   const intro = document.createElement('section');
   intro.className = 'world-intro';
   intro.setAttribute('aria-labelledby', 'world-intro-title');
@@ -8470,7 +8487,7 @@ if (shouldShowIntro) {
       <p class="world-intro__world">${currentWorldName} · seed ${currentSeed}</p>
       <h1 id="world-intro-title">The Land</h1>
       <p>A world that carries on without you.</p>
-      <p class="world-intro__aside">Ten to seventeen minutes is a whole history here: cities, wars, ruins, and a last civilisation that does not know it is the last. Then it ends. Hover to see what a place is called.</p>
+      <p class="world-intro__aside">Ten to seventeen minutes is a whole history here: cities, wars, ruins, and a last civilisation that does not know it is the last. Then it ends.${canHover ? ' Hover to see what a place is called.' : ''}</p>
       <button type="button">start watching</button>
     </div>
   `;

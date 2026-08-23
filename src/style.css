@@ -449,10 +449,16 @@ canvas {
 @media (max-width: 720px) {
   .world-archive {
     right: 12px;
-    bottom: 62px;
+    /* The bar wraps to two rows on a phone and three at ~320px, so no fixed
+       offset is safe. --controls-height is published from the measured element
+       (see publishControlsHeight in main.ts); the fallback covers two rows. */
+    /* Same inset term the bar itself uses: in an installed PWA the safe area is
+       34px on iPhone, and a flat 24px clearance left the archive 10px over the
+       controls. 12px of that is the gap between the two. */
+    bottom: calc(var(--controls-height, 86px) + max(12px, env(safe-area-inset-bottom)) + 12px);
     left: 12px;
     width: auto;
-    max-height: calc(100vh - 86px);
+    max-height: calc(100vh - var(--controls-height, 86px) - max(12px, env(safe-area-inset-bottom)) - 24px);
   }
 
   .world-epitaph {
@@ -463,6 +469,14 @@ canvas {
     left: 12px;
     right: 12px;
     transform: none;
+    /* Eight controls do not fit one phone-width row. The bar scrolled, but the
+       scrollbar is hidden and the chrome idles at 12% opacity, so share, stay
+       awake and fullscreen were simply invisible — about 200px of the bar sat
+       off-screen with nothing to suggest it was there. Wrap instead. */
+    flex-wrap: wrap;
+    justify-content: center;
+    overflow-x: visible;
+    row-gap: 2px;
   }
 
   .viewer-controls button {
