@@ -1527,6 +1527,12 @@ on touch rather than promising something that does not exist yet.
 overflow **203 → 0**, bar 86px in two rows. Desktop unchanged: one row, 43px,
 `nowrap`, hover sentence intact.
 
+**One knock-on caught in review:** the archive panel sat 62px from the bottom,
+sized for a one-row bar, so wrapping put it over the bar's first row of
+controls. Now 110px with the max-height adjusted to match. Verified: archive
+bottom 554 against a bar top of 566 on iPhone 13, and 617 against 629 on
+Pixel 5 — **0px overlap**, panel still fully on screen.
+
 **Could not verify:** real-device performance. My harness is software-rendered,
 so its FPS says nothing about a phone. Still needs Lawrence's hardware.
 

@@ -449,10 +449,13 @@ canvas {
 @media (max-width: 720px) {
   .world-archive {
     right: 12px;
-    bottom: 62px;
+    /* The wrapped control bar is two rows (~86px) plus its 12px inset, so the
+       old 62px offset — sized for a single row — put the archive over the
+       bar's first row of controls. */
+    bottom: 110px;
     left: 12px;
     width: auto;
-    max-height: calc(100vh - 86px);
+    max-height: calc(100vh - 134px);
   }
 
   .world-epitaph {
