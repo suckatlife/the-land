@@ -25,4 +25,6 @@ The Land uses Vercel Web Analytics through `src/analytics.ts`. The wrapper keeps
 
 ## Operations
 
-Web Analytics must be enabled for the Vercel project before deployment. Vercel currently limits custom events to Pro and Enterprise plans; pageviews still work on supported plans. If the project remains on Hobby, replace the provider inside `src/analytics.ts` with a privacy-conscious custom-event provider while keeping the event calls unchanged.
+Web Analytics must be enabled for the Vercel project before deployment. Vercel limits custom events to Pro and Enterprise plans; pageviews still work on supported plans.
+
+**Resolved 2026-08-23:** the project is on the **Pro** plan and Web Analytics is enabled on it, so custom events are supported and every event in the table above is live. The Hobby contingency — swapping the provider inside `src/analytics.ts` while keeping the call sites unchanged — is no longer needed, but the wrapper still makes it a one-file change if the plan ever lapses.

@@ -1564,3 +1564,45 @@ so its FPS says nothing about a phone. Still needs Lawrence's hardware.
 that makes the world legible and touch has no path to it. And the portrait
 framing shows a fragment of coastline rather than a world, which undercuts the
 "glance at it" pitch. Both are design calls.
+
+---
+
+## Turn B — the shipping plan, drafted — claude — 2026-08-23
+
+Answers issue #20. `docs/plans/shipping.md` plus a correction to `ANALYTICS.md`.
+No code, no commitments.
+
+**The blocking check is closed.** `ANALYTICS.md` had carried an open contingency
+since #3: if the Vercel project were on Hobby, every `trackEvent` would be a
+silent no-op and the Privacy page would describe events that never fire. Queried
+the Vercel API with the CLI's own credentials: the team is on **`pro`** and Web
+Analytics is **enabled** on the project. So the analytics works, the Privacy page
+is accurate, and the plan has a feedback loop. `ANALYTICS.md` now says so instead
+of asking.
+
+I could not read the traffic itself — the overview endpoint is not public — so
+current numbers are unknown to me and visible to Lawrence.
+
+**The plan's substance**, briefly, since it is meant to be read rather than
+summarised: launch as a moment rather than a state, on the grounds that
+"shipped" has come to mean "one more fix" and only a date stops that; free with
+the existing quiet support link and no paid tier, because there is nothing worth
+putting behind one and building something worse to have something to sell is the
+failure mode; **no ads, argued once and properly** — the brief banned them, they
+are structurally opposed to a product whose proposition is giving attention
+back, the economics never arrive at this scale, and they would cost the privacy
+position; a three-stage soft launch ordered by *purpose* rather than reach; and
+a primary metric of **10-minute engagement as a share of visits**, because that
+is the product's own thesis under test.
+
+It also proposes a **stopping condition**, which is the part I expect to be
+argued with: a few hundred people and a non-zero 10-minute rate counts as
+finished, and the project stops being measured. Written because without one this
+is an indefinite obligation, and §7 asks directly whether that is fiction.
+
+**Could not verify:** anything about Lawrence's networks, appetite, or the
+actual traffic. Every strategic claim here is reasoning from what the repo and
+the API can prove, and §7 lists the five places where the answer is genuinely
+his rather than mine.
+
+**Next:** his read, then whichever stage of §4 he wants.
