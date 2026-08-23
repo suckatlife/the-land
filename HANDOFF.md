@@ -1533,6 +1533,21 @@ controls. Now 110px with the max-height adjusted to match. Verified: archive
 bottom 554 against a bar top of 566 on iPhone 13, and 617 against 629 on
 Pixel 5 — **0px overlap**, panel still fully on screen.
 
+**Two more from review, and the second killed my fixed offset:** at 320px the
+bar wraps to *three* rows (124px), not two, so `bottom: 110px` overlapped again.
+No fixed number is safe. `main.ts` now publishes the measured bar height as
+`--controls-height` (ResizeObserver plus a resize listener) and the archive
+positions against it. And `canHover` had to mirror the CSS exactly — the
+inspector is hidden at `(max-width: 720px), (hover: none)`, so a **narrow
+desktop window** has a pointer and no inspector, and was still being told to
+hover.
+
+**Verified across five viewports** — iPhone 13, Pixel 5, 320×568 touch, 700×800
+desktop, 1440×900 desktop. Bar heights 86 / 86 / 124 / 48 / 43px, the CSS
+variable tracking each exactly; **0 off-screen buttons and 0px archive overlap
+everywhere**; and the hover sentence present only where the inspector actually
+renders (1440 only).
+
 **Could not verify:** real-device performance. My harness is software-rendered,
 so its FPS says nothing about a phone. Still needs Lawrence's hardware.
 

@@ -7939,6 +7939,18 @@ viewerControls.innerHTML = `
 `;
 document.body.appendChild(viewerControls);
 
+// The control bar wraps to two rows on a phone and three at ~320px, so anything
+// sitting above it cannot assume a height. Publish the measured one and let the
+// CSS position against it.
+const publishControlsHeight = () => {
+  document.documentElement.style.setProperty(
+    '--controls-height', `${Math.round(viewerControls.getBoundingClientRect().height)}px`,
+  );
+};
+publishControlsHeight();
+if ('ResizeObserver' in window) new ResizeObserver(publishControlsHeight).observe(viewerControls);
+window.addEventListener('resize', publishControlsHeight);
+
 const worldArchivePanel = document.createElement('section');
 worldArchivePanel.className = 'world-archive';
 worldArchivePanel.hidden = true;
@@ -8462,10 +8474,11 @@ const shouldShowIntro =
   (_qp.get('intro') === '1' || localStorage.getItem('theLand:introSeen') !== '1');
 if (shouldShowIntro) {
   running = false;
-  // The field guide is pointer-only (see the touch check in the pointermove
-  // handler), so on a phone this sentence told the visitor to do something the
-  // device cannot do and the app would not answer.
-  const canHover = window.matchMedia('(hover: hover)').matches;
+  // Must match the CSS that hides .world-inspector exactly — which is
+  // `(max-width: 720px), (hover: none)`. A narrow but hover-capable desktop
+  // window has a pointer and no inspector, so asking it to hover is the same
+  // broken promise as asking a phone.
+  const canHover = window.matchMedia('(hover: hover) and (min-width: 721px)').matches;
   const intro = document.createElement('section');
   intro.className = 'world-intro';
   intro.setAttribute('aria-labelledby', 'world-intro-title');

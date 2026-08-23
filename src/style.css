@@ -449,13 +449,13 @@ canvas {
 @media (max-width: 720px) {
   .world-archive {
     right: 12px;
-    /* The wrapped control bar is two rows (~86px) plus its 12px inset, so the
-       old 62px offset — sized for a single row — put the archive over the
-       bar's first row of controls. */
-    bottom: 110px;
+    /* The bar wraps to two rows on a phone and three at ~320px, so no fixed
+       offset is safe. --controls-height is published from the measured element
+       (see publishControlsHeight in main.ts); the fallback covers two rows. */
+    bottom: calc(var(--controls-height, 86px) + 24px);
     left: 12px;
     width: auto;
-    max-height: calc(100vh - 134px);
+    max-height: calc(100vh - var(--controls-height, 86px) - 48px);
   }
 
   .world-epitaph {
