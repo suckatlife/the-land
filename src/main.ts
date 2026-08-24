@@ -25,7 +25,9 @@ import {
   createWorldHistory,
   rememberWorldEvents,
   commitEndingKind,
+  measure as measureEnding,
   resolveWorldEnding,
+  scoreEndings,
   worldFateForSeed,
   type ResolvedWorldEnding,
   type ApocalypseKind,
@@ -1900,6 +1902,16 @@ function endingCheckpoints(): boolean {
 // Instrument for the ending sequence: what was committed, when each act opens,
 // and whether the sim is holding births and catastrophes. Everything is in
 // ticks so it can be compared against simWorld.tick directly.
+// Balance instrument for #32: the raw score of every ending, not just the winner.
+(window as any).__endingScores = () => {
+  const m = measureEnding(simWorld, biomeMap, currentWorldHistory);
+  const s = scoreEndings(simWorld, biomeMap, currentWorldHistory, currentWorldFate, m);
+  const rounded: Record<string, number> = {};
+  for (const [k, v] of Object.entries(s)) rounded[k] = Math.round(v * 100) / 100;
+  return { scores: rounded, affinity: currentWorldFate.affinity, metrics: m,
+           history: { ...currentWorldHistory } };
+};
+
 (window as any).__ending = () => {
   const acts = endingActTicks(currentWorldFate.endTick);
   return {
