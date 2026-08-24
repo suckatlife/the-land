@@ -1564,3 +1564,43 @@ so its FPS says nothing about a phone. Still needs Lawrence's hardware.
 that makes the world legible and touch has no path to it. And the portrait
 framing shows a fragment of coastline rather than a world, which undercuts the
 "glance at it" pitch. Both are design calls.
+
+---
+
+## Plan — named lives — claude — 2026-08-23
+
+Proposal only, no code. `docs/plans/named-lives.md`. From Lawrence's question
+about what WorldBox does that this could use while staying non-interactive.
+
+**The transferable part of WorldBox is not the god powers** — it is that you can
+find one unit and it has a name and a history. Verified the gap here: `names.ts`
+is called only for civs (`sim.ts:912`), cities (`:939`) and colonies (`:1190`).
+**No person has ever been named in this project**, and the June "people doing
+things" brainstorm shipped roads, boats, wonders, conflict and ghost echoes —
+all activity, no identity. Two civs are also distinguishable by colour alone.
+
+**The objection the plan has to answer first** is that `CLAUDE.md` says
+civilisations are weather, and a named person looks like a step toward the
+foreground. The argument offered: a civ lasts minutes, a person lasts seconds,
+so one life against deep time sharpens the scale rather than softening it — the
+same reason ruins work. The failure mode is not a person, it is a *protagonist*,
+so the rule is that a life appears, resolves, and is never mentioned again.
+
+**The load-bearing decision is where a life lives.** In the sim it is seeded, so
+a shared seed shows your friend the same person and an archived world can name
+someone in its epitaph; in the renderer it is cheaper but two viewings of one
+seed produce different people, which breaks the determinism Turn 08 established.
+Recommends the sim.
+
+**Two constraints came from measurement rather than taste.** Person names need
+their own pools: the existing suffixes are settlement-shaped (`-burg`, `-shire`,
+`-works`), so they would read as places. And the narration budget is tight —
+`LOG_MAX` 16, 9.5s lifetime, 6s low-priority gap — so the plan proposes 3–5
+lives per world at low priority, and **never during act 4**, since that silence
+took eleven systems to enforce.
+
+**Could not verify:** whether any of it is moving, which is the only thing that
+matters. §12 has five open questions, the first of which asks directly whether
+§2's argument is a rationalisation.
+
+**Next:** review, then phase 1 if the register survives.
