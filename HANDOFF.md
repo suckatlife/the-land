@@ -1906,8 +1906,35 @@ the clock, so the record cannot contradict what the viewer watched.
 no page errors. Reads: *"The Hidden Wilds — The World Empire … The Future ·
 2,100 CE · 21 peoples · nothing monumental · 7 eruptions."*
 
+**Four bugs found in review, all in code written an hour earlier:**
+
+- **`h.born` undercounts peoples by about half.** It increments only on
+  `civ_born`, but `seedInitialCivs()` emits no event and breakaways and refuges
+  emit their own kinds. The same seed reported **21 peoples** and actually had
+  **43**. Now counted from `simWorld.civs.size` — nothing removes civs, so the
+  map is every civilisation the world ever had.
+- **A plague-only world claimed "no great disaster".** `plague` is a
+  `CatastropheType` with no counter of its own, so it was missing from the
+  candidate list while `history.catastrophes` was non-zero. Derived as the
+  remainder of the four that do have counters.
+- **The era line recreated the contradiction it was written to remove.**
+  `deepTimeYear()` anchors to `dominantEra()`, so pairing it with
+  `o.highestEra` — the furthest era *any* civ reached — could print
+  *"The Future · 1,500 CE"*. Both fields now share one basis.
+- **The share copy still overpromised.** "The same peoples" is false: unseeded
+  plagues and terrain events remove owned tiles and alter settleable ground, so
+  seeded expansion, deaths and births diverge downstream too. Narrowed again, to
+  the land and the beginning only.
+
+**Re-verified** on two seeds: 43 and 25 peoples matching `civs.size` exactly,
+era and year agreeing (*"The Modern Age · 2,100 CE"*, *"The Age of Industry ·
+1,900 CE"*), no page errors.
+
 **Could not verify:** whether it is *good* — whether a card over a dead world
-lands or intrudes on the silence. That is the preview's job.
+lands or intrudes on the silence. That is the preview's job. Also unexercised by
+data: the plague branch, since neither test world was plague-dominant. And both
+test seeds ended in `world_empire`, which may hint the ending scoring is biased —
+noted, not investigated.
 
 **Next:** a shareable record — a URL that shows someone the card without them
 watching for ten minutes — which is the half of this that actually travels.

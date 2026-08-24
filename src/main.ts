@@ -7156,14 +7156,26 @@ function showWorldRecord() {
   // Three facts, chosen for surprise rather than completeness: how many peoples
   // there were, what they left, and whichever of the world's disasters actually
   // defined it. A world with no disasters says so.
+  //
+  // Peoples comes from the civ collection, not from history.born: that counter
+  // only increments on `civ_born`, while seedInitialCivs() emits no event at all
+  // and breakaways and refuges emit their own kinds — so it can report zero for
+  // a world that visibly had people. Nothing removes civs from the map, so its
+  // size is every civilisation the world ever had.
+  const peoples = simWorld.civs.size;
+  // Plague is a CatastropheType but has no counter of its own; the other four
+  // do, so the remainder is plagues. Without this a plague-only world claimed
+  // "no great disaster" while history.catastrophes was non-zero.
+  const plagues = Math.max(0, h.catastrophes - (h.floods + h.volcanoes + h.asteroids + h.earthquakes));
   const worst = [
     { n: h.floods, s: `${h.floods} great flood${h.floods === 1 ? '' : 's'}` },
     { n: h.volcanoes, s: `${h.volcanoes} eruption${h.volcanoes === 1 ? '' : 's'}` },
     { n: h.asteroids, s: `${h.asteroids} impact${h.asteroids === 1 ? '' : 's'}` },
     { n: h.earthquakes, s: `${h.earthquakes} earthquake${h.earthquakes === 1 ? '' : 's'}` },
+    { n: plagues, s: `${plagues} plague${plagues === 1 ? '' : 's'}` },
   ].sort((a, b) => b.n - a.n)[0];
   const facts = [
-    `${h.born} peoples`,
+    `${peoples} peoples`,
     h.wonders > 0 ? `${h.wonders} wonder${h.wonders === 1 ? '' : 's'}` : 'nothing monumental',
     worst && worst.n > 0 ? worst.s : 'no great disaster',
   ];
@@ -7176,11 +7188,11 @@ function showWorldRecord() {
   const title = document.createElement('h2');
   title.textContent = `${currentWorldName} — ${o.title}`;
   const detail = document.createElement('span');
-  // The year comes from deepTimeYear — the same function driving the HUD clock —
-  // so the record cannot contradict the calendar the viewer has been watching.
-  // An earlier version invented a span from tick count and reported 1,400 years
-  // for a world the clock had carried from 9,970 BCE.
-  detail.textContent = `${o.epitaph}\n\n${ERA_NAMES[o.highestEra]} · ${deepTimeYear(simWorld)} · ${facts.join(' · ')}`;
+  // Both fields must share one era basis. deepTimeYear anchors its result to
+  // dominantEra(), so pairing it with o.highestEra — the furthest era any civ
+  // ever reached — can print "The Future · 1,500 CE", recreating exactly the
+  // contradiction this was meant to remove.
+  detail.textContent = `${o.epitaph}\n\n${ERA_NAMES[dominantEra(simWorld)]} · ${deepTimeYear(simWorld)} · ${facts.join(' · ')}`;
   detail.style.whiteSpace = 'pre-line';
   el.append(eyebrow, title, detail);
   document.body.appendChild(el);
@@ -8132,10 +8144,12 @@ shareControl.addEventListener('click', async () => {
   url.searchParams.set('seed', currentSeed);
   const shareData = {
     title: `${currentWorldName} — The Land`,
-    // Narrowed deliberately (#25): a seed reproduces this land and the peoples
-    // who arise on it, but not the disasters — those come from the renderer's
-    // unseeded ambient layer, so two viewers see different calamities.
-    text: `${currentWorldName}: the same land, the same peoples. What befalls them is anyone's guess.`,
+    // Narrowed deliberately (#25), and narrowed again after review: a seed
+    // reproduces the land and the starting conditions. It does NOT reproduce the
+    // peoples either — the renderer's unseeded plagues and terrain events remove
+    // owned tiles and alter settleable ground, so seeded expansion, deaths and
+    // births all diverge downstream. Only the initial conditions are promised.
+    text: `${currentWorldName}: the same land, the same beginning. Everything after belongs to whoever is watching.`,
     url: url.toString(),
   };
   try {
