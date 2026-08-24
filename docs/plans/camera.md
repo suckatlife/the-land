@@ -6,11 +6,15 @@ in phase 1.
 
 **Why now:** three threads converge on it. Mobile in portrait shows a fragment
 of coastline rather than a world (#19 fixed the controls, not the framing);
-`docs/plans/landscape.md` §11 concludes camera agency is *"nearly free, cannot
+the landscape research concludes camera agency is *"nearly free, cannot
 manufacture spectacle, cannot break determinism"*; and Lawrence's *"agency is
 optional"* points at exactly this — choosing where to look costs the passive
 viewer nothing. A competitor, IMAGINERY, has already shipped it as a
 *"documentary camera."*
+
+**Note on citations:** this plan leans on `docs/plans/landscape.md`, which is
+**not merged** — it is PR #23. Every reference to it below is unverifiable until
+that lands, and if #23 is reshaped, §6 here goes with it.
 
 ---
 
@@ -60,6 +64,31 @@ It needs to be counter-offset by the camera, or reparented out of `world` and
 composited separately. This is exactly the kind of thing that would have been
 found three days into implementation instead.
 
+## 3a. Every screen-space projection needs the camera offset
+
+Moving `world` moves what is *drawn*, but not what the code *believes* is on
+screen. `toTex()` (`main.ts:1223`) converts world coordinates to texture
+coordinates using **only** `WORLD_CAPTURE` and `captureScale` — it does not read
+the container transform:
+
+```ts
+const toTex = (wx, wy) => ({
+  x: (wx - WORLD_CAPTURE.x0) * captureScale,
+  y: (wy - WORLD_CAPTURE.y0) * captureScale,
+});
+```
+
+So during any nonzero pan, everything projected through it detaches from its
+ground: space elevators and rocket launches drawn in screen space, the
+inspector's hit-testing, and — easy to miss — **narration anchors**
+(`main.ts:792`), which point at the map.
+
+**The good news is that it is one choke point.** `tileToSky` and
+`worldPointToSky` both go through `toTex`, and there are **23 call sites**
+between them. Adding the camera offset inside `toTex` fixes all of them at once;
+missing it breaks all of them at once, silently, in a way that only shows up as
+things floating in the wrong place. This belongs in phase 1, not as a follow-up.
+
 ## 4. Cost — the unusual part
 
 **This does not touch the fill budget.** Same render-texture size, same draw
@@ -69,11 +98,16 @@ That matters because the standing performance worry — two unmeasured
 screen-blend layers in the most expensive frame — does not apply here. **A
 camera is one of the few things on the roadmap that is free at the pixel level.**
 
-*Zoom is the exception:* `worldRT` is sized to `WORLD_CAPTURE × captureScale`, so
-zooming in magnifies a fixed-resolution texture. `magFilter` is already
-`nearest`, so it would go crunchy rather than blurry — arguably fine for pixel
-art, but it is a real limit and an argument for **panning without zooming** in
-phase 1.
+**Zoom needs splitting in two, and an earlier draft of this plan got it wrong.**
+
+- **Zooming *in* magnifies** a fixed-resolution texture. `magFilter` is
+  `nearest`, so it goes crunchy rather than blurry — arguably fine for pixel art,
+  but a real limit. **Avoid.**
+- **Zooming *out* minifies**, and `minFilter` is already `linear` — chosen
+  deliberately so the texture squeezed toward the limb keeps a soft horizon. The
+  pipeline is *already built* for minification.
+
+That distinction matters because §7 turns out to require it.
 
 ## 5. Determinism
 
@@ -111,9 +145,20 @@ something.** If it reads as direction, it is too fast or too accurate.
 
 Two things, both independent of event awareness:
 
-**a. Fit the world to the viewport.** The actual mobile fix. At 390×664 the
-current framing shows a fragment; the camera should frame the *world*, adapting
-to aspect ratio. This alone is worth shipping and involves no motion at all.
+**a. Fit the world to the viewport — and this cannot be done by panning.**
+The plane is `3200 × 0.68 =` **2176px** wide. A 390px portrait viewport can only
+ever *crop* a different part of that; panning cannot make more of the map
+visible. An earlier draft of this plan prescribed pan-only in §4 and then asked
+phase 1 to "frame the world", which is a contradiction.
+
+**Resolved by §4's split: the portrait fit is a zoom *out*, which is the safe
+direction.** It minifies, which the pipeline is already built for. What still
+needs deciding is how the shrinking world relates to the **fixed limb** — the
+curvature and horizon are anchored to the screen, so a minified world either
+floats inside its own horizon or the curvature has to scale with it. That is a
+real unknown and probably the first thing to prototype.
+
+This alone is worth shipping and involves no motion at all.
 
 **b. A slow drift.** A wandering path across the world with long dwells, on
 `worldClock` so it obeys pause and the speed control like everything else. No
@@ -156,7 +201,9 @@ the whole feature, and it needs the preview.
 4. **Does it move during the ending?** Act 4 holds a dead world in silence. A
    camera drifting over it might be the best moment in the piece, or the thing
    that breaks the stillness eleven systems were gated to protect.
-5. **Zoom at all?** §4 says the render texture makes zoom crunchy. Pan-only is
-   cheaper, safer, and probably enough.
+5. **How does a minified world sit inside a fixed limb?** §7a's portrait fit
+   requires zooming out, and the curvature is anchored to the screen. Does the
+   horizon scale with the world, or does the world shrink inside it? This is the
+   one open question that is a prototype rather than a preference.
 6. **Portrait and landscape want different framings.** Should a phone see a
    smaller area at the same tile size, or the same area smaller?
