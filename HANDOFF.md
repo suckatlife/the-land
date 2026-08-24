@@ -1864,3 +1864,50 @@ mid-run powers are the version the evidence warns about, and the decision is
 gated behind #25.
 
 **Next:** civilisation archetypes as the first build (#26).
+
+---
+
+## The world record, and a narrowed promise — claude — 2026-08-24
+
+Implements Lawrence's decision on #25: **a shared world is a record, not a
+seed.** `src/main.ts` only.
+
+**The consequence of the decision, taken honestly.** A seed reproduces terrain
+and the peoples who arise on it; it does **not** reproduce catastrophes, because
+six renderer systems decide those with unseeded `Math.random()` and write to
+`simWorld.tiles`. Rather than fix that, the share text now says so:
+*"the same land, the same peoples. What befalls them is anyone's guess."*
+That is the cheap path and, per the research, the better product — Eno's fixed
+renderings of a generative work reached 17M streams against ~5,000 installs for
+the generative app itself.
+
+**The card was already designed and never built.** `.world-epitaph` has eight
+CSS rules — `> p`, `h2`, `span`, an `.is-visible` transition — and **nothing in
+`main.ts` ever created that element.** Those three slots map exactly onto
+`ResolvedWorldEnding`'s `eyebrow`, `title` and `epitaph`, so this is finishing
+something the stylesheet had been waiting for.
+
+**Shown as act 4 opens**, so the record is read *over the world it describes*
+rather than over the next one — which is what the ending plan specified ("hold
+the aftermath, then the card, then black").
+
+**Three facts, chosen for surprise rather than completeness:** how many peoples
+there were, whether they left anything monumental, and whichever disaster
+actually defined the world. A world with none says *"no great disaster"*, which
+is a better line than a zero.
+
+**A bug caught in my own first version:** the card reported "1,400 years",
+invented from tick count — while the HUD had been showing a deep-time calendar
+running from 9,970 BCE. It now calls `deepTimeYear()`, the same function driving
+the clock, so the record cannot contradict what the viewer watched.
+
+**Verified** headless: card appears at tick 25650 against a silence opening at
+25634, becomes visible, exactly one instance, no duplicates across the turnover,
+no page errors. Reads: *"The Hidden Wilds — The World Empire … The Future ·
+2,100 CE · 21 peoples · nothing monumental · 7 eruptions."*
+
+**Could not verify:** whether it is *good* — whether a card over a dead world
+lands or intrudes on the silence. That is the preview's job.
+
+**Next:** a shareable record — a URL that shows someone the card without them
+watching for ten minutes — which is the half of this that actually travels.
