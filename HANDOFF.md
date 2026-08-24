@@ -1665,3 +1665,61 @@ continuity.
 
 **Next:** Lawrence's read; Codex's independent research once a Codex cloud
 environment exists for the repo.
+
+---
+
+## Turn B — the shipping plan, drafted — claude — 2026-08-23
+
+Answers issue #20. `docs/plans/shipping.md` plus a correction to `ANALYTICS.md`.
+No code, no commitments.
+
+**The blocking check is closed.** `ANALYTICS.md` had carried an open contingency
+since #3: if the Vercel project were on Hobby, every `trackEvent` would be a
+silent no-op and the Privacy page would describe events that never fire. Queried
+the Vercel API with the CLI's own credentials: the team is on **`pro`** and Web
+Analytics is **enabled** on the project. So the analytics works, the Privacy page
+is accurate, and the plan has a feedback loop. `ANALYTICS.md` now says so instead
+of asking.
+
+**Review then caught me closing it too far, and the follow-up was the more
+interesting result.** Eligibility and configuration are not delivery. A headless
+run against the live site loaded the insights script (200) and then sent
+nothing — no pageview, no custom event, `window.vaq` left holding two undrained
+entries. That reads exactly like a broken integration, and I was a step from
+reporting it as one. The script's own second function is
+`navigator.webdriver || navigator.userAgent.includes("Headless")`: **Vercel
+Analytics deliberately refuses to send from automated browsers.** The silence
+was the product working.
+
+Which means **no headless harness can ever confirm delivery here** — this one or
+a later one. It is now the single prerequisite in the plan that explicitly needs
+a human, with the one-minute DevTools recipe written down. Worth remembering as
+a general shape: an instrument that is designed to ignore you produces the same
+output as a thing that is broken.
+
+I could not read the traffic itself either — the overview endpoint is not
+public — so current numbers are unknown to me and visible to Lawrence.
+
+**The plan's substance**, briefly, since it is meant to be read rather than
+summarised: launch as a moment rather than a state, on the grounds that
+"shipped" has come to mean "one more fix" and only a date stops that; free with
+the existing quiet support link and no paid tier, because there is nothing worth
+putting behind one and building something worse to have something to sell is the
+failure mode; **no ads, argued once and properly** — the brief banned them, they
+are structurally opposed to a product whose proposition is giving attention
+back, the economics never arrive at this scale, and they would cost the privacy
+position; a three-stage soft launch ordered by *purpose* rather than reach; and
+a primary metric of **10-minute engagement as a share of visits**, because that
+is the product's own thesis under test.
+
+It also proposes a **stopping condition**, which is the part I expect to be
+argued with: a few hundred people and a non-zero 10-minute rate counts as
+finished, and the project stops being measured. Written because without one this
+is an indefinite obligation, and §7 asks directly whether that is fiction.
+
+**Could not verify:** anything about Lawrence's networks, appetite, or the
+actual traffic. Every strategic claim here is reasoning from what the repo and
+the API can prove, and §7 lists the five places where the answer is genuinely
+his rather than mine.
+
+**Next:** his read, then whichever stage of §4 he wants.
