@@ -1723,3 +1723,74 @@ the API can prove, and §7 lists the five places where the answer is genuinely
 his rather than mine.
 
 **Next:** his read, then whichever stage of §4 he wants.
+
+---
+
+## Plan — a camera that moves — claude — 2026-08-23
+
+Proposal only, no code. `docs/plans/camera.md`.
+
+**Why it jumped the queue:** three threads converge. Mobile in portrait still
+shows a fragment of coastline (#19 fixed the controls, not the framing); the
+landscape research concluded camera agency is nearly free and cannot manufacture
+spectacle; and Lawrence's "agency is optional" points at exactly this, since
+choosing where to look costs the passive viewer nothing.
+
+**Read the pipeline before designing anything, which was the right call.** The
+world renders into a fixed-rect RenderTexture, which is drawn through a curved
+MeshPlane. That rules out the obvious approach: panning `worldPlane` moves the
+*already-curved image*, sliding the globe's horizon off screen. The camera has
+to move the `world` container **before** capture, so the curvature stays anchored
+to the screen and the land moves beneath it. `world.x/y` are set once at init and
+never touched again, so there is a clean insertion point and no camera
+abstraction to fight.
+
+**The gotcha, found by reading rather than by building:** `depthHazeSprite` is a
+child of `world`, so it would pan with the land — and haze belongs to the
+horizon. It needs counter-offsetting or reparenting.
+
+**The unusual part: this is free at the pixel level.** Same RT size, same draw
+calls — a camera is a transform. The standing worry about two unmeasured
+screen-blend layers does not apply. Zoom is the exception, since the RT is sized
+to a fixed capture rect, which argues for pan-only in phase 1.
+
+**The real risk is not motion sickness, it is fascination class.** Per the
+research, a camera that *chases* every event makes the viewer track it, which
+converts soft fascination to hard and lands the piece in the non-restorative
+bucket with ordinary games. So the rule the plan proposes: **drift, never
+chase** — biased gently toward activity, often arriving after the interesting
+thing has happened, because being slightly late preserves "waiting is what makes
+an arrival an event". Stated as a test: *the camera should never make a viewer
+feel they are being shown something.*
+
+**Phase 1 is two things**, both independent of event awareness: fit the world to
+the viewport, which is the actual mobile fix and involves no motion at all; and a
+slow drift on `worldClock`, to establish the vocabulary and let the speed be
+judged before anything depends on it.
+
+**Could not verify:** whether any of it is pleasant, which is the whole feature.
+Six open questions, and the first — *how slow* — is where the entire risk lives.
+
+**Review then took phase 1a apart, correctly.** Three findings, and the third
+removed the plan's own escape hatch:
+
+- **The ocean apron.** `drawOceanApron()` draws exactly the `WORLD_CAPTURE`
+  rectangle and the RT clears outside it, so panning uncovers a transparent
+  strip — **sky or stars showing through inside the planet.** The rule is
+  broader than the haze sprite: capture-fixed layers must stay fixed while the
+  camera moves, and this plan does not yet have the list of which layers those
+  are.
+- **The projection contract must carry scale, not just offset**, since §7a needs
+  a zoom.
+- **`minFilter: linear` does not make zoom-out safe.** It governs sampling of
+  the *completed* render texture; scaling the `world` container before capture
+  rasterizes smaller into an unchanged RT and the minifier never runs. Scaling
+  `worldPlane` would invoke it but shrinks the curved planet against a
+  screen-anchored limb.
+
+**So there is no known-safe zoom path, and phase 1a is a prototype before it is
+a feature** — a direct correction to my claim that the viewport fit was
+shippable on its own. It may still be, but only once one of the two scaling
+paths is shown to work.
+
+**Next:** prototype the zoom path before anything else in this plan is scheduled.
