@@ -7250,7 +7250,9 @@ function showWorldRecord() {
       } else {
         await navigator.clipboard.writeText(url);
       }
-      keep.textContent = 'copied';
+      // Native share never touches the clipboard, so saying "copied" would send
+      // the viewer to paste something that is not there.
+      keep.textContent = method === 'native' ? 'shared' : 'copied';
       trackEvent('world_shared', { method });
     } catch { /* the viewer dismissed the sheet; say nothing */ }
   });

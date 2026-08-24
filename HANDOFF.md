@@ -2005,4 +2005,22 @@ unrelated reason, so the whole feature was written on `main` — and the
 `test "$(git rev-parse --abbrev-ref HEAD)" = ...` check refused to commit before
 anything reached it.
 
+**Two from review, and the first made a claim of mine true that had been false.**
+I wrote that the record page "works offline". It did not: the service worker had
+no `/w/` in `CORE`, and its cache key was the full request — so every record is a
+different URL, one cache entry per world, matching none of them next time. An
+offline `/w/?r=…` fell through to the cached `/` and silently booted the
+simulation instead. Now `/w/` is precached, document routes are keyed by
+**pathname** rather than request, and a `/w/` navigation falls back to the `/w/`
+document. `CACHE` bumped to `v2`, or installed clients would keep the old shell.
+
+**Verified properly this time:** registered the worker by hand (the page only
+registers over `https:`, so a local preview never installs it), went offline, and
+opened a record link **never visited before** — it rendered the full record with
+no network. Previously this silently showed the simulation.
+
+Second: native share never touches the clipboard, but the button said *"copied"*
+regardless — sending the viewer to paste something that was not there. It now
+says *"shared"* for the native path.
+
 **Could not verify:** whether anyone wants to send one.
