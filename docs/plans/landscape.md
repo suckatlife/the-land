@@ -103,11 +103,18 @@ Civ, and players rebuilt it as a mod. [R] **An intensely interactive game's
 most-mourned feature is the part with no interaction in it.** The Land is that
 feature, unbundled and made the whole product.
 
-**c. The most-retold part of Dwarf Fortress has no player agency in it.**
-Worldgen and legends mode generate history *before and independent of* the
-player, and that is the part that produced Boatmurdered and the entire "best DF
-stories" genre. This directly supports gap §5d below — but see §8, because
-whether legends is *loved* or *admired and unused* is still unverified.
+**c. Dwarf Fortress generates history before the player arrives.** Worldgen and
+legends mode produce hundreds of years of events *independent of* any player,
+browsable as an encyclopedia.
+
+**A correction, because the obvious evidence is the wrong evidence:** an earlier
+draft cited Boatmurdered here. Boatmurdered is a **succession fortress** —
+players taking turns actively running a fort — so it is emphatically
+*agency-full* and cannot support a claim about agency-free storytelling. The
+claim survives on narrower ground: worldgen and legends are non-interactive *by
+construction*. But whether legends mode is **loved and used, or admired and
+abandoned**, is still unverified (§10) — and that is what direction 1 actually
+rests on.
 
 **d. You cannot curate seeds, so watchability is set by your worst worlds.**
 Tyler Hobbs on long-form generative art: *"the artist needs to ensure that bad
@@ -137,10 +144,17 @@ systems and curators**, and that *"such automatic curation is greatly assisted
 by the simulation maintaining extensive records of its generated phenomena."*
 [V] We have state; we do not have a chronicle.
 
-**c. Nothing accumulates for the viewer.** Idle-game retention levers mostly do
-*not* transfer — exponential numbers, prestige, offline progress all assume the
-player owns something. What does transfer is the *shape*: leaving and returning
-should be rewarded by **legible change in the world**.
+**c. What accumulates is thin, not absent.** An earlier draft said "nothing
+accumulates", which is wrong: `archiveCurrentWorld()` already stores **up to ten
+worlds** in `localStorage` with epitaph, ending, era and civ counts, and the
+archive UI revisits them. That is a shipped retention mechanism.
+
+The narrower gap is **event-level history and cross-world continuity** — the
+archive keeps a summary card *per world*, not what happened inside one, and
+nothing carries between them. Idle-game retention levers mostly do *not*
+transfer: exponential numbers, prestige and offline progress all assume the
+player owns something. What does transfer is the *shape* — leaving and returning
+should be rewarded by **legible change**.
 
 **d. The camera never moves**, so nothing can be shown; everything competes at
 one scale. On a phone in portrait you see a fragment of coastline.
@@ -339,9 +353,13 @@ category The Land is already in, and this kind of agency **stays inside it**.
 3. **Setup-shaped where possible** — decisions before or early, not continuously.
 4. **It must survive being ignored.** If the piece is worse when nobody touches
    it, the screensaver has been sacrificed for the toy.
-5. **Determinism is the constraint to watch.** A seed currently reproduces a
-   world exactly; an intervention has to be part of the seed, or shared links
-   break — the property the share button depends on.
+5. **Determinism is *already* broken, which changes this constraint.** An
+   earlier draft said a seed reproduces a world exactly. **It does not** — see
+   **#25**. `CLAUDE.md`'s invariant covers `sim.ts`, but six renderer systems
+   (plague, fires, volcanoes, floods, droughts) combine unseeded `Math.random()`
+   with writes to `simWorld.tiles`, `biomeMap` and `elevationMap`, so two people
+   opening the same link already get **different histories**. Any agency design
+   has to be decided *after* #25, not on top of a guarantee that is not kept.
 
 **What this changes elsewhere:** it makes §8's monetisation question much more
 interesting. GODSIM's model — watch free, pay to participate — is the only
