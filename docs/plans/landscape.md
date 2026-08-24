@@ -149,10 +149,20 @@ scalars. It also carries a rolled `phaseDuration`, a generated `name`, and an
 colour and density read differently for a medieval civ than an industrial one
 (`main.ts:3288`).
 
-**What is absent is archetype and trait** — nothing that makes one civ *behave*
-unlike another beyond the scalars, and nothing carried from its history. Any
-archetype design must extend that existing model rather than assume a blank
-slate. Matthews et al. on glanceable
+**History is carried too**, and a third draft of this line was still wrong to
+imply otherwise. `hasRallied` and `hasFled` are one-shot flags that record a past
+act *and gate future behaviour* — a civ rallies once and flees once. `wonder`
+persists as a ruin marker after death. Breakaway and refuge civilisations inherit
+their parent's era and an **evolved** name (`evolveName`), so lineage already
+survives a founding.
+
+**What is genuinely absent is narrow: a named archetype, and an extensible trait
+model.** What exists is a handful of single-use booleans and inheritance at
+birth; what is missing is a composable identity that bends the behaviour levers
+`FORM_CIV` already uses. Any archetype design must **compose with these hooks**
+rather than duplicate them — and this claim has now been narrowed four times in
+review, which is itself a warning against asserting sweeping negatives about a
+2,500-line simulation from a partial read. Matthews et al. on glanceable
 displays: pick a recognisable feature and **exaggerate it** — naturalistic
 encoding reads as noise at a glance. And keep it constant across eras, or the
 viewer re-learns every era. [V]

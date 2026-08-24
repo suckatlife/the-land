@@ -1825,11 +1825,18 @@ civilisation behaviour by world geography, under a comment that literally reads
 *"Geography as culture."* Civ-level archetypes extend a shipped pattern one level
 down rather than introducing a system.
 
-**On the existing model, corrected:** a `Civ` carries more than three scalars — a
-rolled `phaseDuration`, a generated `name`, and an `era` **fixed at birth**, and
-era already drives visible treatment (city-light colour and density). What is
-absent is **archetype and trait**. The design has to extend that model, not
-assume a blank slate.
+**On the existing model — corrected four times in review, which is the lesson.**
+A `Civ` carries a rolled `phaseDuration`, a generated `name`, an `era` fixed at
+birth (which already drives city-light treatment), `wonder` persisting as a ruin
+marker, and **`hasRallied`/`hasFled` — one-shot flags that record a past act and
+gate future behaviour.** Breakaway and refuge civs inherit their parent's era and
+an evolved name, so lineage survives a founding.
+
+**Genuinely absent: a named archetype and an extensible trait model.** The design
+composes with those hooks rather than duplicating them. Each successive review
+narrowed my claim — three scalars, then plus phaseDuration/name/era, then plus
+carried history — which is a standing warning against asserting sweeping
+negatives about a 2,500-line simulation from a partial read.
 
 **Also taken: selling to venues** — cafés, hotels, galleries — which neither this
 plan nor the research had produced. **But not as a *licence*:** `LICENSE` is MIT,
