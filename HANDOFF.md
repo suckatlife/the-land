@@ -2111,3 +2111,33 @@ monumental"*. The gate needs `stable` **and** ≥160 tiles **and** `fortune > 0.
 
 **Could not verify:** whether the resulting distribution *feels* right. Only
 watching does that.
+
+---
+
+## README brought up to date — claude — 2026-08-24
+
+Docs only, on the repository's public face, which was stale in five ways.
+
+The live link pointed at a dead vercel subdomain rather than `theland.world`. It
+listed three speeds when `SPEEDS` is `[1, 2, 4, 8]`. It documented a **"Toggle
+ambient sound"** control that does not exist — there are eight buttons and none
+is audio. It described sharing as sending "the current seed as a stable URL",
+which is neither what the button does nor what a seed means since #25. And its
+opening sentence was the tricolon of near-synonyms the copy pass had already
+removed from the About page, so the two disagreed.
+
+Adds what nothing outside `docs/plans/` said: that a seed reproduces **the same
+land and the same beginning, not the same history**, and that a world leaves a
+record which can be sent as a link.
+
+**Corrected in review:** I wrote "eight controls, none of which change what
+happens in the world". That is false — *revisit* and *new world* both call
+`resetWorld()` and replace the simulation outright, the latter replacing the land
+too. Narrowed to what is actually true: none of them **directs** what
+civilisations do. The same over-absolute claim had already needed narrowing in
+`landscape.md` for the speed control, which is a hint the phrase is just wrong
+rather than imprecise.
+
+**Verified:** every claim checked against source — `SPEEDS`, the eight
+`data-control` attributes, the absence of any audio control, and the share
+handler.

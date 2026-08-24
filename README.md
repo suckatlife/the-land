@@ -6,13 +6,13 @@ A deep-time diorama. Leave it running, or watch it closely; it does not behave d
 
 ## Viewer controls
 
-Eight controls, none of which change what happens in the world:
+Eight controls. None of them directs what civilizations do — there is nothing to place, build or command:
 
 - Pause or resume.
 - Cycle speed: 1x, 2x, 4x, 8x. It returns to 1x when a world begins to end.
 - Open the chronicle of world events.
 - Revisit up to ten remembered worlds in the local archive.
-- Begin a new world.
+- Begin a new world. This replaces the current one entirely rather than steering it.
 - Share.
 - Opt in to keeping the display awake.
 - Enter fullscreen.
