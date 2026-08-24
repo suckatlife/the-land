@@ -1958,3 +1958,89 @@ noted, not investigated.
 
 **Next:** a shareable record — a URL that shows someone the card without them
 watching for ten minutes — which is the half of this that actually travels.
+
+---
+
+## The record travels — claude — 2026-08-24
+
+Closes #30, the second half of #25's decision. New `public/w/index.html`, plus a
+share affordance on the end-of-world card in `src/main.ts`.
+
+**The record now leaves the screen it was watched on.** Before this, the share
+button sent a *seed* — so a friend following the link got the same land and the
+same beginning, and then had to watch **ten to seventeen minutes** to find out
+why it was sent. The card now offers *"copy this world"*, producing a link that
+carries the whole record.
+
+**Carried in the link, not stored.** base64url of a small JSON object — a
+world's obituary is a few hundred bytes, and the observed URL is **518
+characters**. No storage, no accounts, no retention policy, nothing to expire,
+and it works offline. `TextEncoder` rather than bare `btoa`, so world names
+outside ASCII do not throw.
+
+**A standalone page, not a mode of the app.** `/w/` is plain HTML sharing
+`info.css` with About and Privacy, so it renders instantly without booting Pixi —
+which is the point, since the reader has not chosen to watch anything yet.
+
+**Honest about what a seed carries**, per #25: alongside *"Watch a world"* it
+offers *"Visit this land"*, and says plainly that the seed gives the same land
+and beginning but that *"what befalls it will not be this: no two viewings of a
+world share their disasters."*
+
+**Verified** end to end headless: card → copy → 518-character link → fresh page
+rendering title, eyebrow, name, ending, epitaph, three facts as label/value
+pairs, and both CTAs. A malformed `?r=` falls back to *"This link has no world in
+it"* rather than a blank page. No page errors. One cosmetic bug caught and fixed:
+the button ran inline with the facts line (*"5 eruptionscopy this world"*)
+because the detail above it is a `span`.
+
+**Known gap, deliberate and documented in the page itself:** the social preview
+is generic. Per-world OG meta needs server-rendered tags, and this is a static
+site — that would be the project's first backend, a bigger decision than this
+change should make. It is the remaining piece of "worth sending".
+
+**A process note worth keeping:** the branch-guard earned itself here. The
+command that was meant to create `claude/record-travels` was rejected for an
+unrelated reason, so the whole feature was written on `main` — and the
+`test "$(git rev-parse --abbrev-ref HEAD)" = ...` check refused to commit before
+anything reached it.
+
+**Two from review, and the first made a claim of mine true that had been false.**
+I wrote that the record page "works offline". It did not: the service worker had
+no `/w/` in `CORE`, and its cache key was the full request — so every record is a
+different URL, one cache entry per world, matching none of them next time. An
+offline `/w/?r=…` fell through to the cached `/` and silently booted the
+simulation instead. Now `/w/` is precached, document routes are keyed by
+**pathname** rather than request, and a `/w/` navigation falls back to the `/w/`
+document. `CACHE` bumped to `v2`, or installed clients would keep the old shell.
+
+**Verified properly this time:** registered the worker by hand (the page only
+registers over `https:`, so a local preview never installs it), went offline, and
+opened a record link **never visited before** — it rendered the full record with
+no network. Previously this silently showed the simulation.
+
+Second: native share never touches the clipboard, but the button said *"copied"*
+regardless — sending the viewer to paste something that was not there. It now
+says *"shared"* for the native path.
+
+**Two more, both fair.** The record was up for only **3.75 real seconds at 4x
+and 1.875 at 8x** — act 4 is 15 *world*-seconds and `timeScale` compresses it, so
+the share button was barely reachable for anyone accelerating. The speed control
+now returns to **1x when act 4 opens**: the world is over, there is nothing left
+to accelerate through, and it matches skip, which already stops there. That
+required extracting `setTimeScale()`, since the click handler set the value, the
+label, the active class and the glitter mode inline — anything else changing
+speed would have left the button reading 8x.
+
+And the payload omitted the dateline the on-screen card shows, so a recipient
+got a strictly smaller card than the sender saw. *"Carries the whole record"* was
+overstated; it now carries `a` and `y`, and `/w/` renders them.
+
+**Verified:** 8x before the ending, **1x at it** with the label in sync; shared
+page shows *"The Future · 2,100 CE"*.
+
+**An observation, not investigated:** every test world across this PR and the
+last ended in `world_empire` — five seeds in a row. That may be a scoring bias in
+`resolveWorldEnding`. Filed separately.
+
+**Could not verify:** whether anyone wants to send one.

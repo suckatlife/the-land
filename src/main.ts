@@ -1883,6 +1883,11 @@ function endingCheckpoints(): boolean {
   // Act 4 applies to every ending, not only the ones with a staged act 3.
   if (committedEnding && simWorld.tick >= acts.silence) {
     beginSilence(simWorld);
+    // Act 4 is 15 WORLD-seconds, so at 8x it is under two real ones — long
+    // enough to miss entirely, let alone read or act on. The world is over;
+    // there is nothing left to accelerate through, so the speed control returns
+    // to 1x for the aftermath. Consistent with skip, which already stops here.
+    if (timeScale !== 1) setTimeScale(1);
     showWorldRecord();
   }
   if (simWorld.tick >= currentWorldFate.endTick) {
@@ -7149,6 +7154,17 @@ const BARS_REFRESH_FRAMES = 10;  // DOM rebuild for civ bar panel; ~6 Hz at 60fp
 // slow renderer, with this ceiling preventing a huge catch-up after suspension.
 const MAX_SIM_FRAME_MS = 1000;
 
+// base64url so the record survives a URL without percent-encoding noise, and
+// TextEncoder so world names outside ASCII do not throw the way btoa alone
+// would.
+function recordUrl(rec: Record<string, unknown>): string {
+  const bytes = new TextEncoder().encode(JSON.stringify(rec));
+  let bin = '';
+  for (const b of bytes) bin += String.fromCharCode(b);
+  const b64 = btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return `${location.origin}/w/?r=${b64}`;
+}
+
 // The record. A world that ends leaves something to read: what it was called,
 // how it ended, and three facts about it. The `.world-epitaph` styles have
 // existed since before this was built — eyebrow, title, detail — and this fills
@@ -7188,6 +7204,12 @@ function showWorldRecord() {
     h.wonders > 0 ? `${h.wonders} wonder${h.wonders === 1 ? '' : 's'}` : 'nothing monumental',
     worst && worst.n > 0 ? worst.s : 'no great disaster',
   ];
+  // The same three facts as label/value pairs, for the shareable record page.
+  const factPairs: Array<[string, string]> = [
+    ['Peoples', String(peoples)],
+    ['Left behind', h.wonders > 0 ? `${h.wonders} wonder${h.wonders === 1 ? '' : 's'}` : 'nothing monumental'],
+    ['Endured', worst && worst.n > 0 ? worst.s : 'no great disaster'],
+  ];
 
   const el = document.createElement('section');
   el.className = 'world-epitaph';
@@ -7204,6 +7226,48 @@ function showWorldRecord() {
   detail.textContent = `${o.epitaph}\n\n${ERA_NAMES[dominantEra(simWorld)]} · ${deepTimeYear(simWorld)} · ${facts.join(' · ')}`;
   detail.style.whiteSpace = 'pre-line';
   el.append(eyebrow, title, detail);
+
+  // A record that cannot leave the screen it was watched on is only half of
+  // one (#30). This copies a link that carries the whole thing — no storage, no
+  // account, nothing to expire — so a stranger reads the world in five seconds
+  // instead of watching for fifteen minutes to find out why it was sent.
+  const keep = document.createElement('button');
+  keep.type = 'button';
+  keep.textContent = 'copy this world';
+  // display:block, because the detail above it is a span and the button would
+  // otherwise run straight on from the last word of the facts line.
+  keep.style.cssText = 'display:block;margin:16px auto 0;pointer-events:auto';
+  keep.addEventListener('click', async () => {
+    const url = recordUrl({
+      v: 1,
+      n: currentWorldName,
+      t: o.title,
+      e: o.eyebrow,
+      p: o.epitaph,
+      // The dateline the on-screen card shows. Omitting it meant a recipient
+      // got a strictly smaller card than the sender saw.
+      a: ERA_NAMES[dominantEra(simWorld)],
+      y: deepTimeYear(simWorld),
+      m: factPairs,
+      s: currentSeed,
+    });
+    let method: 'native' | 'clipboard' = 'clipboard';
+    try {
+      if (navigator.share) {
+        method = 'native';
+        await navigator.share({ title: `${currentWorldName} — The Land`, url });
+      } else {
+        await navigator.clipboard.writeText(url);
+      }
+      // Native share never touches the clipboard, so saying "copied" would send
+      // the viewer to paste something that is not there.
+      keep.textContent = method === 'native' ? 'shared' : 'copied';
+      trackEvent('world_shared', { method });
+    } catch { /* the viewer dismissed the sheet; say nothing */ }
+  });
+  el.append(keep);
+  el.style.pointerEvents = 'auto';
+
   document.body.appendChild(el);
   worldRecordEl = el;
   requestAnimationFrame(() => el.classList.add('is-visible'));
@@ -8115,12 +8179,17 @@ pauseControl.addEventListener('click', () => {
 });
 
 const SPEEDS = [1, 2, 4, 8];
-speedControl.addEventListener('click', () => {
-  timeScale = SPEEDS[(SPEEDS.indexOf(timeScale) + 1) % SPEEDS.length];
+// One place that changes the speed, so anything else setting it — the ending
+// returning to 1x for the aftermath — cannot leave the button reading 8x.
+function setTimeScale(next: number) {
+  timeScale = next;
   speedControl.textContent = `${timeScale}x`;
   speedControl.classList.toggle('is-active', timeScale !== 1);
   // Accelerated twinkle reads as flashing; hold both reflections at mean brightness.
   atmos.setGlitterSteady(timeScale >= 4);
+}
+speedControl.addEventListener('click', () => {
+  setTimeScale(SPEEDS[(SPEEDS.indexOf(timeScale) + 1) % SPEEDS.length]);
 });
 
 chronicleControl.addEventListener('click', () => {

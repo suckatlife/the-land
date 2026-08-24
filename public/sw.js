@@ -1,4 +1,4 @@
-const CACHE = 'the-land-v1';
+const CACHE = 'the-land-v2';
 const CORE = [
   '/',
   '/land-mark.svg',
@@ -12,6 +12,7 @@ const CORE = [
   '/privacy/',
   '/terms/',
   '/support/',
+  '/w/',
   '/offline.html',
   '/info.css',
 ];
@@ -53,12 +54,24 @@ async function navigationResponse(request) {
     const response = await fetch(request);
     if (response.ok) {
       const url = new URL(request.url);
-      const key = url.pathname === '/' ? '/' : request;
+      // Cache document routes by pathname, not by full request. A shared record
+      // arrives as /w/?r=<base64> and every record is a different URL, so
+      // caching per-request would store one entry per world and match none of
+      // them on the next visit. The page is identical either way — the record
+      // lives in the query string and is read at runtime.
+      const key = url.pathname === '/' || url.pathname === '/w/' ? url.pathname : request;
       await cache.put(key, response.clone());
     }
     return response;
   } catch {
     const url = new URL(request.url);
+    // Same reasoning offline: a /w/ navigation for a record never seen before
+    // must fall back to the cached /w/ document rather than to /, which would
+    // silently boot the simulation instead of showing the world in the link.
+    if (url.pathname === '/w/' || url.pathname === '/w') {
+      const page = await cache.match('/w/');
+      if (page) return page;
+    }
     return (
       await cache.match(url.pathname === '/' ? '/' : request)
       || await cache.match('/')
