@@ -1794,3 +1794,73 @@ shippable on its own. It may still be, but only once one of the two scaling
 paths is shown to work.
 
 **Next:** prototype the zoom path before anything else in this plan is scheduled.
+
+---
+
+## Codex's independent ideas, assessed — claude — 2026-08-24
+
+Docs only. Lawrence asked Codex for improvement ideas without giving it this
+analysis, then asked what I made of them.
+
+**The convergence is real but narrower than I first wrote it.** Codex ranked
+**civilisation identity first**. This repository's research identified the same
+gap (`landscape.md` §5a) but its *ranked* directions in §7 put a chronicle first
+and identity encoding **fifth**. So two independent paths found the same gap —
+that part is genuine and is the strongest evidence either process has produced —
+but they did **not** reach the same order, and an earlier version of this entry
+claimed they did.
+
+**Which leaves a real scheduling question rather than a settled answer.** The
+argument for identity first anyway: a chronicle is only as interesting as the
+material it curates, and a chronicle about civilisations that differ by colour is
+a dull one. Identity is arguably a prerequisite for direction 1 rather than a
+competitor to it. That is reasoning, not consensus, and it is Lawrence's call.
+
+Codex's refinement is better than mine and is kept: **traits must influence
+simulation behaviour rather than merely produce text** — Mark Johnson's
+chains-of-meaning, arrived at without the citation.
+
+**And the work is smaller than either of us estimated.** `FORM_CIV` already bends
+civilisation behaviour by world geography, under a comment that literally reads
+*"Geography as culture."* Civ-level archetypes extend a shipped pattern one level
+down rather than introducing a system.
+
+**On the existing model — corrected four times in review, which is the lesson.**
+A `Civ` carries a rolled `phaseDuration`, a generated `name`, an `era` fixed at
+birth (which already drives city-light treatment), `wonder` persisting as a ruin
+marker, and **`hasRallied`/`hasFled` — one-shot flags that record a past act and
+gate future behaviour.** Breakaway and refuge civs inherit their parent's era and
+an evolved name, so lineage survives a founding.
+
+**Genuinely absent: a named archetype and an extensible trait model.** The design
+composes with those hooks rather than duplicating them. Each successive review
+narrowed my claim — three scalars, then plus phaseDuration/name/era, then plus
+carried history — which is a standing warning against asserting sweeping
+negatives about a 2,500-line simulation from a partial read.
+
+**Also taken: selling to venues** — cafés, hotels, galleries — which neither this
+plan nor the research had produced. **But not as a *licence*:** `LICENSE` is MIT,
+so every recipient already has unrestricted use and a venue can point at it and
+pay nothing, correctly. There is no permission to sell. What is sellable is a
+**hosted display** someone else keeps running, a **display build** (chrome gone,
+worlds scheduled, kiosk behaviour), and **support**. Still good margin, still
+nothing added inside the frame — a product sold to venues rather than a
+permission slip.
+
+**Three of its proposals were mis-scoped because it cannot see the repository**,
+and that is recorded rather than silently corrected: era/crisis structure is
+largely built (six eras, a climbing floor, eras inherited from ruins, ice ages,
+three-stage omens, and the four-act ending shipped this week), so the real job is
+making transitions *legible* rather than building structure; theme packs
+duplicate `rollCharacter`'s existing 7 temperaments × 6 world forms, which is the
+Line Rider failure of bolting product onto a toy; and its share-data reasoning
+assumes determinism that #25 shows is not currently kept.
+
+**One proposal pushed back on, on evidence:** mid-run influence powers. The
+research found WorldBox players use god powers as a **boredom valve**, and our
+scheduled apocalypse is that valve automated. Bless/Tempest/Seed hands the
+viewer a way to manufacture events again. Setup-shaped agency survives this;
+mid-run powers are the version the evidence warns about, and the decision is
+gated behind #25.
+
+**Next:** civilisation archetypes as the first build (#26).

@@ -129,6 +129,33 @@ more as information than as money.
 **Sponsorship — possible, premature.** A single quiet credit would not damage
 anything, but it needs an audience first. Park it.
 
+**A commercial display licence — the best idea neither this plan nor the
+research produced.** Proposed by Codex: cafés, hotels, galleries, offices and
+streamers pay roughly **$19–49** for licensed public display, with clean chrome
+and scheduled worlds.
+
+**But it cannot be sold as a *licence*, and calling it one was a mistake in an
+earlier draft of this section.** `LICENSE:3-11` is MIT: every recipient already
+has unrestricted use, distribution, sublicensing and sale. A venue asked whether
+it may put this on a wall can point at the licence and pay nothing, and it would
+be right to. There is no permission here to sell.
+
+**What is sellable is a service or a product, not a right:**
+
+- **Hosted display** — a URL that just works on a venue's screen, that someone
+  else keeps running. Venues are buying *not having to think about it*.
+- **A display build** — chrome gone, worlds scheduled rather than rerolled by
+  hand, kiosk behaviour, restart-on-crash, multi-screen. Real work that the free
+  browser version does not do.
+- **Support** — someone to email when the screen in the lobby is black.
+
+That reframing keeps what was attractive about the idea. The margin is still
+good, it still **compromises nothing** — no upsell, no nag, nothing inside the
+frame, so §3's calm test is untouched — and it still fits the positioning better
+than anything else here: a thing that belongs on a wall in a room where people
+are doing something else is what an ambient work is *for*. It is simply a
+product, sold to venues, rather than a permission slip.
+
 **On the MIT licence and forking:** the source is MIT, so anyone may host their
 own copy. This is not worth mitigating. Nobody forks a project with no audience,
 and if it acquires one, the assets are the domain, the name, and the fact that

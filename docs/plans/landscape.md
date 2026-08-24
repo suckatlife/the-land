@@ -142,10 +142,45 @@ pending* instead.
 
 ## 5. The gaps, now evidenced rather than asserted
 
-**a. Identity is one bit deep.** Two civs differ by colour and nothing else.
-Matthews et al. on glanceable displays: pick a recognisable feature and
-**exaggerate it** — naturalistic encoding reads as noise at a glance. And keep
-it constant across eras, or the viewer re-learns every era. [V]
+**a. Identity is one bit deep** — though "one bit" understates what exists, and
+an earlier draft of this line was wrong to say a `Civ` varies only by three
+scalars. It also carries a rolled `phaseDuration`, a generated `name`, and an
+`era` **fixed at birth**, and era already drives visible treatment: city-light
+colour and density read differently for a medieval civ than an industrial one
+(`main.ts:3288`).
+
+**History is carried too**, and a third draft of this line was still wrong to
+imply otherwise. `hasRallied` and `hasFled` are one-shot flags that record a past
+act *and gate future behaviour* — a civ rallies once and flees once. `wonder`
+persists as a ruin marker after death. Breakaway and refuge civilisations inherit
+their parent's era and an **evolved** name (`evolveName`), so lineage already
+survives a founding.
+
+**What is genuinely absent is narrow: a named archetype, and an extensible trait
+model.** What exists is a handful of single-use booleans and inheritance at
+birth; what is missing is a composable identity that bends the behaviour levers
+`FORM_CIV` already uses. Any archetype design must **compose with these hooks**
+rather than duplicate them — and this claim has now been narrowed four times in
+review, which is itself a warning against asserting sweeping negatives about a
+2,500-line simulation from a partial read. Matthews et al. on glanceable
+displays: pick a recognisable feature and **exaggerate it** — naturalistic
+encoding reads as noise at a glance. And keep it constant across eras, or the
+viewer re-learns every era. [V]
+
+**Independently corroborated.** Asked for ideas without access to this analysis,
+Codex ranked civilisation identity **first** as well, and added a refinement
+worth keeping: *traits must influence simulation behaviour rather than merely
+produce text.* That is Mark Johnson's chains-of-meaning arrived at from a
+different direction. Two independent paths reaching the same gap is the
+strongest evidence in this document.
+
+**And it is cheaper than it looks, because the pattern already exists at world
+scale.** `FORM_CIV` in `sim.ts` already bends civilisation behaviour by the
+world's geography, under the comment *"Geography as culture. An archipelago is a
+world of many small seafaring peoples; a continent is a world of a few large
+land empires."* Six world forms and seven temperaments already vary a world's
+character. **Civ-level archetypes are an extension of a shipped idea, not a new
+system** — the same move applied one level down.
 
 **b. The history is announced but never kept.** 23 event kinds fire and scroll
 past in a log that turns over every 9.5 seconds. James Ryan's *Curating
@@ -201,6 +236,14 @@ Worth stating, because a comparison tends to only find gaps.
   whether `worldFateForSeed` visibly *earns* its outcome.
 
 ## 7. Directions, ranked by evidence rather than taste
+
+**Note on the ordering, added after Codex's independent suggestions (#26):** it
+ranked *civilisation identity* first, where this list has it fifth (direction 5).
+Both processes found the gap; they disagree on when to do it. The argument for
+moving it up is that direction 1 — a chronicle — is only as good as the material
+it curates, and a chronicle about civilisations that differ by colour is a dull
+one. That makes identity arguably a **prerequisite** for direction 1 rather than
+a competitor. Recorded as a live disagreement rather than resolved here.
 
 1. **A chronicle, then auto-curate it.** Append-only event log — founded, first
    contact, crossing attempted, colony broke away, capital fell, era advanced —
