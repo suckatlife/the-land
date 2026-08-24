@@ -7084,6 +7084,10 @@ function resetSimOnly() {
   // previous run's title.
   committedEnding = null;
   endingOmenSpoken = false;
+  // Third time this class of bug has appeared: state that outlives
+  // resetSimOnly(). The record would otherwise hang over the reset world, and
+  // its once-per-world guard would stop that run ever showing its own.
+  clearWorldRecord();
   seedInitialCivs(simWorld, biomeMap, 1);
   (window as any).__sim = simWorld;
   fadedDeadCivs.clear();

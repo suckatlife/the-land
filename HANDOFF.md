@@ -1930,6 +1930,14 @@ no page errors. Reads: *"The Hidden Wilds — The World Empire … The Future ·
 era and year agreeing (*"The Modern Age · 2,100 CE"*, *"The Age of Industry ·
 1,900 CE"*), no page errors.
 
+**And a fifth, which is the third appearance of one pattern:** state that
+outlives `resetSimOnly()`. The record survived a sim reset, hung over the new
+world, and its once-per-world guard then stopped that run showing its own. The
+same shape hit `committedEnding`/`endingOmenSpoken` and `__forceEnding` earlier
+this week. **`resetWorld()` and `resetSimOnly()` clear different sets of state,
+and nothing enforces that they agree** — worth a shared reset helper before a
+fourth instance.
+
 **Could not verify:** whether it is *good* — whether a card over a dead world
 lands or intrudes on the silence. That is the preview's job. Also unexercised by
 data: the plague branch, since neither test world was plague-dominant. And both
