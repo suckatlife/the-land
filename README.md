@@ -19,7 +19,9 @@ Eight controls. None of them directs what civilizations do — there is nothing 
 
 ## Worlds, seeds and records
 
-A world is identified by its `?seed=` URL parameter, and a seed reproduces **the same land and the same beginning** — not the same history. Catastrophes are decided outside the seeded stream, so no two viewings of a world share their disasters.
+A world is identified by its `?seed=` URL parameter, and a seed reproduces **the same land and the same beginning** — not the same history.
+
+The simulation itself is seeded: terrain, civilisations, names, and the pressure-driven catastrophes it raises all replay from the seed. But a second layer of disasters — wildfires, plagues, river floods, droughts and eruptions — is raised by the renderer, outside that stream, so it differs every time. Two people opening the same link get the same land and then watch different things happen to it.
 
 When a world ends it leaves a **record**: what it was called, how it ended, its epitaph and three facts about it. That record can be copied as a self-contained link which opens at `/w/` without running the simulation — the thing worth sending to someone who has not got fifteen minutes to watch a world die.
 

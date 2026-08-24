@@ -2138,6 +2138,13 @@ civilisations do. The same over-absolute claim had already needed narrowing in
 `landscape.md` for the speed control, which is a hint the phrase is just wrong
 rather than imprecise.
 
+**And a second correction:** I wrote that "catastrophes are decided outside the
+seeded stream". Only half of them are. `sim.ts` seeds its own pressure-driven
+catastrophes from the world seed and replays them; it is the **renderer's**
+ambient layer — wildfires, plagues, river floods, droughts, eruptions — that is
+unseeded. I had documented that exact distinction in `landscape.md` §8 and then
+flattened it into a blanket claim two days later.
+
 **Verified:** every claim checked against source — `SPEEDS`, the eight
 `data-control` attributes, the absence of any audio control, and the share
 handler.
