@@ -7088,6 +7088,11 @@ function resetSimOnly() {
   // resetSimOnly(). The record would otherwise hang over the reset world, and
   // its once-per-world guard would stop that run ever showing its own.
   clearWorldRecord();
+  // The history has to go with it. It was already surviving a sim reset before
+  // the record existed; the record is just the first thing to *display* the
+  // consequence, which would have been a fresh world claiming the previous
+  // run's wonders and disasters.
+  currentWorldHistory = createWorldHistory(biomeMap);
   seedInitialCivs(simWorld, biomeMap, 1);
   (window as any).__sim = simWorld;
   fadedDeadCivs.clear();
@@ -8694,6 +8699,12 @@ document.getElementById('skip')!.addEventListener('click', () => {
     // The ending's boundaries live inside the skip as well; crossing one here
     // and only noticing on the next frame would bypass the whole sequence.
     if (endingCheckpoints()) break;
+    // And stop at act 4 rather than through it. This loop is synchronous, so a
+    // skip that crossed both the silence and endTick would create the record and
+    // then destroy it at the turnover without the browser ever painting — the
+    // fast-forward path would never show an ending at all. Stopping here is also
+    // simply the better behaviour: skip takes you *to* the ending, not past it.
+    if (simWorld.ending?.silent) break;
   }
   // Full redraw after skip — terrain may have mutated, so rebuild biome layer first.
   // Scars from skipped ticks weren't rendered; drop any stale ones.

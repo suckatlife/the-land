@@ -1938,6 +1938,18 @@ this week. **`resetWorld()` and `resetSimOnly()` clear different sets of state,
 and nothing enforces that they agree** — worth a shared reset helper before a
 fourth instance.
 
+**Two more, and the first has a better fix than it sounded.** The skip loop is
+synchronous, so a skip crossing both the silence *and* `endTick` created the
+record and destroyed it at the turnover without the browser ever painting — the
+fast-forward path never showed an ending at all. **Skip now stops when act 4
+opens**, which is also just the better behaviour: it takes you *to* the ending
+rather than past it. Verified — a straight run of skips halts at tick 21699
+against a silence at 21669 and a turnover at 22119, card visible.
+
+The second was pre-existing and the record merely exposed it:
+`resetSimOnly()` never reset `currentWorldHistory`, so a fresh world would have
+claimed the previous run's wonders and disasters. Reset alongside the rest.
+
 **Could not verify:** whether it is *good* — whether a card over a dead world
 lands or intrudes on the silence. That is the preview's job. Also unexercised by
 data: the plague branch, since neither test world was plague-dominant. And both
