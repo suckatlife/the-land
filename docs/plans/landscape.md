@@ -227,6 +227,14 @@ Worth stating, because a comparison tends to only find gaps.
 
 ## 7. Directions, ranked by evidence rather than taste
 
+**Note on the ordering, added after Codex's independent suggestions (#26):** it
+ranked *civilisation identity* first, where this list has it fifth (direction 5).
+Both processes found the gap; they disagree on when to do it. The argument for
+moving it up is that direction 1 — a chronicle — is only as good as the material
+it curates, and a chronicle about civilisations that differ by colour is a dull
+one. That makes identity arguably a **prerequisite** for direction 1 rather than
+a competitor. Recorded as a live disagreement rather than resolved here.
+
 1. **A chronicle, then auto-curate it.** Append-only event log — founded, first
    contact, crossing attempted, colony broke away, capital fell, era advanced —
    with tick, location, participants. Then let the *system* curate: an epitaph

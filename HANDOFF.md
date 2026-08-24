@@ -1802,11 +1802,19 @@ paths is shown to work.
 Docs only. Lawrence asked Codex for improvement ideas without giving it this
 analysis, then asked what I made of them.
 
-**The headline is the convergence.** Codex ranked **civilisation identity first**
-and **consequential rare events second** — the same order this repository's
-research reached from an entirely different direction. Two independent paths
-landing on the same gap is the strongest evidence either process has produced,
-and it is now recorded in `landscape.md` §5a.
+**The convergence is real but narrower than I first wrote it.** Codex ranked
+**civilisation identity first**. This repository's research identified the same
+gap (`landscape.md` §5a) but its *ranked* directions in §7 put a chronicle first
+and identity encoding **fifth**. So two independent paths found the same gap —
+that part is genuine and is the strongest evidence either process has produced —
+but they did **not** reach the same order, and an earlier version of this entry
+claimed they did.
+
+**Which leaves a real scheduling question rather than a settled answer.** The
+argument for identity first anyway: a chronicle is only as interesting as the
+material it curates, and a chronicle about civilisations that differ by colour is
+a dull one. Identity is arguably a prerequisite for direction 1 rather than a
+competitor to it. That is reasoning, not consensus, and it is Lawrence's call.
 
 Codex's refinement is better than mine and is kept: **traits must influence
 simulation behaviour rather than merely produce text** — Mark Johnson's
@@ -1815,12 +1823,22 @@ chains-of-meaning, arrived at without the citation.
 **And the work is smaller than either of us estimated.** `FORM_CIV` already bends
 civilisation behaviour by world geography, under a comment that literally reads
 *"Geography as culture."* Civ-level archetypes extend a shipped pattern one level
-down rather than introducing a system. Verified alongside it: a `Civ` varies only
-by `constitution`, `fortune` and `maxSize` — **no archetypes or traits exist.**
+down rather than introducing a system.
 
-**Also taken: a commercial display licence** (cafés, hotels, galleries, ~$19–49),
-which neither this plan nor the research had produced. Near-total margin, nothing
-added inside the frame, and it treats the piece as art rather than software.
+**On the existing model, corrected:** a `Civ` carries more than three scalars — a
+rolled `phaseDuration`, a generated `name`, and an `era` **fixed at birth**, and
+era already drives visible treatment (city-light colour and density). What is
+absent is **archetype and trait**. The design has to extend that model, not
+assume a blank slate.
+
+**Also taken: selling to venues** — cafés, hotels, galleries — which neither this
+plan nor the research had produced. **But not as a *licence*:** `LICENSE` is MIT,
+so every recipient already has unrestricted use and a venue can point at it and
+pay nothing, correctly. There is no permission to sell. What is sellable is a
+**hosted display** someone else keeps running, a **display build** (chrome gone,
+worlds scheduled, kiosk behaviour), and **support**. Still good margin, still
+nothing added inside the frame — a product sold to venues rather than a
+permission slip.
 
 **Three of its proposals were mis-scoped because it cannot see the repository**,
 and that is recorded rather than silently corrected: era/crisis structure is
