@@ -7149,6 +7149,17 @@ const BARS_REFRESH_FRAMES = 10;  // DOM rebuild for civ bar panel; ~6 Hz at 60fp
 // slow renderer, with this ceiling preventing a huge catch-up after suspension.
 const MAX_SIM_FRAME_MS = 1000;
 
+// base64url so the record survives a URL without percent-encoding noise, and
+// TextEncoder so world names outside ASCII do not throw the way btoa alone
+// would.
+function recordUrl(rec: Record<string, unknown>): string {
+  const bytes = new TextEncoder().encode(JSON.stringify(rec));
+  let bin = '';
+  for (const b of bytes) bin += String.fromCharCode(b);
+  const b64 = btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return `${location.origin}/w/?r=${b64}`;
+}
+
 // The record. A world that ends leaves something to read: what it was called,
 // how it ended, and three facts about it. The `.world-epitaph` styles have
 // existed since before this was built — eyebrow, title, detail — and this fills
@@ -7188,6 +7199,12 @@ function showWorldRecord() {
     h.wonders > 0 ? `${h.wonders} wonder${h.wonders === 1 ? '' : 's'}` : 'nothing monumental',
     worst && worst.n > 0 ? worst.s : 'no great disaster',
   ];
+  // The same three facts as label/value pairs, for the shareable record page.
+  const factPairs: Array<[string, string]> = [
+    ['Peoples', String(peoples)],
+    ['Left behind', h.wonders > 0 ? `${h.wonders} wonder${h.wonders === 1 ? '' : 's'}` : 'nothing monumental'],
+    ['Endured', worst && worst.n > 0 ? worst.s : 'no great disaster'],
+  ];
 
   const el = document.createElement('section');
   el.className = 'world-epitaph';
@@ -7204,6 +7221,42 @@ function showWorldRecord() {
   detail.textContent = `${o.epitaph}\n\n${ERA_NAMES[dominantEra(simWorld)]} · ${deepTimeYear(simWorld)} · ${facts.join(' · ')}`;
   detail.style.whiteSpace = 'pre-line';
   el.append(eyebrow, title, detail);
+
+  // A record that cannot leave the screen it was watched on is only half of
+  // one (#30). This copies a link that carries the whole thing — no storage, no
+  // account, nothing to expire — so a stranger reads the world in five seconds
+  // instead of watching for fifteen minutes to find out why it was sent.
+  const keep = document.createElement('button');
+  keep.type = 'button';
+  keep.textContent = 'copy this world';
+  // display:block, because the detail above it is a span and the button would
+  // otherwise run straight on from the last word of the facts line.
+  keep.style.cssText = 'display:block;margin:16px auto 0;pointer-events:auto';
+  keep.addEventListener('click', async () => {
+    const url = recordUrl({
+      v: 1,
+      n: currentWorldName,
+      t: o.title,
+      e: o.eyebrow,
+      p: o.epitaph,
+      m: factPairs,
+      s: currentSeed,
+    });
+    let method: 'native' | 'clipboard' = 'clipboard';
+    try {
+      if (navigator.share) {
+        method = 'native';
+        await navigator.share({ title: `${currentWorldName} — The Land`, url });
+      } else {
+        await navigator.clipboard.writeText(url);
+      }
+      keep.textContent = 'copied';
+      trackEvent('world_shared', { method });
+    } catch { /* the viewer dismissed the sheet; say nothing */ }
+  });
+  el.append(keep);
+  el.style.pointerEvents = 'auto';
+
   document.body.appendChild(el);
   worldRecordEl = el;
   requestAnimationFrame(() => el.classList.add('is-visible'));

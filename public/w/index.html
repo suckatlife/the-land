@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#202721" />
+    <meta name="description" content="A world that has ended, and what it left behind." />
+    <link rel="icon" type="image/svg+xml" href="/land-mark.svg" />
+    <link rel="stylesheet" href="/info.css" />
+    <!--
+      The record travels inside the link, so this page needs no storage and no
+      backend. The trade is that the social preview here is generic: making it
+      per-world requires server-rendered meta tags, which this static site does
+      not have. Noted in the issue rather than faked.
+    -->
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="The Land" />
+    <meta property="og:title" content="A world that ended — The Land" />
+    <meta property="og:description" content="Civilizations rose here, and then did not." />
+    <meta property="og:image" content="https://www.theland.world/social-card.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <title>A world that ended — The Land</title>
+  </head>
+  <body>
+    <nav class="site-nav shell" aria-label="Primary">
+      <a href="/">The Land</a>
+      <span class="site-nav__links">
+        <a href="/about/">About</a>
+        <a href="/privacy/">Privacy</a>
+      </span>
+    </nav>
+    <main class="shell" id="main">
+      <noscript>
+        <p class="lede">This page needs JavaScript to read the world carried in the link.</p>
+        <div class="actions"><a class="button button--primary" href="/">Watch a world</a></div>
+      </noscript>
+    </main>
+    <script>
+      // A record travels as base64url of a small JSON object. No storage, no
+      // accounts, nothing to expire: a world's obituary is a few hundred bytes,
+      // so the link is the whole artifact.
+      function decodeRecord(raw) {
+        try {
+          const b64 = raw.replace(/-/g, '+').replace(/_/g, '/');
+          const bytes = Uint8Array.from(atob(b64), function (c) { return c.charCodeAt(0); });
+          const rec = JSON.parse(new TextDecoder().decode(bytes));
+          return rec && rec.v === 1 && typeof rec.n === 'string' ? rec : null;
+        } catch (err) {
+          return null;
+        }
+      }
+
+      function el(tag, cls, text) {
+        const node = document.createElement(tag);
+        if (cls) node.className = cls;
+        if (text != null) node.textContent = text;
+        return node;
+      }
+
+      const main = document.getElementById('main');
+      const rec = decodeRecord(new URLSearchParams(location.search).get('r') || '');
+
+      if (!rec) {
+        main.append(
+          el('p', 'eyebrow', 'nothing here'),
+          el('h1', null, 'This link has no world in it.'),
+          el('p', 'lede', 'The record was missing or could not be read. You can still begin one of your own.')
+        );
+        const actions = el('div', 'actions');
+        const watch = el('a', 'button button--primary', 'Watch a world');
+        watch.href = '/';
+        actions.append(watch);
+        main.append(actions);
+      } else {
+        document.title = rec.n + ' — The Land';
+        main.append(
+          el('p', 'eyebrow', rec.e || 'a world that ended'),
+          el('h1', null, rec.n),
+          el('p', 'lede', rec.t || '')
+        );
+        if (rec.p) main.append(el('p', null, rec.p));
+
+        // Facts arrive as [label, value] pairs so the page never has to guess
+        // at a separator inside generated text.
+        if (Array.isArray(rec.m) && rec.m.length) {
+          const list = el('ul', 'facts');
+          for (const pair of rec.m) {
+            if (!Array.isArray(pair)) continue;
+            const li = document.createElement('li');
+            li.append(el('strong', null, String(pair[0])), el('span', null, String(pair[1])));
+            list.append(li);
+          }
+          if (list.childElementCount) main.append(list);
+        }
+
+        const actions = el('div', 'actions');
+        const watch = el('a', 'button button--primary', 'Watch a world');
+        watch.href = '/';
+        actions.append(watch);
+        if (rec.s) {
+          const land = el('a', 'button', 'Visit this land');
+          land.href = '/?seed=' + encodeURIComponent(rec.s);
+          actions.append(land);
+        }
+        main.append(actions);
+
+        // Honest about what a seed carries, per the decision in #25.
+        if (rec.s) {
+          main.append(el('p', 'quiet',
+            'The seed gives you the same land and the same beginning. What befalls it will not be this: no two viewings of a world share their disasters.'));
+        }
+      }
+    </script>
+  </body>
+</html>
