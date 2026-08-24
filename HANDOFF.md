@@ -1564,3 +1564,45 @@ so its FPS says nothing about a phone. Still needs Lawrence's hardware.
 that makes the world legible and touch has no path to it. And the portrait
 framing shows a fragment of coastline rather than a world, which undercuts the
 "glance at it" pitch. Both are design calls.
+
+---
+
+## Plan — the landscape comparison — claude — 2026-08-23
+
+Proposal and research brief, no code. `docs/plans/landscape.md`.
+
+**Why:** the named-lives plan (#22) reasoned from a single comparable — WorldBox
+— and Lawrence's read was that a named person may not suit a passive
+screensaver. That is #22's own first open question answered, and it exposed the
+real problem: **one neighbour is not a landscape.** #22 is parked, not closed;
+the observation behind it (identity is one bit deep) survives even if
+personhood is the wrong answer to it.
+
+**The framing the document argues for**, and the part most worth keeping: two
+axes, agency and simulation depth. The Land is **zero agency, high depth**, which
+is a thin corner — most high-depth simulations are games, and most zero-agency
+software is shallow motion. So the productive question is not "what does WorldBox
+have" but **"which pleasures of a deep simulation survive the removal of all
+agency, and which are pleasures *of* agency wearing a simulation's clothes?"** A
+feature can be excellent in WorldBox and worthless here because its payoff was
+"I did that."
+
+**Stated precisely, from the code:** 23 event kinds, 5 catastrophes, 7 endings,
+96×96, 10–17 minutes, ~13.7k lines. Eight controls, **none of which affect what
+happens** — they govern playback and the window. Rerolling is the only influence
+and it is total rather than partial.
+
+**Five candidate gaps, held loosely:** identity is one bit deep (colour only);
+nothing accumulates for the viewer; the camera never moves; the history is
+announced but never kept; and watching a world to its end is unrewarded.
+
+**§7 is a research brief rather than a review request.** Codex is asked to search
+independently and to treat §§3–5 as claims to test — explicitly including
+whether the zero-agency constraint is a feature or a mistake. Corroboration is
+the less useful outcome.
+
+**Could not verify:** everything about the neighbours. My own research is
+running in parallel and will be folded in; until then the comparables are named
+from memory and flagged as such.
+
+**Next:** Codex's research, then a second pass that merges both.
