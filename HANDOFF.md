@@ -2044,3 +2044,70 @@ last ended in `world_empire` — five seeds in a row. That may be a scoring bias
 `resolveWorldEnding`. Filed separately.
 
 **Could not verify:** whether anyone wants to send one.
+
+---
+
+## The ending was decided by an unbounded counter — claude — 2026-08-24
+
+Closes #32. `src/endings.ts`, plus one debug handle in `src/main.ts`.
+
+**Measured first.** A 30-seed headless sweep: **30 of 30 worlds ended
+`world_empire`**, across all six world forms. Seven endings, seven epitaph
+variants, and the record card's whole premise, resting on an outcome that never
+varied.
+
+**The cause was structural, not a bad coefficient.** The scoring table mixed
+bounded *shares* — fractions of the map, 0–1, worth ~2 points after weighting —
+with *counts* that accumulate over a 10–17 minute world. Measured:
+
+| counter | observed range | old term |
+| --- | --- | --- |
+| conquests | 5,000–17,240 | ×0.025 → **up to 431** |
+| volcanoes | 1–8 | ×1.7 → up to 13.6 |
+| died | 18–37 | ×0.12 |
+
+Counts always won, so the ending was decided by whichever counter grew fastest
+rather than by what the world became. The clearest evidence: one world had
+`living = 0` and `dominantShare = 0` — everybody dead, nobody dominant — and
+still scored **252** for *"one banner reached every shore."*
+
+**Capping one term does not fix it.** I capped conquests and the landslide simply
+moved: `world_empire` 30/30 → **`ash` 27/30**, now riding volcanoes. Every count
+is now saturated against a ceiling before its weight applies.
+
+**Two other fixes:**
+- `world_empire` is disqualified outright when `living === 0`.
+- **Three endings were unreachable, and that was my regression.**
+  `SHIPPED_APOCALYPSES` from #14 gated *titles* on their cause having a staged
+  act 3, so `drowned`, `long_winter` and `ash` became impossible — a world that
+  flooded could never be called The Drowned World. A cause still needs its
+  sequence; a title does not.
+
+**Result, 36 seeds:** garden 50% · world_empire 19% · exodus 19% ·
+long_winter 8% · ash 3% · 0 errors. From one ending to five.
+
+`drowned` and `rewilded` did not appear in this sample and remain rare **by
+construction** — `rewilded` needs total extinction (it did win, at 6.5, in a
+measured world with `living = 0`), `drowned` needs three or more floods on a
+water-heavy map. That is defensible; whether garden at 50% is, is a taste call.
+
+**`scoreEndings` and `measure` are now exported**, with an `__endingScores()`
+handle returning all seven raw scores. Reading the winner alone could never have
+diagnosed this; the margins were the whole story.
+
+**A process failure worth recording, because it is the third instance.** A Python
+edit's `assert` failed — its search text did not include comment lines my own
+previous edit had inserted — and because the shell chained with `;` rather than
+`&&`, the build and a 30-seed sweep ran on unchanged code. I then reported the
+identical result as "the fix didn't work" rather than "the fix isn't there". Now:
+anchor substitutions one line at a time, `grep` the **source** to confirm before
+building, and chain with `&&`. Note the bundle is minified, so grepping `dist`
+for an identifier proves nothing.
+
+**Spotted, not done:** **no world has ever built a wonder.** `wonders = 0` in
+every instrumented world, which is why every record card reads *"nothing
+monumental"*. The gate needs `stable` **and** ≥160 tiles **and** `fortune > 0.12`
+**and** a 0.00015/tick roll to coincide. Filed separately.
+
+**Could not verify:** whether the resulting distribution *feels* right. Only
+watching does that.

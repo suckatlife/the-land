@@ -25,7 +25,9 @@ export type ApocalypseKind =
 // the cause is chosen first and the title second — a single-valued map in the
 // other direction would leave three cards unreachable.
 export const APOCALYPSE_ENDINGS: Record<ApocalypseKind, WorldEndingKind[]> = {
-  quiet:   ['rewilded', 'garden', 'exodus', 'world_empire'],
+  quiet:   ['rewilded', 'garden', 'exodus', 'world_empire',
+            // Reachable without a staged act 3; see SHIPPED_APOCALYPSES.
+            'drowned', 'long_winter', 'ash'],
   impact:  ['ash'],
   ashfall: ['ash'],
   deluge:  ['drowned'],
@@ -35,6 +37,17 @@ export const APOCALYPSE_ENDINGS: Record<ApocalypseKind, WorldEndingKind[]> = {
 
 // A cause is selectable only once its sequence exists, so a committed cause
 // always has something to run. Phase 1 ships the shape, not a disaster.
+//
+// This had a consequence nobody noticed until #32: because `quiet` reaches only
+// four of the seven titles, `drowned`, `long_winter` and `ash` became
+// UNREACHABLE the moment this gate shipped — a world that flooded could never be
+// called The Drowned World again. That is a regression, not a design.
+//
+// Fixed by separating the two things the gate was conflating. A cause still may
+// not be committed unless its sequence exists, but a *title* does not need a
+// bespoke act 3 to be earned: every ending already has a card, an epitaph and
+// the omen-and-silence shape. Disaster titles are therefore reachable through
+// `quiet` until their own sequences ship, at which point they move.
 export const SHIPPED_APOCALYPSES: ApocalypseKind[] = ['quiet'];
 
 export interface WorldEndingProfile {
@@ -231,7 +244,7 @@ interface EndingMetrics {
 // One pass over the map. Called twice in a world's life — once at the commit
 // tick to choose the ending, once at the true end to describe it — and the two
 // answers are expected to differ, because the ending happens in between.
-function measure(world: SimWorld, biomes: Biome[][], history: WorldHistory): EndingMetrics {
+export function measure(world: SimWorld, biomes: Biome[][], history: WorldHistory): EndingMetrics {
   let built = 0;
   let ruins = 0;
   let wild = 0;
@@ -274,22 +287,46 @@ function measure(world: SimWorld, biomes: Biome[][], history: WorldHistory): End
 
 // Which *title* fits the world. Unchanged scoring, extracted so the commit and
 // the final resolution cannot drift apart.
-function scoreEndings(
+// Exported for the balance instrument: #32 found the ending was decided by
+// whichever unbounded counter grew fastest, and that was only diagnosable by
+// reading the raw scores rather than the winner.
+export function scoreEndings(
   world: SimWorld,
   biomes: Biome[][],
   history: WorldHistory,
   fate: WorldFate,
   m: EndingMetrics,
 ): Record<WorldEndingKind, number> {
+  // Every term below is bounded to roughly 0-5, and that is the whole point.
+  //
+  // The original table mixed *counts* with *shares*. Shares are fractions of the
+  // map and cannot exceed 1; counts accumulate over a 10-17 minute world and
+  // reach the thousands. Measured over 30 seeds: conquests 5,000-12,000,
+  // volcanoes 1-8, deaths 18-37 — against share terms topping out near 2. Counts
+  // therefore always won, and the ending was decided by whichever counter grew
+  // fastest rather than by what the world became. It was world_empire 30/30 on
+  // conquests; capping that alone merely handed the landslide to ash on
+  // volcanoes, 27/30. Each count is now saturated against a plausible ceiling
+  // before its weight is applied.
+  const sat = (n: number, ceiling: number) => Math.min(1, n / ceiling);
   const scores: Record<WorldEndingKind, number> = {
-    drowned: history.floods * 1.8 + m.waterGain * 28 + (waterFraction(biomes) > 0.48 ? 1.2 : 0),
-    long_winter: world.iceExtent * 7 + world.iceMax * 0.8 + (m.builtShare < 0.16 ? 0.8 : 0),
-    ash: history.volcanoes * 1.7 + history.asteroids * 1.15 + history.severeCatastrophes * 1.1 + m.ruinShare * 3,
-    rewilded: m.wildShare * 2.8 + m.ruinShare * 2 + (m.living === 0 ? 4 : 0) + history.died * 0.12,
-    world_empire: m.dominantShare * 5 + (m.living === 1 ? 2.6 : 0) + history.conquests * 0.025 + (m.eraValue >= 3 ? 0.8 : 0),
-    exodus: (m.era === 'post' ? 4.2 : 0) + Math.min(2, m.cities / 8) + (m.living > 0 ? 0.6 : 0),
-    garden: Math.min(2.4, m.living * 0.42) + m.builtShare * 2.5 + (1 - m.ruinShare) * 1.3
-      + (m.eraValue >= 4 ? 1.1 : 0) - history.severeCatastrophes * 0.7,
+    drowned: sat(history.floods, 3) * 3.4 + Math.min(1, m.waterGain * 25) * 2.5
+      + (waterFraction(biomes) > 0.48 ? 1.2 : 0),
+    long_winter: world.iceExtent * 3 + world.iceMax * 3.4 + (m.builtShare < 0.16 ? 0.8 : 0),
+    ash: sat(history.volcanoes, 6) * 2.2 + sat(history.asteroids, 2) * 1.5
+      + sat(history.severeCatastrophes, 3) * 1.2 + m.ruinShare * 3,
+    rewilded: m.wildShare * 2.8 + m.ruinShare * 2 + (m.living === 0 ? 4 : 0)
+      + sat(history.died, 30) * 1.5,
+    // conquests is counted per captured TILE, so a 10-17 minute world reaches
+    // the thousands — 17,240 in one measured seed. At 0.025 apiece that was 431
+    // points against a table where every other term is 0-5, so this ending won
+    // 30 of 30 seeds. Capped, and rescaled so it takes a genuinely warlike world
+    // to earn the full value rather than any world at all.
+    world_empire: m.dominantShare * 5 + (m.living === 1 ? 2.6 : 0)
+      + sat(history.conquests, 2500) * 1.2 + (m.eraValue >= 3 ? 0.8 : 0),
+    exodus: (m.era === 'post' ? 2.8 : 0) + Math.min(2, m.cities / 8) + (m.living > 0 ? 0.6 : 0),
+    garden: Math.min(1.8, m.living * 0.35) + m.builtShare * 2.5 + (1 - m.ruinShare) * 0.8
+      + (m.eraValue >= 4 ? 1.1 : 0) - sat(history.severeCatastrophes, 3) * 1.4,
   };
 
   // The fate is a light thumb on the scale, never strong enough to turn an
@@ -297,6 +334,10 @@ function scoreEndings(
   scores[fate.affinity] += 1.15;
   if (m.eraValue < 5) scores.exodus -= 1.4;
   if (m.dominantShare < 0.46 || m.built < 100) scores.world_empire -= 1.6;
+  // An empire with nobody in it is not one. A measured world with living === 0
+  // and dominantShare === 0 was still titled "one banner reached every shore",
+  // on conquest count alone.
+  if (m.living === 0) scores.world_empire = -Infinity;
   if (history.floods === 0 && m.waterGain < 0.015) scores.drowned -= 1.2;
   if (history.volcanoes === 0 && history.asteroids === 0) scores.ash -= 1.0;
   if (m.living >= 3 && m.builtShare > 0.18) scores.rewilded -= 1.2;
