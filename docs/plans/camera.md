@@ -83,11 +83,34 @@ ground: space elevators and rocket launches drawn in screen space, the
 inspector's hit-testing, and — easy to miss — **narration anchors**
 (`main.ts:792`), which point at the map.
 
-**The good news is that it is one choke point.** `tileToSky` and
+**For the live projections it is one choke point.** `tileToSky` and
 `worldPointToSky` both go through `toTex`, and there are **23 call sites**
 between them. Adding the camera offset inside `toTex` fixes all of them at once;
-missing it breaks all of them at once, silently, in a way that only shows up as
-things floating in the wrong place. This belongs in phase 1, not as a follow-up.
+missing it breaks all of them at once, silently, as things floating in the wrong
+place.
+
+**But hit-testing is cached, and `toTex` alone does not reach it.**
+`rebuildInspectorProjection()` (`main.ts:8185`) projects **every tile — 9,216 of
+them —** into screen space once and refreshes only on resize. `inspectWorldAt()`
+then searches that cache. With a moving camera the drawing moves and the
+hit-testing does not, so the field guide would identify whatever *used* to be
+under the pointer.
+
+Naive per-frame rebuilding is not the answer either: that is 9,216 projections
+every frame, in the frame this project is already fill-bound in. Three options:
+
+- **Throttle the rebuild** — every N frames. Simple; leaves hit-testing slightly
+  stale, which for a passive inspector is probably imperceptible.
+- **Project on demand** — reproject only candidate tiles at query time, since
+  queries happen on pointer move rather than per frame.
+- **Cache in texture space instead of screen space — cheapest if it works.**
+  A camera pan is a uniform translation *in texture space*, so a texture-space
+  cache stays valid under a subtraction. The catch is that `atmos.project` (the
+  curvature) is **non-linear**, so this requires inverting it once per query
+  rather than projecting 9,216 times. **Whether the curvature is cheaply
+  invertible is a prototype question, not a known.**
+
+This belongs in phase 1 alongside the `toTex` change, not as a follow-up.
 
 ## 4. Cost — the unusual part
 
