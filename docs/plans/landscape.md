@@ -142,10 +142,27 @@ pending* instead.
 
 ## 5. The gaps, now evidenced rather than asserted
 
-**a. Identity is one bit deep.** Two civs differ by colour and nothing else.
-Matthews et al. on glanceable displays: pick a recognisable feature and
-**exaggerate it** — naturalistic encoding reads as noise at a glance. And keep
-it constant across eras, or the viewer re-learns every era. [V]
+**a. Identity is one bit deep.** Two civs differ by colour and nothing else —
+verified: a `Civ` varies only by `constitution`, `fortune` and `maxSize`, three
+scalars, with **no archetypes or traits at all**. Matthews et al. on glanceable
+displays: pick a recognisable feature and **exaggerate it** — naturalistic
+encoding reads as noise at a glance. And keep it constant across eras, or the
+viewer re-learns every era. [V]
+
+**Independently corroborated.** Asked for ideas without access to this analysis,
+Codex ranked civilisation identity **first** as well, and added a refinement
+worth keeping: *traits must influence simulation behaviour rather than merely
+produce text.* That is Mark Johnson's chains-of-meaning arrived at from a
+different direction. Two independent paths reaching the same gap is the
+strongest evidence in this document.
+
+**And it is cheaper than it looks, because the pattern already exists at world
+scale.** `FORM_CIV` in `sim.ts` already bends civilisation behaviour by the
+world's geography, under the comment *"Geography as culture. An archipelago is a
+world of many small seafaring peoples; a continent is a world of a few large
+land empires."* Six world forms and seven temperaments already vary a world's
+character. **Civ-level archetypes are an extension of a shipped idea, not a new
+system** — the same move applied one level down.
 
 **b. The history is announced but never kept.** 23 event kinds fire and scroll
 past in a log that turns over every 9.5 seconds. James Ryan's *Curating

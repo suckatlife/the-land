@@ -129,6 +129,26 @@ more as information than as money.
 **Sponsorship — possible, premature.** A single quiet credit would not damage
 anything, but it needs an audience first. Park it.
 
+**A commercial display licence — the best idea neither this plan nor the
+research produced.** Proposed by Codex: cafés, hotels, galleries, offices and
+streamers pay roughly **$19–49** for licensed public display, with clean chrome
+and scheduled worlds.
+
+It is worth taking seriously for three reasons. The margin is near-total, since
+it sells permission and a small amount of presentation rather than a product.
+**It compromises nothing** — no upsell, no nag, nothing inside the frame, so §3's
+calm test is untouched. And it fits the positioning better than anything else
+here: a thing that belongs on a wall in a room where people are doing something
+else is exactly what an ambient work is *for*, and it is the one revenue line
+that treats the piece as art rather than as software.
+
+The obvious objection is that the MIT licence means anyone could run it on a
+wall for free. True — and mostly irrelevant. Businesses buy licences for
+clarity and support, not because they are technically prevented from doing
+otherwise. What would need building is small: a display mode with the chrome
+gone, worlds scheduled rather than rerolled by hand, and something a venue can
+point at when asked whether they are allowed.
+
 **On the MIT licence and forking:** the source is MIT, so anyone may host their
 own copy. This is not worth mitigating. Nobody forks a project with no audience,
 and if it acquires one, the assets are the domain, the name, and the fact that

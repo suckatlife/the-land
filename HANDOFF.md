@@ -1794,3 +1794,48 @@ shippable on its own. It may still be, but only once one of the two scaling
 paths is shown to work.
 
 **Next:** prototype the zoom path before anything else in this plan is scheduled.
+
+---
+
+## Codex's independent ideas, assessed — claude — 2026-08-24
+
+Docs only. Lawrence asked Codex for improvement ideas without giving it this
+analysis, then asked what I made of them.
+
+**The headline is the convergence.** Codex ranked **civilisation identity first**
+and **consequential rare events second** — the same order this repository's
+research reached from an entirely different direction. Two independent paths
+landing on the same gap is the strongest evidence either process has produced,
+and it is now recorded in `landscape.md` §5a.
+
+Codex's refinement is better than mine and is kept: **traits must influence
+simulation behaviour rather than merely produce text** — Mark Johnson's
+chains-of-meaning, arrived at without the citation.
+
+**And the work is smaller than either of us estimated.** `FORM_CIV` already bends
+civilisation behaviour by world geography, under a comment that literally reads
+*"Geography as culture."* Civ-level archetypes extend a shipped pattern one level
+down rather than introducing a system. Verified alongside it: a `Civ` varies only
+by `constitution`, `fortune` and `maxSize` — **no archetypes or traits exist.**
+
+**Also taken: a commercial display licence** (cafés, hotels, galleries, ~$19–49),
+which neither this plan nor the research had produced. Near-total margin, nothing
+added inside the frame, and it treats the piece as art rather than software.
+
+**Three of its proposals were mis-scoped because it cannot see the repository**,
+and that is recorded rather than silently corrected: era/crisis structure is
+largely built (six eras, a climbing floor, eras inherited from ruins, ice ages,
+three-stage omens, and the four-act ending shipped this week), so the real job is
+making transitions *legible* rather than building structure; theme packs
+duplicate `rollCharacter`'s existing 7 temperaments × 6 world forms, which is the
+Line Rider failure of bolting product onto a toy; and its share-data reasoning
+assumes determinism that #25 shows is not currently kept.
+
+**One proposal pushed back on, on evidence:** mid-run influence powers. The
+research found WorldBox players use god powers as a **boredom valve**, and our
+scheduled apocalypse is that valve automated. Bless/Tempest/Seed hands the
+viewer a way to manufacture events again. Setup-shaped agency survives this;
+mid-run powers are the version the evidence warns about, and the decision is
+gated behind #25.
+
+**Next:** civilisation archetypes as the first build (#26).
