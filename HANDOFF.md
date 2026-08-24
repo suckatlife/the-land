@@ -1564,3 +1564,104 @@ so its FPS says nothing about a phone. Still needs Lawrence's hardware.
 that makes the world legible and touch has no path to it. And the portrait
 framing shows a fragment of coastline rather than a world, which undercuts the
 "glance at it" pitch. Both are design calls.
+
+---
+
+## Plan — the landscape comparison — claude — 2026-08-23
+
+Proposal and research brief, no code. `docs/plans/landscape.md`.
+
+**Why:** the named-lives plan (#22) reasoned from a single comparable — WorldBox
+— and Lawrence's read was that a named person may not suit a passive
+screensaver. That is #22's own first open question answered, and it exposed the
+real problem: **one neighbour is not a landscape.** #22 is parked, not closed;
+the observation behind it (identity is one bit deep) survives even if
+personhood is the wrong answer to it.
+
+**The framing the document argues for**, and the part most worth keeping: two
+axes, agency and simulation depth. The Land is **zero agency, high depth**, which
+is a thin corner — most high-depth simulations are games, and most zero-agency
+software is shallow motion. So the productive question is not "what does WorldBox
+have" but **"which pleasures of a deep simulation survive the removal of all
+agency, and which are pleasures *of* agency wearing a simulation's clothes?"** A
+feature can be excellent in WorldBox and worthless here because its payoff was
+"I did that."
+
+**Stated precisely, from the code:** 23 event kinds, 5 catastrophes, 7 endings,
+96×96, 10–17 minutes, ~13.7k lines. Eight controls, **none of which affect what
+happens** — they govern playback and the window. Rerolling is the only influence
+and it is total rather than partial.
+
+**Five candidate gaps, held loosely:** identity is one bit deep (colour only);
+nothing accumulates for the viewer; the camera never moves; the history is
+announced but never kept; and watching a world to its end is unrewarded.
+
+**§7 is a research brief rather than a review request.** Codex is asked to search
+independently and to treat §§3–5 as claims to test — explicitly including
+whether the zero-agency constraint is a feature or a mistake. Corroboration is
+the less useful outcome.
+
+**Second pass: research folded in, and it changed the document.** Five findings
+worth carrying:
+
+- **WorldBox's failure mode is the most useful result.** Its negative reviews
+  cluster on "you've seen everything after half an hour", and runs *"almost
+  always end with a boredom-killing nuclear bomb"*. **The nuke is a boredom
+  valve — the player manufacturing an event because watching ran out.** Our
+  scheduled apocalypse is that valve, automated, which makes the endings work a
+  genuine advantage over our closest cousin rather than a nicety.
+- **Civ's most-mourned removed feature is a non-interactive timelapse** that
+  players rebuilt as a mod. An intensely interactive game misses the part with
+  no interaction in it.
+- **Kaplan's soft vs hard fascination** replaced my two-axis framing with a
+  better test: *can a viewer think about something else while watching?* Games
+  are standardly classed as hard fascination and therefore non-restorative; the
+  no-score/no-agency constraints are what keep this on the soft side.
+- **You cannot curate seeds, so watchability is set by the worst worlds** — and
+  the headless fast-forward already exists to hunt degenerate ones.
+- **Eno's *On Land* liner notes from 1982** are almost verbatim this project's
+  thesis, and argue operationally against a figure/ground split in the
+  rendering.
+
+**A correction to advice I had already given:** I recommended itch.io with a tip
+jar as the first commercial move. itch **cannot sell a browser build** — HTML5
+titles take donations only, by their own documentation. That needs fixing in
+`docs/plans/shipping.md` (#21) too.
+
+**Also: competitors now exist.** IMAGINERY (browser civ sim, "you don't manage
+anything", deterministic seeds, documentary camera), GODSIM (persistent 24/7
+world, free to watch, **pay to drop your own civ**), AEON. None has traction —
+which validates the form and warns that the form is not a moat.
+
+**Lawrence's direction, mid-draft: agency is optional.** New §11 works it
+through, and the research is specific: supportive in three places (Townscaper is
+a goalless toy *with* agency at 95%; soft fascination is about attention being
+demanded, not input being possible; GODSIM already ships watch-free/pay-to-
+participate) with one sharp warning — **agency is how WorldBox players kill
+their own boredom, and it must not be allowed to replace the apocalypse.** The
+document now separates *camera agency* (nearly free, solves the framing problem,
+probably the best next feature) from *world agency* (should be setup-shaped —
+gardener, not god — which keeps us inside Björk & Juul's "setup-only" category).
+
+**Third pass closed three review findings, and one of them turned out to be a
+product bug rather than a documentation error.** Codex challenged the line "a
+seed reproduces a world exactly", which four documents and the share button had
+been leaning on. It is false: `CLAUDE.md`'s invariant covers `sim.ts`, but the
+**renderer writes to the sim** — `maybeOutbreak()` picks a plague with two
+unseeded `Math.random()` calls and `plagueRuin()` then rewrites
+`simWorld.tiles`. Six renderer systems do this. **Two people opening the same
+link get different histories.** Filed as #25 with the two honest options: extend
+the seeded stream into the renderer's world-mutating systems, or narrow the
+promise the share button makes.
+
+Also corrected: **Boatmurdered was the wrong evidence** for agency-free
+storytelling — it is a succession fortress, players actively taking turns, so it
+is emphatically agency-*full*. The claim survives on narrower ground (worldgen
+and legends are non-interactive by construction) but the thing direction 1 rests
+on — whether legends is loved or merely admired — remains unverified. And
+"nothing accumulates for the viewer" was overstated: the archive already keeps
+ten worlds with epitaphs. The real gap is event-level history and cross-world
+continuity.
+
+**Next:** Lawrence's read; Codex's independent research once a Codex cloud
+environment exists for the repo.
