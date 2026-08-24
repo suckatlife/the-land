@@ -1601,8 +1601,47 @@ independently and to treat §§3–5 as claims to test — explicitly including
 whether the zero-agency constraint is a feature or a mistake. Corroboration is
 the less useful outcome.
 
-**Could not verify:** everything about the neighbours. My own research is
-running in parallel and will be folded in; until then the comparables are named
-from memory and flagged as such.
+**Second pass: research folded in, and it changed the document.** Five findings
+worth carrying:
 
-**Next:** Codex's research, then a second pass that merges both.
+- **WorldBox's failure mode is the most useful result.** Its negative reviews
+  cluster on "you've seen everything after half an hour", and runs *"almost
+  always end with a boredom-killing nuclear bomb"*. **The nuke is a boredom
+  valve — the player manufacturing an event because watching ran out.** Our
+  scheduled apocalypse is that valve, automated, which makes the endings work a
+  genuine advantage over our closest cousin rather than a nicety.
+- **Civ's most-mourned removed feature is a non-interactive timelapse** that
+  players rebuilt as a mod. An intensely interactive game misses the part with
+  no interaction in it.
+- **Kaplan's soft vs hard fascination** replaced my two-axis framing with a
+  better test: *can a viewer think about something else while watching?* Games
+  are standardly classed as hard fascination and therefore non-restorative; the
+  no-score/no-agency constraints are what keep this on the soft side.
+- **You cannot curate seeds, so watchability is set by the worst worlds** — and
+  the headless fast-forward already exists to hunt degenerate ones.
+- **Eno's *On Land* liner notes from 1982** are almost verbatim this project's
+  thesis, and argue operationally against a figure/ground split in the
+  rendering.
+
+**A correction to advice I had already given:** I recommended itch.io with a tip
+jar as the first commercial move. itch **cannot sell a browser build** — HTML5
+titles take donations only, by their own documentation. That needs fixing in
+`docs/plans/shipping.md` (#21) too.
+
+**Also: competitors now exist.** IMAGINERY (browser civ sim, "you don't manage
+anything", deterministic seeds, documentary camera), GODSIM (persistent 24/7
+world, free to watch, **pay to drop your own civ**), AEON. None has traction —
+which validates the form and warns that the form is not a moat.
+
+**Lawrence's direction, mid-draft: agency is optional.** New §11 works it
+through, and the research is specific: supportive in three places (Townscaper is
+a goalless toy *with* agency at 95%; soft fascination is about attention being
+demanded, not input being possible; GODSIM already ships watch-free/pay-to-
+participate) with one sharp warning — **agency is how WorldBox players kill
+their own boredom, and it must not be allowed to replace the apocalypse.** The
+document now separates *camera agency* (nearly free, solves the framing problem,
+probably the best next feature) from *world agency* (should be setup-shaped —
+gardener, not god — which keeps us inside Björk & Juul's "setup-only" category).
+
+**Next:** Lawrence's read; Codex's independent research once a Codex cloud
+environment exists for the repo.
