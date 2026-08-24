@@ -1643,5 +1643,25 @@ document now separates *camera agency* (nearly free, solves the framing problem,
 probably the best next feature) from *world agency* (should be setup-shaped —
 gardener, not god — which keeps us inside Björk & Juul's "setup-only" category).
 
+**Third pass closed three review findings, and one of them turned out to be a
+product bug rather than a documentation error.** Codex challenged the line "a
+seed reproduces a world exactly", which four documents and the share button had
+been leaning on. It is false: `CLAUDE.md`'s invariant covers `sim.ts`, but the
+**renderer writes to the sim** — `maybeOutbreak()` picks a plague with two
+unseeded `Math.random()` calls and `plagueRuin()` then rewrites
+`simWorld.tiles`. Six renderer systems do this. **Two people opening the same
+link get different histories.** Filed as #25 with the two honest options: extend
+the seeded stream into the renderer's world-mutating systems, or narrow the
+promise the share button makes.
+
+Also corrected: **Boatmurdered was the wrong evidence** for agency-free
+storytelling — it is a succession fortress, players actively taking turns, so it
+is emphatically agency-*full*. The claim survives on narrower ground (worldgen
+and legends are non-interactive by construction) but the thing direction 1 rests
+on — whether legends is loved or merely admired — remains unverified. And
+"nothing accumulates for the viewer" was overstated: the archive already keeps
+ten worlds with epitaphs. The real gap is event-level history and cross-world
+continuity.
+
 **Next:** Lawrence's read; Codex's independent research once a Codex cloud
 environment exists for the repo.
