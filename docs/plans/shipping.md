@@ -101,6 +101,24 @@ A paid tier would mean *building something worse to have something to sell*. If
 one day a genuinely separable thing exists — a long-form export, a physical
 print of a world, an installation build — revisit then.
 
+**Correction, from the landscape research (#23): itch.io cannot sell this.**
+An earlier version of this plan, and my advice in conversation, proposed itch.io
+with pay-what-you-want as the first commercial move. itch's own documentation:
+*"all HTML5 games on itch.io are set up to only take payments as **donations**.
+If you'd like to sell access to your game you should set its 'Kind of Game' to
+Downloadable."* A browser build can be tipped, never sold. Browser-playable does
+convert **~37% of viewers into plays against ~6% for download-only** — a large
+attention win and a revenue loss at once. itch remains worth doing for
+*discovery and tips*; it is not a sales channel for this.
+
+Where things like this demonstrably sell is **Steam**, at **$3–8** — Townscaper
+$5.99, Wallpaper Engine $4.99, Kind Words $4.99, Mountain $0.99. The anchor
+fact: Dwarf Fortress earned **$15,635 in its last full donation month and
+$7,230,124 in its first Steam month**, same product, same audience, free version
+still live and not cannibalised. But note the other half: generic ambient product
+on Steam is a graveyard — **being ambient is not a market; being a specific thing
+is.** See `docs/plans/landscape.md` §8.
+
 **Donations / a tip jar — yes, and it mostly already exists.** `/support`
 already says *"The Land is currently free and does not sell anything."* Adding
 one unobtrusive line — a link, not a banner, not in the world — costs nothing
