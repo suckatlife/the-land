@@ -142,9 +142,17 @@ pending* instead.
 
 ## 5. The gaps, now evidenced rather than asserted
 
-**a. Identity is one bit deep.** Two civs differ by colour and nothing else —
-verified: a `Civ` varies only by `constitution`, `fortune` and `maxSize`, three
-scalars, with **no archetypes or traits at all**. Matthews et al. on glanceable
+**a. Identity is one bit deep** — though "one bit" understates what exists, and
+an earlier draft of this line was wrong to say a `Civ` varies only by three
+scalars. It also carries a rolled `phaseDuration`, a generated `name`, and an
+`era` **fixed at birth**, and era already drives visible treatment: city-light
+colour and density read differently for a medieval civ than an industrial one
+(`main.ts:3288`).
+
+**What is absent is archetype and trait** — nothing that makes one civ *behave*
+unlike another beyond the scalars, and nothing carried from its history. Any
+archetype design must extend that existing model rather than assume a blank
+slate. Matthews et al. on glanceable
 displays: pick a recognisable feature and **exaggerate it** — naturalistic
 encoding reads as noise at a glance. And keep it constant across eras, or the
 viewer re-learns every era. [V]
