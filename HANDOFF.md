@@ -2023,4 +2023,24 @@ Second: native share never touches the clipboard, but the button said *"copied"*
 regardless — sending the viewer to paste something that was not there. It now
 says *"shared"* for the native path.
 
+**Two more, both fair.** The record was up for only **3.75 real seconds at 4x
+and 1.875 at 8x** — act 4 is 15 *world*-seconds and `timeScale` compresses it, so
+the share button was barely reachable for anyone accelerating. The speed control
+now returns to **1x when act 4 opens**: the world is over, there is nothing left
+to accelerate through, and it matches skip, which already stops there. That
+required extracting `setTimeScale()`, since the click handler set the value, the
+label, the active class and the glitter mode inline — anything else changing
+speed would have left the button reading 8x.
+
+And the payload omitted the dateline the on-screen card shows, so a recipient
+got a strictly smaller card than the sender saw. *"Carries the whole record"* was
+overstated; it now carries `a` and `y`, and `/w/` renders them.
+
+**Verified:** 8x before the ending, **1x at it** with the label in sync; shared
+page shows *"The Future · 2,100 CE"*.
+
+**An observation, not investigated:** every test world across this PR and the
+last ended in `world_empire` — five seeds in a row. That may be a scoring bias in
+`resolveWorldEnding`. Filed separately.
+
 **Could not verify:** whether anyone wants to send one.

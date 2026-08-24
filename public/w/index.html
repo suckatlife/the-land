@@ -78,6 +78,9 @@
           el('h1', null, rec.n),
           el('p', 'lede', rec.t || '')
         );
+        if (rec.a || rec.y) {
+          main.append(el('p', 'quiet', [rec.a, rec.y].filter(Boolean).join(' · ')));
+        }
         if (rec.p) main.append(el('p', null, rec.p));
 
         // Facts arrive as [label, value] pairs so the page never has to guess

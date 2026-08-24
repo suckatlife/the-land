@@ -1883,6 +1883,11 @@ function endingCheckpoints(): boolean {
   // Act 4 applies to every ending, not only the ones with a staged act 3.
   if (committedEnding && simWorld.tick >= acts.silence) {
     beginSilence(simWorld);
+    // Act 4 is 15 WORLD-seconds, so at 8x it is under two real ones — long
+    // enough to miss entirely, let alone read or act on. The world is over;
+    // there is nothing left to accelerate through, so the speed control returns
+    // to 1x for the aftermath. Consistent with skip, which already stops here.
+    if (timeScale !== 1) setTimeScale(1);
     showWorldRecord();
   }
   if (simWorld.tick >= currentWorldFate.endTick) {
@@ -7239,6 +7244,10 @@ function showWorldRecord() {
       t: o.title,
       e: o.eyebrow,
       p: o.epitaph,
+      // The dateline the on-screen card shows. Omitting it meant a recipient
+      // got a strictly smaller card than the sender saw.
+      a: ERA_NAMES[dominantEra(simWorld)],
+      y: deepTimeYear(simWorld),
       m: factPairs,
       s: currentSeed,
     });
@@ -8170,12 +8179,17 @@ pauseControl.addEventListener('click', () => {
 });
 
 const SPEEDS = [1, 2, 4, 8];
-speedControl.addEventListener('click', () => {
-  timeScale = SPEEDS[(SPEEDS.indexOf(timeScale) + 1) % SPEEDS.length];
+// One place that changes the speed, so anything else setting it — the ending
+// returning to 1x for the aftermath — cannot leave the button reading 8x.
+function setTimeScale(next: number) {
+  timeScale = next;
   speedControl.textContent = `${timeScale}x`;
   speedControl.classList.toggle('is-active', timeScale !== 1);
   // Accelerated twinkle reads as flashing; hold both reflections at mean brightness.
   atmos.setGlitterSteady(timeScale >= 4);
+}
+speedControl.addEventListener('click', () => {
+  setTimeScale(SPEEDS[(SPEEDS.indexOf(timeScale) + 1) % SPEEDS.length]);
 });
 
 chronicleControl.addEventListener('click', () => {
