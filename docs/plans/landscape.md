@@ -16,16 +16,26 @@ reasoning from one neighbour. This widens the frame first.
 
 | | |
 | --- | --- |
-| world | 96×96 isometric, seeded, deterministic |
+| world | 96×96 isometric, seeded — **terrain and sim core are deterministic; complete runs are not** (#25) |
 | a world's life | 10–17 real minutes, then it ends and another begins |
 | what it can announce | **23 event kinds** — births, colonies, breakaways, conquests, plagues, wonders, migrations, rifts, land bridges, rallies, last flights, ice advance and retreat |
 | catastrophes / endings | 5 / 7 |
 | persistence | last 10 worlds archived locally with epitaph and stats |
 | distribution | web, PWA, offline-capable, free |
 
-**There is no agency over the world.** Eight controls — pause, speed, chronicle,
-archive, new world, share, stay awake, fullscreen — and **not one affects what
-happens.** Rerolling is the only influence and it is total rather than partial.
+**There is almost no agency over the world.** Eight controls — pause, speed,
+chronicle, archive, new world, share, stay awake, fullscreen — and none is *aimed*
+at the world: you cannot place, build, nudge or smite, and rerolling is the only
+deliberate influence, which is total rather than partial.
+
+**But "not one affects what happens" would be false**, and the reason matters.
+`timeScale` multiplies `worldSeconds`, which is handed once per *rendered frame*
+to unseeded, world-mutating systems like `updateFires` and `maybeOutbreak`
+(`main.ts:7350`). Changing speed therefore changes their thresholds and the
+points in history at which they fire — **the speed control alters what happens,
+not merely how fast you watch it.** That is a side effect of #25 rather than a
+design decision, and it is one more reason to settle #25 before building on the
+zero-agency framing.
 
 ## 2. The category has a name, and three literatures already describe it
 
