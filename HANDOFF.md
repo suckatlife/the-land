@@ -1864,3 +1864,97 @@ mid-run powers are the version the evidence warns about, and the decision is
 gated behind #25.
 
 **Next:** civilisation archetypes as the first build (#26).
+
+---
+
+## The world record, and a narrowed promise — claude — 2026-08-24
+
+Implements Lawrence's decision on #25: **a shared world is a record, not a
+seed.** `src/main.ts` only.
+
+**The consequence of the decision, taken honestly.** A seed reproduces terrain
+and the peoples who arise on it; it does **not** reproduce catastrophes, because
+six renderer systems decide those with unseeded `Math.random()` and write to
+`simWorld.tiles`. Rather than fix that, the share text now says so:
+*"the same land, the same peoples. What befalls them is anyone's guess."*
+That is the cheap path and, per the research, the better product — Eno's fixed
+renderings of a generative work reached 17M streams against ~5,000 installs for
+the generative app itself.
+
+**The card was already designed and never built.** `.world-epitaph` has eight
+CSS rules — `> p`, `h2`, `span`, an `.is-visible` transition — and **nothing in
+`main.ts` ever created that element.** Those three slots map exactly onto
+`ResolvedWorldEnding`'s `eyebrow`, `title` and `epitaph`, so this is finishing
+something the stylesheet had been waiting for.
+
+**Shown as act 4 opens**, so the record is read *over the world it describes*
+rather than over the next one — which is what the ending plan specified ("hold
+the aftermath, then the card, then black").
+
+**Three facts, chosen for surprise rather than completeness:** how many peoples
+there were, whether they left anything monumental, and whichever disaster
+actually defined the world. A world with none says *"no great disaster"*, which
+is a better line than a zero.
+
+**A bug caught in my own first version:** the card reported "1,400 years",
+invented from tick count — while the HUD had been showing a deep-time calendar
+running from 9,970 BCE. It now calls `deepTimeYear()`, the same function driving
+the clock, so the record cannot contradict what the viewer watched.
+
+**Verified** headless: card appears at tick 25650 against a silence opening at
+25634, becomes visible, exactly one instance, no duplicates across the turnover,
+no page errors. Reads: *"The Hidden Wilds — The World Empire … The Future ·
+2,100 CE · 21 peoples · nothing monumental · 7 eruptions."*
+
+**Four bugs found in review, all in code written an hour earlier:**
+
+- **`h.born` undercounts peoples by about half.** It increments only on
+  `civ_born`, but `seedInitialCivs()` emits no event and breakaways and refuges
+  emit their own kinds. The same seed reported **21 peoples** and actually had
+  **43**. Now counted from `simWorld.civs.size` — nothing removes civs, so the
+  map is every civilisation the world ever had.
+- **A plague-only world claimed "no great disaster".** `plague` is a
+  `CatastropheType` with no counter of its own, so it was missing from the
+  candidate list while `history.catastrophes` was non-zero. Derived as the
+  remainder of the four that do have counters.
+- **The era line recreated the contradiction it was written to remove.**
+  `deepTimeYear()` anchors to `dominantEra()`, so pairing it with
+  `o.highestEra` — the furthest era *any* civ reached — could print
+  *"The Future · 1,500 CE"*. Both fields now share one basis.
+- **The share copy still overpromised.** "The same peoples" is false: unseeded
+  plagues and terrain events remove owned tiles and alter settleable ground, so
+  seeded expansion, deaths and births diverge downstream too. Narrowed again, to
+  the land and the beginning only.
+
+**Re-verified** on two seeds: 43 and 25 peoples matching `civs.size` exactly,
+era and year agreeing (*"The Modern Age · 2,100 CE"*, *"The Age of Industry ·
+1,900 CE"*), no page errors.
+
+**And a fifth, which is the third appearance of one pattern:** state that
+outlives `resetSimOnly()`. The record survived a sim reset, hung over the new
+world, and its once-per-world guard then stopped that run showing its own. The
+same shape hit `committedEnding`/`endingOmenSpoken` and `__forceEnding` earlier
+this week. **`resetWorld()` and `resetSimOnly()` clear different sets of state,
+and nothing enforces that they agree** — worth a shared reset helper before a
+fourth instance.
+
+**Two more, and the first has a better fix than it sounded.** The skip loop is
+synchronous, so a skip crossing both the silence *and* `endTick` created the
+record and destroyed it at the turnover without the browser ever painting — the
+fast-forward path never showed an ending at all. **Skip now stops when act 4
+opens**, which is also just the better behaviour: it takes you *to* the ending
+rather than past it. Verified — a straight run of skips halts at tick 21699
+against a silence at 21669 and a turnover at 22119, card visible.
+
+The second was pre-existing and the record merely exposed it:
+`resetSimOnly()` never reset `currentWorldHistory`, so a fresh world would have
+claimed the previous run's wonders and disasters. Reset alongside the rest.
+
+**Could not verify:** whether it is *good* — whether a card over a dead world
+lands or intrudes on the silence. That is the preview's job. Also unexercised by
+data: the plague branch, since neither test world was plague-dominant. And both
+test seeds ended in `world_empire`, which may hint the ending scoring is biased —
+noted, not investigated.
+
+**Next:** a shareable record — a URL that shows someone the card without them
+watching for ten minutes — which is the half of this that actually travels.

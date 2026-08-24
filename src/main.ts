@@ -1881,7 +1881,10 @@ function endingCheckpoints(): boolean {
     pushNarration(ENDING_OMENS[committedEnding.ending], { priority: 'high' });
   }
   // Act 4 applies to every ending, not only the ones with a staged act 3.
-  if (committedEnding && simWorld.tick >= acts.silence) beginSilence(simWorld);
+  if (committedEnding && simWorld.tick >= acts.silence) {
+    beginSilence(simWorld);
+    showWorldRecord();
+  }
   if (simWorld.tick >= currentWorldFate.endTick) {
     beginWorldEnding();
     return true;
@@ -7041,6 +7044,7 @@ function resetWorld(newSeed: string, archiveEnding?: WorldEnding, outcome?: Reso
   currentWorldHistory = createWorldHistory(biomeMap);
   committedEnding = null;
   endingOmenSpoken = false;
+  clearWorldRecord();
   seedInitialCivs(simWorld, biomeMap, 1);
   syncSimWonders();
   (window as any).__sim = simWorld;
@@ -7080,6 +7084,15 @@ function resetSimOnly() {
   // previous run's title.
   committedEnding = null;
   endingOmenSpoken = false;
+  // Third time this class of bug has appeared: state that outlives
+  // resetSimOnly(). The record would otherwise hang over the reset world, and
+  // its once-per-world guard would stop that run ever showing its own.
+  clearWorldRecord();
+  // The history has to go with it. It was already surviving a sim reset before
+  // the record existed; the record is just the first thing to *display* the
+  // consequence, which would have been a fresh world claiming the previous
+  // run's wonders and disasters.
+  currentWorldHistory = createWorldHistory(biomeMap);
   seedInitialCivs(simWorld, biomeMap, 1);
   (window as any).__sim = simWorld;
   fadedDeadCivs.clear();
@@ -7135,6 +7148,70 @@ const BARS_REFRESH_FRAMES = 10;  // DOM rebuild for civ bar panel; ~6 Hz at 60fp
 // clock uses raw elapsed time so a world still lasts 10–17 real minutes on a
 // slow renderer, with this ceiling preventing a huge catch-up after suspension.
 const MAX_SIM_FRAME_MS = 1000;
+
+// The record. A world that ends leaves something to read: what it was called,
+// how it ended, and three facts about it. The `.world-epitaph` styles have
+// existed since before this was built — eyebrow, title, detail — and this fills
+// them. Shown as act 4 opens, so it is read over the world it describes rather
+// than over the next one.
+let worldRecordEl: HTMLElement | null = null;
+function showWorldRecord() {
+  if (worldRecordEl) return;   // once per world
+  const o = resolveWorldEnding(
+    simWorld, biomeMap, currentWorldHistory, currentWorldFate, committedEnding?.ending,
+  );
+  const h = currentWorldHistory;
+
+  // Three facts, chosen for surprise rather than completeness: how many peoples
+  // there were, what they left, and whichever of the world's disasters actually
+  // defined it. A world with no disasters says so.
+  //
+  // Peoples comes from the civ collection, not from history.born: that counter
+  // only increments on `civ_born`, while seedInitialCivs() emits no event at all
+  // and breakaways and refuges emit their own kinds — so it can report zero for
+  // a world that visibly had people. Nothing removes civs from the map, so its
+  // size is every civilisation the world ever had.
+  const peoples = simWorld.civs.size;
+  // Plague is a CatastropheType but has no counter of its own; the other four
+  // do, so the remainder is plagues. Without this a plague-only world claimed
+  // "no great disaster" while history.catastrophes was non-zero.
+  const plagues = Math.max(0, h.catastrophes - (h.floods + h.volcanoes + h.asteroids + h.earthquakes));
+  const worst = [
+    { n: h.floods, s: `${h.floods} great flood${h.floods === 1 ? '' : 's'}` },
+    { n: h.volcanoes, s: `${h.volcanoes} eruption${h.volcanoes === 1 ? '' : 's'}` },
+    { n: h.asteroids, s: `${h.asteroids} impact${h.asteroids === 1 ? '' : 's'}` },
+    { n: h.earthquakes, s: `${h.earthquakes} earthquake${h.earthquakes === 1 ? '' : 's'}` },
+    { n: plagues, s: `${plagues} plague${plagues === 1 ? '' : 's'}` },
+  ].sort((a, b) => b.n - a.n)[0];
+  const facts = [
+    `${peoples} peoples`,
+    h.wonders > 0 ? `${h.wonders} wonder${h.wonders === 1 ? '' : 's'}` : 'nothing monumental',
+    worst && worst.n > 0 ? worst.s : 'no great disaster',
+  ];
+
+  const el = document.createElement('section');
+  el.className = 'world-epitaph';
+  el.setAttribute('role', 'status');
+  const eyebrow = document.createElement('p');
+  eyebrow.textContent = o.eyebrow;
+  const title = document.createElement('h2');
+  title.textContent = `${currentWorldName} — ${o.title}`;
+  const detail = document.createElement('span');
+  // Both fields must share one era basis. deepTimeYear anchors its result to
+  // dominantEra(), so pairing it with o.highestEra — the furthest era any civ
+  // ever reached — can print "The Future · 1,500 CE", recreating exactly the
+  // contradiction this was meant to remove.
+  detail.textContent = `${o.epitaph}\n\n${ERA_NAMES[dominantEra(simWorld)]} · ${deepTimeYear(simWorld)} · ${facts.join(' · ')}`;
+  detail.style.whiteSpace = 'pre-line';
+  el.append(eyebrow, title, detail);
+  document.body.appendChild(el);
+  worldRecordEl = el;
+  requestAnimationFrame(() => el.classList.add('is-visible'));
+}
+function clearWorldRecord() {
+  worldRecordEl?.remove();
+  worldRecordEl = null;
+}
 
 function beginWorldEnding() {
   // The title was committed ~102 world-seconds ago so the ending could be
@@ -8076,7 +8153,12 @@ shareControl.addEventListener('click', async () => {
   url.searchParams.set('seed', currentSeed);
   const shareData = {
     title: `${currentWorldName} — The Land`,
-    text: `Watch ${currentWorldName} live and pass into history.`,
+    // Narrowed deliberately (#25), and narrowed again after review: a seed
+    // reproduces the land and the starting conditions. It does NOT reproduce the
+    // peoples either — the renderer's unseeded plagues and terrain events remove
+    // owned tiles and alter settleable ground, so seeded expansion, deaths and
+    // births all diverge downstream. Only the initial conditions are promised.
+    text: `${currentWorldName}: the same land, the same beginning. Everything after belongs to whoever is watching.`,
     url: url.toString(),
   };
   try {
@@ -8617,6 +8699,12 @@ document.getElementById('skip')!.addEventListener('click', () => {
     // The ending's boundaries live inside the skip as well; crossing one here
     // and only noticing on the next frame would bypass the whole sequence.
     if (endingCheckpoints()) break;
+    // And stop at act 4 rather than through it. This loop is synchronous, so a
+    // skip that crossed both the silence and endTick would create the record and
+    // then destroy it at the turnover without the browser ever painting — the
+    // fast-forward path would never show an ending at all. Stopping here is also
+    // simply the better behaviour: skip takes you *to* the ending, not past it.
+    if (simWorld.ending?.silent) break;
   }
   // Full redraw after skip — terrain may have mutated, so rebuild biome layer first.
   // Scars from skipped ticks weren't rendered; drop any stale ones.
