@@ -1599,6 +1599,20 @@ their own pools: the existing suffixes are settlement-shaped (`-burg`, `-shire`,
 lives per world at low priority, and **never during act 4**, since that silence
 took eleven systems to enforce.
 
+**Review found the reasoning for the load-bearing decision was incomplete.**
+Putting lives in the seeded sim makes the same lives *happen*; it does not make
+the same lines *appear*. `pushNarration` gates on `Date.now()` — deliberately, so
+that a repeated line is paced to a human reader rather than culled after 1.2
+real seconds at 8x — so two viewers of one seed can see different beats while a
+sim-only determinism test passes. New §3a states the honest guarantee: **the same
+seed produces the same lives and the same lines, but not at the same instants**,
+delivered by a world-time queue that re-offers a beat until it is accepted. The
+verification now tests the accepted-and-visible set, not just the sim.
+
+Also: phase 3 referenced `docs/plans/shipping.md`, which is not merged — it is
+PR #21 — so the reference dangled. Now says so, and says phase 3 should not
+start before that lands.
+
 **Could not verify:** whether any of it is moving, which is the only thing that
 matters. §12 has five open questions, the first of which asks directly whether
 §2's argument is a rationalisation.

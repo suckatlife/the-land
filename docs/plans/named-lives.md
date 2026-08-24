@@ -59,6 +59,36 @@ be reproducible in every respect except the only part that is about a person.
 shared world worth sharing, and it is what would let a life appear on an ending
 card or in a shareable artifact later.
 
+### 3a. But a seeded sim does not give you deterministic *narration*
+
+Option A makes the same lives happen. It does **not** make the same lines
+appear, and an earlier draft of this document quietly assumed it did.
+
+`pushNarration` gates on `Date.now()`: a line is dropped if any narration was
+accepted in the previous `NARRATION_GAP_MS.low` (6,000 wall-clock ms). That gate
+is wall-clock **on purpose** — it governs how often a *person* sees a repeated
+line, and at 8x a world-clock window would cull lines after 1.2 real seconds.
+So two viewers of one seed, on different hardware or at different speeds, can
+see a different subset of beats, or none at all for a given life — while the
+§9 determinism test passes, because it only checks the sim.
+
+Three ways out:
+
+- **Give person lines priority.** Rejected: §6 says anything real outranks a
+  person, and that ordering is thematically correct.
+- **Move the dedup window to world time for person lines only.** Rejected:
+  two clocks in one gate is the exact bug class this project spent a week
+  removing.
+- **Queue and retry — recommended.** A person's beats go into a small
+  world-time queue and are re-offered until `pushNarration` accepts them or
+  their life ends. Every viewer then sees the same *set* of lines; the exact
+  moment differs.
+
+**Which means the honest guarantee is: the same seed produces the same lives and
+the same lines, but not at the same instants.** That is worth stating in the
+share copy rather than implying frame-perfect replay, and §9 has to test the
+accepted-and-visible set, not just the sim.
+
 ## 4. The shape of a life
 
 Three options, increasing in cost and in payoff.
@@ -150,8 +180,11 @@ accepts an `anchor`, so a person's line can point at the place they lived.
 
 ## 9. Verification
 
-1. **Determinism** — same seed twice produces the same names, the same birth
-   ticks and the same deaths. This is the Turn 08 test with a new column.
+1. **Determinism, at both layers** — same seed twice produces the same names,
+   birth ticks and deaths *in the sim* (the Turn 08 test with a new column),
+   **and** the same set of lines actually accepted into the log. The second half
+   is the one §3a shows is not free; testing only the first would pass while
+   two viewers saw different worlds.
 2. **Budget** — across a full world, count person lines and assert 6–12, and
    assert none is `high` priority.
 3. **Silence** — no person line between the act-4 boundary and the turnover.
@@ -166,8 +199,11 @@ that matters and needs a person reading it on the preview.
   the vocabulary and proves the register before any state exists.
 - **Phase 2** — the three-beat life with the optional middle beat, anchored to
   existing events (§5).
-- **Phase 3** — a life on the ending card, which is where this meets the
-  artifact idea in `docs/plans/shipping.md`.
+- **Phase 3** — a life on the ending card, which is where this would meet the
+  shareable-artifact idea. **That plan is not merged yet** — it is
+  `docs/plans/shipping.md` on PR #21, so this reference dangles until that
+  lands. Phase 3 should not start before it does, and if #21 is rejected or
+  reshaped, phase 3 goes with it.
 
 ## 11. What this does not do
 
