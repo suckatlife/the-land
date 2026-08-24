@@ -1612,5 +1612,26 @@ judged before anything depends on it.
 **Could not verify:** whether any of it is pleasant, which is the whole feature.
 Six open questions, and the first — *how slow* — is where the entire risk lives.
 
-**Next:** review, then phase 1a alone if the speed question is unresolved; the
-viewport fit is worth shipping on its own.
+**Review then took phase 1a apart, correctly.** Three findings, and the third
+removed the plan's own escape hatch:
+
+- **The ocean apron.** `drawOceanApron()` draws exactly the `WORLD_CAPTURE`
+  rectangle and the RT clears outside it, so panning uncovers a transparent
+  strip — **sky or stars showing through inside the planet.** The rule is
+  broader than the haze sprite: capture-fixed layers must stay fixed while the
+  camera moves, and this plan does not yet have the list of which layers those
+  are.
+- **The projection contract must carry scale, not just offset**, since §7a needs
+  a zoom.
+- **`minFilter: linear` does not make zoom-out safe.** It governs sampling of
+  the *completed* render texture; scaling the `world` container before capture
+  rasterizes smaller into an unchanged RT and the minifier never runs. Scaling
+  `worldPlane` would invoke it but shrinks the curved planet against a
+  screen-anchored limb.
+
+**So there is no known-safe zoom path, and phase 1a is a prototype before it is
+a feature** — a direct correction to my claim that the viewport fit was
+shippable on its own. It may still be, but only once one of the two scaling
+paths is shown to work.
+
+**Next:** prototype the zoom path before anything else in this plan is scheduled.

@@ -61,8 +61,19 @@ is what looking at a different part of a planet should look like.
 belongs to the *horizon*, not to the land. It would slide around like a stain.
 
 It needs to be counter-offset by the camera, or reparented out of `world` and
-composited separately. This is exactly the kind of thing that would have been
-found three days into implementation instead.
+composited separately.
+
+**And it is not alone — the ocean apron is worse.** `drawOceanApron()`
+(`main.ts:1998`) draws exactly the `WORLD_CAPTURE` rectangle, and the RT render
+clears everything outside it. Pan the world and the apron moves with it,
+**uncovering a transparent strip along one texture edge — sky or stars showing
+through inside the planet.** Counter-offsetting the haze does not help.
+
+So the rule is broader than one sprite: **layers that are fixed to the capture
+rect must stay fixed while the camera moves.** Either keep them stationary, add
+enough overscan to cover the pan, or bound the camera so the uncovered region is
+never reached. Auditing which layers are capture-fixed and which are world-fixed
+is a phase 1 task, and this plan does not yet have that list.
 
 ## 3a. Every screen-space projection needs the camera offset
 
@@ -82,6 +93,13 @@ So during any nonzero pan, everything projected through it detaches from its
 ground: space elevators and rocket launches drawn in screen space, the
 inspector's hit-testing, and — easy to miss — **narration anchors**
 (`main.ts:792`), which point at the map.
+
+**The contract must carry the whole camera, not just the offset.** §7a requires
+a zoom-out, so the camera is a *scale and* a translation. If the scale is applied
+to the `world` container but `toTex` keeps using the fixed `captureScale`, the
+rendered tiles move to the new magnification while every overlay and cached hit
+point stays at the old one. Whatever transform the camera applies has to be the
+same transform the projection consumes.
 
 **For the live projections it is one choke point.** `tileToSky` and
 `worldPointToSky` both go through `toTex`, and there are **23 call sites**
@@ -126,11 +144,17 @@ camera is one of the few things on the roadmap that is free at the pixel level.*
 - **Zooming *in* magnifies** a fixed-resolution texture. `magFilter` is
   `nearest`, so it goes crunchy rather than blurry — arguably fine for pixel art,
   but a real limit. **Avoid.**
-- **Zooming *out* minifies**, and `minFilter` is already `linear` — chosen
-  deliberately so the texture squeezed toward the limb keeps a soft horizon. The
-  pipeline is *already built* for minification.
+- **Zooming *out*** is where an earlier draft of this plan was wrong. I claimed
+  `minFilter: linear` makes it safe. **It does not apply.** That filter governs
+  sampling of the *completed* render texture; scaling the `world` container
+  before capture rasterizes its children smaller **into an unchanged RT**, so the
+  minifier never runs. Scaling `worldPlane` *would* invoke it — but that shrinks
+  the already-curved planet against a limb anchored to the screen, which is the
+  §3 failure in another form.
 
-That distinction matters because §7 turns out to require it.
+**So there is no known-safe zoom path yet**, and §7a's portrait fit depends on
+one. That makes it the first thing to prototype rather than a detail to settle
+later — see §9.5.
 
 ## 5. Determinism
 
@@ -174,12 +198,15 @@ ever *crop* a different part of that; panning cannot make more of the map
 visible. An earlier draft of this plan prescribed pan-only in §4 and then asked
 phase 1 to "frame the world", which is a contradiction.
 
-**Resolved by §4's split: the portrait fit is a zoom *out*, which is the safe
-direction.** It minifies, which the pipeline is already built for. What still
-needs deciding is how the shrinking world relates to the **fixed limb** — the
-curvature and horizon are anchored to the screen, so a minified world either
-floats inside its own horizon or the curvature has to scale with it. That is a
-real unknown and probably the first thing to prototype.
+**And §4 shows the zoom-out path is not yet known-safe either.** Scaling the
+`world` container before capture bypasses the RT minifier entirely; scaling
+`worldPlane` invokes it but shrinks the curved planet against a screen-anchored
+limb. Both leave the same open question: how a smaller world relates to a **fixed
+horizon**.
+
+**So phase 1a is a prototype before it is a feature.** That is a change from an
+earlier draft, which called the viewport fit shippable on its own. It may still
+be — but only once one of the two scaling paths is shown to work.
 
 This alone is worth shipping and involves no motion at all.
 
