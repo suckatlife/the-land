@@ -321,7 +321,7 @@ expeditionLaunchCityRadius: 11,  // launch coast must be within this radius (× 
   // measured across 20 seeds at production fidelity (real lifespans, natural
   // wonders in play; scripts/wonder_gate.ts), exactly one world in twenty
   // ever built one. At 0.05 (~1.1σ, the top ~14% of a civ's luck) the same
-  // sweep builds 17 across 20 worlds: nine build none, none builds more
+  // sweep builds 20 across 20 worlds: eight build none, none builds more
   // than three. A golden-age event, not routine.
   wonderChance: 0.00015,
   wonderMinSize: 160,

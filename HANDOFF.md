@@ -2159,12 +2159,14 @@ measurement before tuning, and guessed the binding condition was
 
 `scripts/wonder_gate.ts` (new; runs the sim headlessly in Node via rolldown,
 replicating `generateWorldTerrain`'s land-target nudge) instrumented each gate
-condition independently across 20 seeds. Codex's review caught the first
-version simulating 30000-tick lives with no natural wonders in play; the
-harness now mirrors production — `worldFateForSeed` lifespans (58–97%, minus
-the ~3060-tick staged ending), seed-placed natural wonders and volcanoes fed
-back through `setWonderSites`/`setVolcanoes`. At that fidelity, ~3.1M
-civ-ticks:
+condition independently across 20 seeds. Codex's reviews caught the first
+version simulating 30000-tick lives with no natural wonders in play, and then
+the over-corrected ending cut; the harness now mirrors production —
+`worldFateForSeed` lifespans (58–97% of the cycle), seed-placed natural
+wonders and volcanoes fed back through `setWonderSites`/`setVolcanoes`, and
+ordinary life counted through the omen and onset acts (the wonder gate has no
+`!world.ending` guard), excluding only the unmaking and silence. At that
+fidelity, ~3.4M civ-ticks:
 
 - `stable`: ~41–49% of civ-ticks depending on window. Not binding.
 - `size >= 160`: healthy everywhere — every form's top civs clear it
@@ -2177,9 +2179,9 @@ civ-ticks:
 
 **Fix: `wonderMinFortune` 0.12 → 0.05** (~1.1σ, the top ~14% of a civ's
 luck). Chance and size untouched, per the issue's warning not to make wonders
-routine. The same 20 seeds at 0.05: **17 wonders — 9 worlds none, 6 one,
-4 two, 1 three.** (0.06 gave 13, with 12 worlds empty — judged a shade too
-scarce for the record card; 0.04 gave 13 of 20 worlds a wonder — routine.)
+routine. The same 20 seeds at 0.05, final window: **20 wonders — 8 worlds
+none, 7 one, 2 two, 3 three.** (0.06 gave 15 with 11 worlds empty — a shade
+too scarce for the record card; 0.04 tipped toward routine.)
 
 Also verified the never-exercised downstream path by reading it end to end:
 narration (`WONDER_TITLES` covers all six eras), ping, `drawWonders` build
