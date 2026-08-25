@@ -22,20 +22,25 @@ non-zero at the checkpoint. If it says stop, do not push. Instead comment with:
 
 Then stop. No further commits on that PR until Lawrence replies.
 
-**Lawrence resumes a checkpointed PR by commenting `@claude /continue`.** One
+**Lawrence resumes a checkpointed PR by commenting `@claude continue`.** One
 comment does both jobs: `@claude` wakes the workflow, and `/continue` is what
-`rounds.sh` reads as authorisation for another two rounds (`/continue 4` grants
+`rounds.sh` reads as authorisation for another two rounds (`@claude continue 4` grants
 four).
 
-**`/continue` must be paired with a task.** A woken runner has no memory of the
+**Never lead the instruction with a slash.** The marker used to be `/continue`,
+and Claude Code parses a leading `/word` as a slash command — so the request
+evaporated, the runner woke, ran three seconds and pushed nothing, twice.
+`@claude continue` avoids the collision and does both jobs in one phrase.
+
+**The instruction must still say what to continue.** A woken runner has no memory of the
 previous session — it reads the PR and nothing else. Either the builder's
 checkpoint comment already says what it would do next (which is why stating that
-is required), and `@claude /continue` means "do that"; or the resume comment
+is required), and `@claude continue` means "do that"; or the resume comment
 carries the instruction itself:
 
-> `@claude /continue — address Codex's outstanding findings, one pass, then stop.`
+> `@claude continue — address Codex's outstanding findings, one pass, then stop.`
 
-A bare `@claude /continue` on a PR with no stated next step wakes Claude, gets
+A bare `@claude continue` on a PR with no stated next step wakes Claude, gets
 "I'll analyze this and get back to you", and finishes in zero seconds having
 done nothing. Observed on PR #36.
 

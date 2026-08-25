@@ -105,7 +105,7 @@ description claims, and is the evidence real?*
    `scripts/loop/rounds.sh <pr>` before any push; the script exits non-zero at
    the checkpoint. A PR may have as many rounds as it needs — but Lawrence is
    the one who says so, by commenting **`/continue`** (or `/continue 4`) to
-   grant more. **`@claude /continue`** does both jobs in one comment: `@claude`
+   grant more. **`@claude continue`** does both jobs in one comment: `@claude`
    wakes the workflow, `/continue` authorises the rounds. Plain `/continue`
    grants rounds but wakes nothing. Nothing about this loop ends on its own: PR #36 ran five pushes
    and six reviews in forty-five minutes before anyone intervened.
@@ -301,5 +301,5 @@ secret — generate it with `claude setup-token`. That token authenticates with
 the **Pro/Max subscription**, so runs do not hit API billing.
 (`ANTHROPIC_API_KEY` also works and is billed separately.)
 
-This is what lets `@claude /continue` resume a checkpointed PR from a phone with
+This is what lets `@claude continue` resume a checkpointed PR from a phone with
 no app to open.
