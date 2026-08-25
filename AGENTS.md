@@ -22,8 +22,15 @@ non-zero at the checkpoint. If it says stop, do not push. Instead comment with:
 
 Then stop. No further commits on that PR until Lawrence replies.
 
-**Lawrence resumes it** by commenting `/continue` on the PR, which grants
-another two rounds. `/continue 4` grants four. The builder must **never write
+**Lawrence resumes a checkpointed PR by commenting `@claude /continue`.** One
+comment does both jobs: `@claude` wakes the workflow, and `/continue` is what
+`rounds.sh` reads as authorisation for another two rounds (`/continue 4` grants
+four).
+
+Plain `/continue` with no `@claude` grants the rounds but wakes nothing — it is
+permission without a trigger, and the PR sits there. That is a fine thing to do
+deliberately, when he means to start the turn from the Claude app himself, and a
+confusing thing to do by accident. The builder must **never write
 `/continue` itself** — Claude comments through Lawrence's GitHub account, so
 that marker is the only thing that distinguishes his authorisation from the
 builder's own summary.
