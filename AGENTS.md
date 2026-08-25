@@ -27,6 +27,18 @@ comment does both jobs: `@claude` wakes the workflow, and `/continue` is what
 `rounds.sh` reads as authorisation for another two rounds (`/continue 4` grants
 four).
 
+**`/continue` must be paired with a task.** A woken runner has no memory of the
+previous session — it reads the PR and nothing else. Either the builder's
+checkpoint comment already says what it would do next (which is why stating that
+is required), and `@claude /continue` means "do that"; or the resume comment
+carries the instruction itself:
+
+> `@claude /continue — address Codex's outstanding findings, one pass, then stop.`
+
+A bare `@claude /continue` on a PR with no stated next step wakes Claude, gets
+"I'll analyze this and get back to you", and finishes in zero seconds having
+done nothing. Observed on PR #36.
+
 Plain `/continue` with no `@claude` grants the rounds but wakes nothing — it is
 permission without a trigger, and the PR sits there. That is a fine thing to do
 deliberately, when he means to start the turn from the Claude app himself, and a

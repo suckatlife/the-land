@@ -16,7 +16,10 @@
 #   scripts/loop/rounds.sh 38
 set -uo pipefail
 PR="${1:?usage: rounds.sh <pr-number>}"
-REPO="${REPO:-suckatlife/the-land}"
+# Repo is detected from the checkout, so this script is portable between
+# projects. REPO=owner/name overrides it.
+REPO="${REPO:-$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null)}"
+if [ -z "$REPO" ]; then echo "Cannot determine repo. Set REPO=owner/name." >&2; exit 2; fi
 REVIEWER="${REVIEWER:-chatgpt-codex-connector[bot]}"
 DEFAULT_BUDGET="${ROUND_LIMIT:-2}"
 
