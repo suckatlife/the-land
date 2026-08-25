@@ -100,7 +100,15 @@ description claims, and is the evidence real?*
    is a thing to escalate, never a thing to report as done.
    Codex reads the whole diff, does **not** edit on the first pass, and reports:
    blocking defects / non-blocking concerns / ready or not.
-4. **Repair — once, and this step is deliberately manual.** If there are
+4. **Repair, then a checkpoint.** After **two review rounds** Claude stops and
+   asks rather than pushing again (`AGENTS.md` states it in full). It runs
+   `scripts/loop/rounds.sh <pr>` before any push; the script exits non-zero at
+   the checkpoint. A PR may have as many rounds as it needs — but Lawrence is
+   the one who says so, by commenting **`/continue`** (or `/continue 4`) to
+   grant more. Nothing about this loop ends on its own: PR #36 ran five pushes
+   and six reviews in forty-five minutes before anyone intervened.
+
+   **This step is also deliberately manual.** If there are
    blocking findings, Lawrence sends Claude one follow-up, scoped to those
    findings. No scope growth. If it needs a second repair pass, close it and
    re-brief; something was wrong with the task.
