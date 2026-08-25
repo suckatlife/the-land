@@ -25,7 +25,13 @@ const WONDER_RADIUS: Record<NaturalWonderKind, number> = {
   volcano: 5, crater_lake: 8, monolith: 7, rainbow_hills: 6, karst_spires: 6, salt_flat: 6,
   atoll: 6, canyon: 8, dune_sea: 9,
 };
-const ENDING_SEQUENCE_TICKS = Math.round((40 + 12 + 35 + 15) * 30);
+// The staged ending's acts, in ticks (main.ts ENDING_ACTS × 30/s). The wonder
+// gate has no `!world.ending` guard and civs stay alive through the omen and
+// onset acts, only fading during the unmaking — so ordinary life is counted
+// through onset. Excluding the unmaking undercounts slightly (a stable civ can
+// still build until its fade tick); the bias is conservative and small
+// against seed noise.
+const ENDING_TAIL_TICKS = Math.round((35 + 15) * 30);
 
 function terrainFor(seed: string) {
   const character = rollCharacter(seed);
@@ -66,8 +72,7 @@ for (const seed of seeds) {
   const nat = placeNaturalWonders(biomes, elevation, seed, form);
   setVolcanoes(world, nat.filter(w => w.kind === 'volcano').map(w => ({ row: w.row, col: w.col })));
   setWonderSites(world, nat.map(w => ({ row: w.row, col: w.col, pull: WONDER_PULL[w.kind], radius: WONDER_RADIUS[w.kind] })));
-  // Ordinary life ends where the staged ending begins; count nothing after.
-  const TICKS = worldFateForSeed(seed, SIM.worldCycleTicks).endTick - ENDING_SEQUENCE_TICKS;
+  const TICKS = worldFateForSeed(seed, SIM.worldCycleTicks).endTick - ENDING_TAIL_TICKS;
   totalTicks += TICKS;
 
   let civTicks = 0, stable = 0, size = 0, fortune = 0, allButRoll = 0, wonders = 0;
