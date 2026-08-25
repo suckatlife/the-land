@@ -1,23 +1,49 @@
 #!/usr/bin/env bash
-# How many review rounds a PR has had, and whether the builder may push again.
+# Is the builder still authorised to push to this PR?
 #
-# The loop is bounded by pushes, because the builder is the only party that
-# pushes and the reviewer only fires on a push. So the builder checks this
-# BEFORE pushing. Two rounds, then a human decides.
+# Rounds are a CHECKPOINT, not a cap. The default budget is two review rounds;
+# when it runs out the builder stops and asks, and Lawrence decides whether the
+# PR continues. He grants more by commenting "/continue" on the PR, which resets
+# the budget. "/continue 4" grants four.
+#
+# Why a typed marker rather than "a comment from Lawrence": Claude pushes and
+# comments through Lawrence's GitHub account, so author alone cannot tell his
+# reply from the builder's own summary. "/continue" is a word the builder is
+# forbidden to write, which makes the signal unambiguous.
+#
+# Uses gh's built-in jq only — standalone jq is not installed here.
 #
 #   scripts/loop/rounds.sh 38
 set -uo pipefail
 PR="${1:?usage: rounds.sh <pr-number>}"
 REPO="${REPO:-suckatlife/the-land}"
-LIMIT="${ROUND_LIMIT:-2}"
+REVIEWER="${REVIEWER:-chatgpt-codex-connector[bot]}"
+DEFAULT_BUDGET="${ROUND_LIMIT:-2}"
 
-reviews=$(gh api "repos/$REPO/pulls/$PR/reviews" --jq 'length' 2>/dev/null || echo 0)
-commits=$(gh api "repos/$REPO/pulls/$PR/commits" --jq 'length' 2>/dev/null || echo 0)
+# Most recent /continue: its timestamp, and any number it granted.
+since=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+  --jq '[.[] | select(.body | test("/continue"))] | last | .created_at // ""' 2>/dev/null | tail -1)
+granted=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+  --jq '[.[] | select(.body | test("/continue"))] | last | (.body | capture("/continue\\s+(?<n>[0-9]+)") | .n) // ""' 2>/dev/null | tail -1)
+budget="${granted:-$DEFAULT_BUDGET}"
+[ -z "$budget" ] && budget="$DEFAULT_BUDGET"
 
-echo "PR #$PR — reviews: $reviews, commits: $commits, limit: $LIMIT"
-if [ "$reviews" -ge "$LIMIT" ]; then
-  echo "STOP. The round limit is reached."
-  echo "Do not push again. Post a summary comment and hand it to Lawrence."
+rounds=$(gh api "repos/$REPO/pulls/$PR/reviews" --paginate \
+  --jq "[.[] | select(.user.login == \"$REVIEWER\") | select(\"$since\" == \"\" or .submitted_at > \"$since\")] | length" 2>/dev/null | tail -1)
+rounds=${rounds:-0}
+
+if [ -n "$since" ]; then
+  echo "PR #$PR — $rounds of $budget rounds used since the last /continue ($since)"
+else
+  echo "PR #$PR — $rounds of $budget rounds used (no /continue yet)"
+fi
+
+if [ "$rounds" -ge "$budget" ]; then
+  cat <<'MSG'
+STOP — checkpoint reached. Do not push again.
+Post a comment with: what changed, what is still outstanding, and what you would
+do with another round. Then wait. Lawrence replies "/continue" to authorise more.
+MSG
   exit 1
 fi
-echo "OK to push: this will be round $((reviews + 1)) of $LIMIT."
+echo "OK to push — this will be round $((rounds + 1)) of $budget."
