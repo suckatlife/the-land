@@ -105,7 +105,8 @@ description claims, and is the evidence real?*
    `scripts/loop/rounds.sh <pr>` before any push; the script exits non-zero at
    the checkpoint. A PR may have as many rounds as it needs — but Lawrence is
    the one who says so, by commenting **`/continue`** (or `/continue 4`) to
-   grant more. Nothing about this loop ends on its own: PR #36 ran five pushes
+   grant more, and then starting the turn from the Claude app. The comment
+   authorises; it does not wake anything. Nothing is subscribed to the PR. Nothing about this loop ends on its own: PR #36 ran five pushes
    and six reviews in forty-five minutes before anyone intervened.
 
    **This step is also deliberately manual.** If there are

@@ -22,8 +22,11 @@ non-zero at the checkpoint. If it says stop, do not push. Instead comment with:
 
 Then stop. No further commits on that PR until Lawrence replies.
 
-**Lawrence resumes it** by commenting `/continue` on the PR, which grants
-another two rounds. `/continue 4` grants four. The builder must **never write
+**`/continue` is permission, not a trigger.** Commenting `/continue` on the PR
+grants another two rounds (`/continue 4` grants four) — but nothing is watching
+the PR, so no agent wakes up on its own. Lawrence still starts the turn, from
+the Claude app: "continue PR #38". The comment is what makes that authorised;
+the message is what makes it happen. The builder must **never write
 `/continue` itself** — Claude comments through Lawrence's GitHub account, so
 that marker is the only thing that distinguishes his authorisation from the
 builder's own summary.
