@@ -2159,22 +2159,27 @@ measurement before tuning, and guessed the binding condition was
 
 `scripts/wonder_gate.ts` (new; runs the sim headlessly in Node via rolldown,
 replicating `generateWorldTerrain`'s land-target nudge) instrumented each gate
-condition independently across 20 seeds × 30000 ticks, ~5.1M civ-ticks:
+condition independently across 20 seeds. Codex's review caught the first
+version simulating 30000-tick lives with no natural wonders in play; the
+harness now mirrors production — `worldFateForSeed` lifespans (58–97%, minus
+the ~3060-tick staged ending), seed-placed natural wonders and volcanoes fed
+back through `setWonderSites`/`setVolcanoes`. At that fidelity, ~3.1M
+civ-ticks:
 
-- `stable`: 49% of civ-ticks. Not binding.
-- `size >= 160`: 41%, and every form's top civs clear it — archipelago's
-  largest run 480–870 tiles. Not binding.
-- `fortune > 0.12`: **0.46%**. The fortune walk (step ±0.008, revert 0.005)
+- `stable`: ~41–49% of civ-ticks depending on window. Not binding.
+- `size >= 160`: healthy everywhere — every form's top civs clear it
+  (archipelago's largest run 480–870 tiles). Not binding.
+- `fortune > 0.12`: **~0.1%**. The fortune walk (step ±0.008, revert 0.005)
   has stationary σ ≈ 0.046, so 0.12 is a 2.6σ ask that must coincide with the
-  other three conditions. The full gate opened ~330 ticks/world →
-  E[wonders] = 0.05/world at chance 0.00015. "No world has ever built one"
-  was the expected outcome, not bad luck.
+  other three conditions. The full gate opened ~176 ticks/world. Realized:
+  **1 wonder across 20 production-fidelity worlds.** "No world has ever
+  built one" was the expected outcome, not bad luck.
 
-**Fix: `wonderMinFortune` 0.12 → 0.06** (~1.3σ, the top ~10% of a civ's
+**Fix: `wonderMinFortune` 0.12 → 0.05** (~1.1σ, the top ~14% of a civ's
 luck). Chance and size untouched, per the issue's warning not to make wonders
-routine. Rerunning the same 20 seeds on the changed constant: **14 wonders —
-10 worlds none, 6 one, 4 two.** Half of all worlds still read "nothing
-monumental"; none is littered.
+routine. The same 20 seeds at 0.05: **17 wonders — 9 worlds none, 6 one,
+4 two, 1 three.** (0.06 gave 13, with 12 worlds empty — judged a shade too
+scarce for the record card; 0.04 gave 13 of 20 worlds a wonder — routine.)
 
 Also verified the never-exercised downstream path by reading it end to end:
 narration (`WONDER_TITLES` covers all six eras), ping, `drawWonders` build
