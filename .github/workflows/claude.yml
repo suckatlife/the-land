@@ -8,8 +8,14 @@
 #
 # Setup, only if you want it:
 #   1. Install https://github.com/apps/claude on this repo
-#   2. Add repo secret ANTHROPIC_API_KEY  <-- billed SEPARATELY from your
-#      Claude subscription. This is the reason to prefer the app.
+#   2. Run `claude setup-token` locally, add the result as repo secret
+#      CLAUDE_CODE_OAUTH_TOKEN. That authenticates with the Pro/Max
+#      SUBSCRIPTION, so runs do not hit API billing. (ANTHROPIC_API_KEY also
+#      works and is billed separately.)
+#
+# Resuming a checkpointed PR: comment "@claude /continue" — the @claude wakes
+# this workflow, the /continue is what scripts/loop/rounds.sh reads as
+# authorisation for more rounds. One comment does both.
 #
 # Without that secret this workflow will fire on an @claude comment and fail,
 # leaving a red X. Delete the file if you decide not to use it.
@@ -48,10 +54,16 @@ jobs:
       pull-requests: write
       issues: write
       id-token: write
+      actions: read       # so Claude can read CI results on the PR
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0     # full history: turns reference earlier commits and tags
       - uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Subscription auth. Swap to anthropic_api_key for API billing.
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Ceiling on ONE wake-up. Different bound from the review checkpoint:
+          # the checkpoint limits how many pushes happen, this limits how much
+          # work happens inside a single run.
+          claude_args: "--max-turns 25"
