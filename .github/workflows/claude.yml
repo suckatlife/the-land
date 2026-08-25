@@ -64,6 +64,13 @@ jobs:
           # Subscription auth. Swap to anthropic_api_key for API billing.
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # Ceiling on ONE wake-up. Different bound from the review checkpoint:
-          # the checkpoint limits how many pushes happen, this limits how much
+          # the checkpoint limits how many PUSHES happen, this limits how much
           # work happens inside a single run.
-          claude_args: "--max-turns 25"
+          #
+          # 25 was too low and cost a real run: on PR #38 Claude worked for two
+          # minutes, posted its checklist, was mid-way through two review
+          # findings, and died with error_max_turns having pushed nothing. On a
+          # codebase whose main.ts is 8k lines, reading, editing and building
+          # spends turns quickly. 80 leaves room to finish an ordinary task; the
+          # checkpoint is what actually bounds the loop.
+          claude_args: "--max-turns 80"
