@@ -3,13 +3,20 @@
 #
 # Rounds are a CHECKPOINT, not a cap. The default budget is two review rounds;
 # when it runs out the builder stops and asks, and Lawrence decides whether the
-# PR continues. He grants more by commenting "/continue" on the PR, which resets
-# the budget. "/continue 4" grants four.
+# PR continues. He grants more by commenting "@claude continue" on the PR, which
+# resets the budget. "@claude continue 4" grants four.
 #
-# Why a typed marker rather than "a comment from Lawrence": Claude pushes and
-# comments through Lawrence's GitHub account, so author alone cannot tell his
-# reply from the builder's own summary. "/continue" is a word the builder is
-# forbidden to write, which makes the signal unambiguous.
+# The marker is "@claude continue". It has to be a typed phrase rather than
+# "a comment from Lawrence", because Claude pushes and comments through his
+# GitHub account and author alone cannot tell his reply from the builder's own
+# summary. The builder is forbidden to write it.
+#
+# It deliberately does NOT start with a slash. "/continue" led the comment, and
+# Claude Code parses a leading /word as a slash command, so the instruction
+# evaporated: the runner woke, ran for three seconds and pushed nothing. The
+# mention form triggers the workflow AND authorises in one phrase, and
+# "@claude\s+continue" is specific enough that ordinary prose does not match it.
+# Bare "/continue" is still accepted so older comments keep working.
 #
 # Uses gh's built-in jq only — standalone jq is not installed here.
 #
@@ -25,9 +32,9 @@ DEFAULT_BUDGET="${ROUND_LIMIT:-2}"
 
 # Most recent /continue: its timestamp, and any number it granted.
 since=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
-  --jq '[.[] | select(.body | test("/continue"))] | last | .created_at // ""' 2>/dev/null | tail -1)
+  --jq '[.[] | select(.body | test("@claude\\s+continue"; "i") or test("/continue"))] | last | .created_at // ""' 2>/dev/null | tail -1)
 granted=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
-  --jq '[.[] | select(.body | test("/continue"))] | last | (.body | capture("/continue\\s+(?<n>[0-9]+)") | .n) // ""' 2>/dev/null | tail -1)
+  --jq '[.[] | select(.body | test("@claude\\s+continue"; "i") or test("/continue"))] | last | (.body | capture("(?:@claude\\s+continue|/continue)\\s+(?<n>[0-9]+)"; "i") | .n) // ""' 2>/dev/null | tail -1)
 budget="${granted:-$DEFAULT_BUDGET}"
 [ -z "$budget" ] && budget="$DEFAULT_BUDGET"
 
@@ -36,16 +43,16 @@ rounds=$(gh api "repos/$REPO/pulls/$PR/reviews" --paginate \
 rounds=${rounds:-0}
 
 if [ -n "$since" ]; then
-  echo "PR #$PR — $rounds of $budget rounds used since the last /continue ($since)"
+  echo "PR #$PR — $rounds of $budget rounds used since the last "@claude continue" ($since)"
 else
-  echo "PR #$PR — $rounds of $budget rounds used (no /continue yet)"
+  echo "PR #$PR — $rounds of $budget rounds used (no "@claude continue" yet)"
 fi
 
 if [ "$rounds" -ge "$budget" ]; then
   cat <<'MSG'
 STOP — checkpoint reached. Do not push again.
 Post a comment with: what changed, what is still outstanding, and what you would
-do with another round. Then wait. Lawrence replies "/continue" to authorise more.
+do with another round. Then wait. Lawrence replies "@claude continue" to authorise more.
 MSG
   exit 1
 fi
