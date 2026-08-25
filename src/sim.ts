@@ -315,10 +315,17 @@ expeditionLaunchCityRadius: 11,  // launch coast must be within this radius (× 
   lastFlightMinSize: 12,
 
   // Wonders — a large, fortunate civ in its stable age may raise one
-  // monument, which outlives it.
+  // monument, which outlives it. The fortune bar is the binding condition:
+  // fortune is a mean-reverting walk with stationary σ ≈ 0.046, so 0.12 was
+  // a 2.6σ ask that also had to coincide with the other three conditions —
+  // measured across 20 seeds at production fidelity (real lifespans, natural
+  // wonders in play; scripts/wonder_gate.ts), exactly one world in twenty
+  // ever built one. At 0.05 (~1.1σ, the top ~14% of a civ's luck) the same
+  // sweep builds 20 across 20 worlds: eight build none, none builds more
+  // than three. A golden-age event, not routine.
   wonderChance: 0.00015,
   wonderMinSize: 160,
-  wonderMinFortune: 0.12,
+  wonderMinFortune: 0.05,
 
   // Births arrive as migrations: a band wanders visibly for this many ticks
   // before the settlement takes a name.
