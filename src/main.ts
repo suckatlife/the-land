@@ -17,7 +17,7 @@ const WONDER_RADIUS: Record<NaturalWonderKind, number> = {
   atoll: 6, canyon: 8, dune_sea: 9,
 };
 import { drawTile, drawStateOverlayPersistent, redrawOverlay, redrawBiomeTile, lerpColor, gridToScreen, rgbToHsl, hslToRgb } from './iso';
-import { createSimWorld, beginEnding, beginSilence, rollCharacter, characterOf, step, tileOverlayColor, seedInitialCivs, applyCatastrophe, setVolcanoes, eruptVolcanoesNow, setWonderSites, iceDepthAt, SIM, CATASTROPHE, CITY, nearestCityDist, type SimWorld, type Civ, type CivCity, type SimEvent, type Era, type TileOverlay, type BiomeChange, type CatastropheType } from './sim';
+import { createSimWorld, beginEnding, beginSilence, rollCharacter, characterOf, step, tileOverlayColor, seedInitialCivs, applyCatastrophe, setVolcanoes, eruptVolcanoesNow, setWonderSites, iceDepthAt, SIM, CATASTROPHE, CITY, nearestCityDist, type SimWorld, type Civ, type CivCity, type SimEvent, type Era, type TileOverlay, type BiomeChange, type CatastropheType, type CivArchetype } from './sim';
 import { createAtmosphere, ATMOS } from './atmosphere';
 import { initializeAnalytics, trackEvent } from './analytics';
 import {
@@ -74,8 +74,18 @@ const ROOF_FRAME_PATHS = [
   '/sprites/buildings/buildingTiles_090.png',  // 6 red barrel
   '/sprites/buildings/buildingTiles_088.png',  // 7 dark grey pitched
 ];
-const ROOF_FRAMES_SIMPLE = [0, 1, 2, 3];  // fill-order 0-1
-const ROOF_FRAMES_GRAND  = [4, 5, 6, 7];  // fill-order 2-3
+// Roof language per archetype (#27) — the quiet second read under the
+// settlement shape, constant across eras. Each archetype draws from a fixed
+// pair per pool instead of the whole set, so a town's roofscape leans one
+// way: whitewashed hips by the sea, dark steep pitches in the high valleys,
+// red farm-country pitches on the plains. Which frames pair best is a taste
+// call — these are first guesses for a human eye to correct.
+const ARCH_ROOFS: Record<CivArchetype, { simple: number[]; grand: number[] }> = {
+  maritime: { simple: [0, 1], grand: [2, 3] },   // low cream hips, even in the core
+  highland: { simple: [2, 3], grand: [7, 4] },   // steep pitches, slate-dark core
+  sylvan:   { simple: [0, 2], grand: [6, 5] },   // soft hips, barrel roofs under trees
+  plains:   { simple: [1, 3], grand: [4, 5] },   // red-pitched farm country
+};
 
 // Scale and vertical stacking geometry.
 const BUILDING_SCALE   = 0.12;
@@ -354,7 +364,15 @@ function narrateEvent(ev: SimEvent, world: SimWorld): string {
           `${civ.name} coheres from ${loc} remnants.`,
         ],
       };
-      return pick(byEra[civ.era]);
+      // Sometimes the birth line says who they are instead of when: the
+      // archetype named in the terrain's own terms (#27), era-neutral.
+      const byArch: Record<CivArchetype, string> = {
+        maritime: `${civ.name} builds boats before walls.`,
+        highland: `${civ.name} keeps to the high valleys.`,
+        sylvan:   `${civ.name} clears no more than the forest gives.`,
+        plains:   `${civ.name} spreads across the open country.`,
+      };
+      return pick([...byEra[civ.era], byArch[civ.archetype]]);
     }
     case 'civ_declining': {
       const civ = world.civs.get(ev.civId);
@@ -2872,14 +2890,15 @@ function pickMidFloorFrame(row: number, col: number, fillIdx: number): number {
   // One frame per slot, used for all mid-floors of that slot.
   return BODY_FRAMES_GRAND[_bldHash(row, col, fillIdx, 2) % BODY_FRAMES_GRAND.length];
 }
-function pickRoofFrame(row: number, col: number, fillIdx: number): number {
-  const pool = fillIdx < 2 ? ROOF_FRAMES_SIMPLE : ROOF_FRAMES_GRAND;
+function pickRoofFrame(row: number, col: number, fillIdx: number, arch: CivArchetype): number {
+  const pools = ARCH_ROOFS[arch];
+  const pool = fillIdx < 2 ? pools.simple : pools.grand;
   return pool[_bldHash(row, col, fillIdx, 3) % pool.length];
 }
 
 // Per-slot mid-floor count: lerp by density within the era's height range, then
 // add stable per-slot noise so dense tiles aren't a perfectly smooth gradient.
-function extrasForBuilding(row: number, col: number, slotIdx: number, density: number, era: Era): number {
+function extrasForBuilding(row: number, col: number, slotIdx: number, density: number, era: Era, arch: CivArchetype): number {
   // Each mid-floor is its own sprite; height-stacking is a big share of the
   // ~10k building sprites. The quality cap flattens it (low = no mid-floors),
   // which is the real object-count lever for weak/object-bound GPUs.
@@ -2889,7 +2908,9 @@ function extrasForBuilding(row: number, col: number, slotIdx: number, density: n
   const d = Math.max(0, Math.min(1, density));
   const gradient = minFloors + (maxFloors - minFloors) * d;
   const noise = ((_bldHash(row, col, slotIdx, 7) / 0xffffffff) * 2 - 1) * HEIGHT_NOISE;
-  const floors = Math.max(minFloors, Math.min(maxFloors, Math.round(gradient + noise)));
+  // The archetype's storey bias applies inside the era's range, so a highland
+  // tower is still a neolithic tower, not a skyscraper out of its time.
+  const floors = Math.max(minFloors, Math.min(maxFloors, Math.round(gradient + noise) + ARCH_SHAPE[arch].floors));
   return Math.min(MAX_EXTRA_FLOORS, floorCap, floors - 1);
 }
 
@@ -2936,6 +2957,19 @@ function tintForBuilding(baseColor: number, row: number, col: number, slotIdx: n
   return settled;
 }
 
+// The settlement's SHAPE is the archetype made visible (#27): highland people
+// build tight and steep (small radius, hard edge, an extra storey in the
+// core), plains people sprawl low and wide, maritime and sylvan sit between.
+// One exaggerated feature, constant across eras — era keeps colour and light.
+// `radius`/`edge` multiply DENSITY.proximityScale/falloffPower; `floors`
+// shifts the storey count before the era range clamps it.
+const ARCH_SHAPE: Record<CivArchetype, { radius: number; edge: number; floors: number }> = {
+  maritime: { radius: 0.90, edge: 1.00, floors: 0 },
+  highland: { radius: 0.72, edge: 1.35, floors: 1 },
+  sylvan:   { radius: 0.85, edge: 1.15, floors: 0 },
+  plains:   { radius: 1.25, edge: 0.85, floors: -1 },
+};
+
 // 0..1 density for a built tile. Proximity drives the shape; vitality scales it.
 // Far from all cities the value is 0 regardless of vitality — bare ground in hinterland.
 function computeTileDensity(row: number, col: number, civ: Civ): number {
@@ -2945,9 +2979,10 @@ function computeTileDensity(row: number, col: number, civ: Civ): number {
     const d = Math.hypot(city.row - row, city.col - col);
     if (d < minDist) { minDist = d; bestProminence = city.prominence; }
   }
-  const effectiveRadius = DENSITY.proximityScale * Math.max(0.2, bestProminence);
+  const shape = ARCH_SHAPE[civ.archetype];
+  const effectiveRadius = DENSITY.proximityScale * shape.radius * Math.max(0.2, bestProminence);
   const normalizedDist = Math.min(1, minDist / effectiveRadius);
-  const proxFactor = Math.max(0, 1 - Math.pow(normalizedDist, DENSITY.falloffPower));
+  const proxFactor = Math.max(0, 1 - Math.pow(normalizedDist, DENSITY.falloffPower * shape.edge));
   const vitalFactor = Math.max(0, Math.min(1, civ.vitality));
   // Vitality multiplies proximity effect: no halo if proxFactor=0, denser halo if vitality high.
   return proxFactor * (DENSITY.vitalityBase + (1 - DENSITY.vitalityBase) * vitalFactor);
@@ -3046,7 +3081,7 @@ function refreshBuildingSprite(row: number, col: number) {
     const perm = tileSlotPermutation(row, col);
     const bodyFrames = [0,1,2,3].map(si => pickBodyFrame(row, col, perm.indexOf(si)));
     const midFrames  = [0,1,2,3].map(si => pickMidFloorFrame(row, col, perm.indexOf(si)));
-    const roofFrames = [0,1,2,3].map(si => pickRoofFrame(row, col, perm.indexOf(si)));
+    const roofFrames = [0,1,2,3].map(si => pickRoofFrame(row, col, perm.indexOf(si), civ!.archetype));
     state = {
       perm, bodyFrames, midFrames, roofFrames,
       floor1: [null,null,null,null],
@@ -3086,7 +3121,7 @@ function refreshBuildingSprite(row: number, col: number) {
     const [dx, dy] = SLOT_POSITIONS[slotIdx];
     const baseY = y + dy;
     const slotZBase = ((row + col) * 4 + SLOT_DEPTHS[slotIdx]) * 100;
-    const extras = extrasForBuilding(row, col, slotIdx, density, civ!.era);
+    const extras = extrasForBuilding(row, col, slotIdx, density, civ!.era, civ!.archetype);
 
     if (wantActive && !hasSprite) {
       // Brand new building — create floor1 + all mid-floors for current era + roof in one go.

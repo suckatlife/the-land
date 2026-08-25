@@ -161,6 +161,11 @@ export interface Civ {
   hasFled: boolean;
   // A golden-age monument; persists (as a ruin marker) after the civ dies.
   wonder: { row: number; col: number } | null;
+  // Who these people are: the ground they arose from (archetype, fixed at
+  // birth like era) and the first great thing they lived through (trait,
+  // earned once, kept for life). See ARCHETYPE_CIV / CivTrait.
+  archetype: CivArchetype;
+  trait: CivTrait | null;
 }
 
 export interface NameMemory {
@@ -620,6 +625,70 @@ export interface CivBehaviour {
   conquest: number;    // >1 = takes more strength to conquer, so fewer wars won
 }
 
+// Geography as culture, one level down (#27): FORM_CIV bends a whole world's
+// people by its form; this bends ONE people by the ground they arose from. A
+// civ founded among islands crosses water more; one from the high valleys
+// digs in; one from open fertile country sprawls. Same levers, so the two
+// compose by multiplication. `conquest` here is defensibility — how much
+// harder this people's home ground makes them to conquer (>1 = harder).
+export type CivArchetype = 'maritime' | 'highland' | 'sylvan' | 'plains';
+export const ARCHETYPE_CIV: Record<CivArchetype, {
+  spread: number; expedition: number; ambition: number; conquest: number;
+}> = {
+  // Expedition rates are tuned against measurement, not intuition: bigger
+  // civs launch more simply by clearing expeditionMinSize more often, which
+  // erased maritime's identity at the first values — plains matched them
+  // boat for boat. The gap below is what makes the census separate
+  // (scripts/archetype_census.ts).
+  maritime: { spread: 0.90, expedition: 2.40, ambition: 0.85, conquest: 1.00 },
+  highland: { spread: 0.78, expedition: 0.50, ambition: 0.85, conquest: 1.30 },
+  sylvan:   { spread: 0.88, expedition: 0.85, ambition: 0.90, conquest: 1.10 },
+  plains:   { spread: 1.18, expedition: 0.55, ambition: 1.25, conquest: 0.85 },
+};
+
+// One earned mark of history: the first of these a civilisation lives
+// through, it keeps for life. Never rolled — always earned.
+export type CivTrait = 'survivor' | 'refugee' | 'iceborn';
+
+// The archetype is the terrain's consequence — read deterministically from
+// the ground around the founding site, no random draw. Nothing appears in
+// the world that is related only to itself.
+const ARCHETYPE_RADIUS = 4;
+export function archetypeFor(biomes: Biome[][], row: number, col: number): CivArchetype {
+  let water = 0, rock = 0, forest = 0, total = 0;
+  for (let dr = -ARCHETYPE_RADIUS; dr <= ARCHETYPE_RADIUS; dr++) {
+    for (let dc = -ARCHETYPE_RADIUS; dc <= ARCHETYPE_RADIUS; dc++) {
+      const r = row + dr, c = col + dc;
+      if (r < 0 || r >= biomes.length || c < 0 || c >= biomes[0].length) continue;
+      if (dr * dr + dc * dc > ARCHETYPE_RADIUS * ARCHETYPE_RADIUS) continue;
+      total++;
+      const b = biomes[r][c];
+      if (b === 'water') water++;
+      else if (b === 'rock') rock++;
+      else if (b === 'forest') forest++;
+    }
+  }
+  // Thresholds set from the measured distribution of founding sites
+  // (scripts/archetype_census.ts): the median founding site already has 39%
+  // water within the radius — most land is near a coast on a 96×96 island —
+  // so maritime demands the p75 (a people OF the sea, not merely beside it).
+  if (total === 0) return 'plains';
+  if (water / total >= 0.55) return 'maritime';
+  if (rock / total >= 0.10) return 'highland';
+  if (forest / total >= 0.18) return 'sylvan';
+  return 'plains';
+}
+
+function archMul(civ: Civ) { return ARCHETYPE_CIV[civ.archetype]; }
+// Refugees carry the sea in their story; ice-hardened people are hard to
+// dislodge. Traits ride the same levers as everything else.
+function civExpeditionMult(civ: Civ): number {
+  return archMul(civ).expedition * (civ.trait === 'refugee' ? 1.6 : 1);
+}
+function civDefenceMult(civ: Civ): number {
+  return archMul(civ).conquest * (civ.trait === 'iceborn' ? 1.2 : 1);
+}
+
 export interface WorldCharacter {
   temperament: Temperament;
   arc: LifeArc;
@@ -915,12 +984,13 @@ function nameForNewCiv(world: SimWorld, row: number, col: number, era: Era): str
   return name;
 }
 
-function spawnCiv(world: SimWorld, row: number, col: number): Civ {
+function spawnCiv(world: SimWorld, row: number, col: number, biomes: Biome[][]): Civ {
   const constitution = 0.6 + rand() * 0.6;
   const era = inheritedEraFor(world, row, col);
   const name = nameForNewCiv(world, row, col, era);
+  const archetype = archetypeFor(biomes, row, col);
   const ambitionRoll = Math.pow(rand(), SIM.ambitionSkew);
-  const maxSize = Math.round((SIM.minAmbition + ambitionRoll * (SIM.maxAmbition - SIM.minAmbition)) * characterOf(world).civ.ambition);
+  const maxSize = Math.round((SIM.minAmbition + ambitionRoll * (SIM.maxAmbition - SIM.minAmbition)) * characterOf(world).civ.ambition * ARCHETYPE_CIV[archetype].ambition);
   const civ: Civ = {
     id: world.nextCivId++,
     originRow: row,
@@ -940,6 +1010,8 @@ function spawnCiv(world: SimWorld, row: number, col: number): Civ {
     hasRallied: false,
     hasFled: false,
     wonder: null,
+    archetype,
+    trait: null,
   };
   world.civs.set(civ.id, civ);
   const t = world.tiles[row][col];
@@ -1102,7 +1174,7 @@ function maybeLaunchExpeditions(world: SimWorld, biomes: Biome[][], tileCounts: 
     let desperate = false;
     if (effectiveStrength(civ) >= SIM.expeditionMinVitality) {
       if ((tileCounts.get(civ.id) || 0) < SIM.expeditionMinSize) continue;
-      if (rand() > SIM.expeditionLaunchChance * characterOf(world).civ.expedition) continue;
+      if (rand() > SIM.expeditionLaunchChance * characterOf(world).civ.expedition * civExpeditionMult(civ)) continue;
     } else if (civ.phase === 'declining' && !civ.hasFled) {
       if ((tileCounts.get(civ.id) || 0) < SIM.lastFlightMinSize) continue;
       if (rand() > SIM.lastFlightChance) continue;
@@ -1172,6 +1244,7 @@ function advanceExpeditions(world: SimWorld, biomes: Biome[][], changed: Array<{
             // Landfall after the homeland died: the refugees found a successor
             // nation carrying the old name forward.
             const newId = world.nextCivId++;
+            const refugeArch = archetypeFor(biomes, tr, tc);
             const refuge: Civ = {
               id: newId,
               originRow: tr,
@@ -1185,12 +1258,15 @@ function advanceExpeditions(world: SimWorld, biomes: Biome[][], changed: Array<{
               constitution: 0.6 + rand() * 0.6,
               fortune: 0,
               era: civ.era,
-              maxSize: Math.round((SIM.minAmbition + Math.pow(rand(), SIM.ambitionSkew) * (SIM.maxAmbition - SIM.minAmbition)) * characterOf(world).civ.ambition),
+              maxSize: Math.round((SIM.minAmbition + Math.pow(rand(), SIM.ambitionSkew) * (SIM.maxAmbition - SIM.minAmbition)) * characterOf(world).civ.ambition * ARCHETYPE_CIV[refugeArch].ambition),
               name: evolveName(civ.name, civ.era),
               cities: [{ row: tr, col: tc, prominence: 0.5, name: generateName(civ.era), foundedTick: world.tick }],
               hasRallied: false,
               hasFled: true,
               wonder: null,
+              // A new shore makes a new people; the flight marks them.
+              archetype: refugeArch,
+              trait: 'refugee',
             };
             world.civs.set(newId, refuge);
             world.nameMemory.push({ row: tr, col: tc, name: refuge.name, lastEra: civ.era });
@@ -1303,12 +1379,16 @@ function maybeBreakaway(world: SimWorld, changed: Array<{ row: number; col: numb
         constitution: 0.6 + rand() * 0.6,
         fortune: 0,
         era: civ.era,
-        maxSize: Math.round((SIM.minAmbition + Math.pow(rand(), SIM.ambitionSkew) * (SIM.maxAmbition - SIM.minAmbition)) * characterOf(world).civ.ambition),
+        maxSize: Math.round((SIM.minAmbition + Math.pow(rand(), SIM.ambitionSkew) * (SIM.maxAmbition - SIM.minAmbition)) * characterOf(world).civ.ambition * ARCHETYPE_CIV[civ.archetype].ambition),
         name: newName,
         cities: [{ row: cap.row, col: cap.col, prominence: 0.6, name: generateName(civ.era), foundedTick: world.tick }],
         hasRallied: false,
         hasFled: false,
         wonder: null,
+        // A breakaway is the same people on new ground politically, not
+        // culturally — the archetype carries; the history does not.
+        archetype: civ.archetype,
+        trait: null,
       };
       world.civs.set(newId, newCiv);
       events.push({ kind: 'breakaway', newCivId: newId, parentId: civ.id });
@@ -1902,6 +1982,12 @@ export function applyCatastrophe(
       events.push({ kind: 'civ_declining', civId: civ.id });
     }
     affectedCivIds.push(civ.id);
+    // To be struck and stand is the first thing history teaches a people:
+    // survivors are harder for the rest of their life.
+    if (!civ.trait) {
+      civ.trait = 'survivor';
+      civ.constitution = Math.min(1.2, civ.constitution + 0.08);
+    }
   }
 
   events.push({ kind: 'catastrophe', centerRow, centerCol, affectedCivIds, severity, catastropheType, radius });
@@ -2090,7 +2176,7 @@ export function step(
           const myStrength = effectiveStrength(civ);
           // Fertility is the temperament's most legible consequence: a rich
           // world fills up, a barren one stays sparse for its whole life.
-          const spreadP = SIM.spreadBase * myStrength * ch.fertility * ch.civ.spread;
+          const spreadP = SIM.spreadBase * myStrength * ch.fertility * ch.civ.spread * archMul(civ).spread;
           const neighbors = [[row - 1, col], [row + 1, col], [row, col - 1], [row, col + 1]];
           for (const [r, c] of neighbors) {
             if (r < 0 || r >= world.height || c < 0 || c >= world.width) continue;
@@ -2138,7 +2224,7 @@ export function step(
               if (otherCiv && otherCiv.phase !== 'dead' && neighborSnap.state === 'built') {
                 const otherStrength = Math.max(0.1, effectiveStrength(otherCiv));
                 const strengthRatio = myStrength / otherStrength;
-                if (strengthRatio > 1.15 * ch.civ.conquest) {
+                if (strengthRatio > 1.15 * ch.civ.conquest * civDefenceMult(otherCiv)) {
                   const defenderDistFromCapital = nearestCityDist(otherCiv, r, c);
                   const defenderDistNorm = defenderDistFromCapital / SIM.coreRadius;
                   const defenderVulnerability = 1 + Math.pow(Math.max(0, defenderDistNorm - 1), 2) * SIM.peripheryDecayMultiplier * 0.5;
@@ -2241,9 +2327,24 @@ export function step(
     world.iceExtent = iceExtentFor(world.tick, ch.ice);
     if (world.iceExtent > world.iceMax) world.iceMax = world.iceExtent;
     const peak = SIM.ice.peakCoverage * 0.98;
-    if (prev < 0.06 && world.iceExtent >= 0.06) events.push({ kind: 'ice_advance' });
-    else if (prev < peak && world.iceExtent >= peak) events.push({ kind: 'ice_peak' });
-    else if (prev > 0.06 && world.iceExtent <= 0.06) events.push({ kind: 'ice_retreat' });
+    if (prev < 0.06 && world.iceExtent >= 0.06) {
+      events.push({ kind: 'ice_advance' });
+    } else if (prev < peak && world.iceExtent >= peak) {
+      events.push({ kind: 'ice_peak' });
+      // At the glacial maximum, a people whose birthplace lies inside the
+      // sheet and who still stand have been reached by the ice and not
+      // moved. (Awarded at the peak, not the retreat: most worlds die
+      // before the ice is gone, so a retreat-day trait would never fire —
+      // the same dead-content trap as the wonder gate, #35.)
+      for (const civ of world.civs.values()) {
+        if (civ.phase !== 'dead' && !civ.trait
+            && iceDepthAt(world, civ.originRow, civ.originCol, biomes[civ.originRow][civ.originCol]) > 0.15) {
+          civ.trait = 'iceborn';
+        }
+      }
+    } else if (prev > 0.06 && world.iceExtent <= 0.06) {
+      events.push({ kind: 'ice_retreat' });
+    }
   }
 
   const avgEraRankNorm = eraRankCount > 0 ? eraRankSum / eraRankCount / (ERAS_ORDERED.length - 1) : 0;
@@ -2312,7 +2413,7 @@ export function step(
     const t = world.tiles[p.row][p.col];
     if (livingCivCount(world) >= characterOf(world).civ.maxCivs) continue;
     if (biomes[p.row][p.col] === 'water' || (t.state !== 'wild' && t.state !== 'ruin')) continue;
-    const newCiv = spawnCiv(world, p.row, p.col);
+    const newCiv = spawnCiv(world, p.row, p.col, biomes);
     changed.push({ row: p.row, col: p.col });
     events.push({ kind: 'civ_born', civId: newCiv.id });
   }
@@ -2539,7 +2640,7 @@ export function seedInitialCivs(
   for (let i = 0; i < count; i++) {
     const spot = pickCivSpawnTile(world, biomes);
     if (!spot) break;
-    spawnCiv(world, spot.row, spot.col);
+    spawnCiv(world, spot.row, spot.col, biomes);
     seeded.push(spot);
   }
   return seeded;
