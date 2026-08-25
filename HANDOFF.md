@@ -2148,3 +2148,43 @@ flattened it into a blanket claim two days later.
 **Verified:** every claim checked against source — `SPEEDS`, the eight
 `data-control` attributes, the absence of any audio control, and the share
 handler.
+
+---
+
+## The wonder gate, measured and opened — claude — 2026-08-24
+
+Issue #35: no instrumented world had ever built a wonder. The issue asked for
+measurement before tuning, and guessed the binding condition was
+`wonderChance` or `wonderMinSize`. **It was neither — it was the fortune bar.**
+
+`scripts/wonder_gate.ts` (new; runs the sim headlessly in Node via rolldown,
+replicating `generateWorldTerrain`'s land-target nudge) instrumented each gate
+condition independently across 20 seeds × 30000 ticks, ~5.1M civ-ticks:
+
+- `stable`: 49% of civ-ticks. Not binding.
+- `size >= 160`: 41%, and every form's top civs clear it — archipelago's
+  largest run 480–870 tiles. Not binding.
+- `fortune > 0.12`: **0.46%**. The fortune walk (step ±0.008, revert 0.005)
+  has stationary σ ≈ 0.046, so 0.12 is a 2.6σ ask that must coincide with the
+  other three conditions. The full gate opened ~330 ticks/world →
+  E[wonders] = 0.05/world at chance 0.00015. "No world has ever built one"
+  was the expected outcome, not bad luck.
+
+**Fix: `wonderMinFortune` 0.12 → 0.06** (~1.3σ, the top ~10% of a civ's
+luck). Chance and size untouched, per the issue's warning not to make wonders
+routine. Rerunning the same 20 seeds on the changed constant: **14 wonders —
+10 worlds none, 6 one, 4 two.** Half of all worlds still read "nothing
+monumental"; none is littered.
+
+Also verified the never-exercised downstream path by reading it end to end:
+narration (`WONDER_TITLES` covers all six eras), ping, `drawWonders` build
+animation and dead-civ ruin state, and `endings.ts` history count all hang off
+`wonder_built`/`civ.wonder` correctly.
+
+**Spotted, not done:** the rally gate has the same shape of miscalibration —
+`rallyMinFortune: 0.1` is ~2.2σ (~1.3% of ticks) and its comment claims
+"~1 in 10 declines" while the numbers give more like 1 in 100. Not measured
+end-to-end; worth the same harness treatment.
+
+**Could not verify:** how a wonder *looks* rising in a live world — the code
+path runs, the visual call is a human's.
