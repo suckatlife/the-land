@@ -4,13 +4,20 @@
 // the archetypes measurably diverge — this script checks both.
 import { generateBiomeMap, landFraction } from '../src/biomes';
 import {
-  createSimWorld, rollCharacter, seedInitialCivs, step, SIM,
+  createSimWorld, rollCharacter, seedInitialCivs, step, beginEnding, beginSilence, SIM,
   type CivArchetype, type CivTrait,
 } from '../src/sim';
-import { worldFateForSeed } from '../src/endings';
+import { worldFateForSeed, endingActTicks } from '../src/endings';
 
 const GRID = 96;
 const LAND_TARGET = { min: 0.20, max: 0.70, step: 0.02, tries: 12 };
+// Matches main.ts's `ticksPerSecond` (not exported — it's a render-loop
+// constant, not a sim one). Production stages the world's last ~102 seconds
+// as an ending: births, catastrophes, expeditions and breakaways are
+// suppressed from `commit` on, and step() goes fully silent from `silence`
+// on. Running raw simulation straight to endTick instead would count
+// behavior from a window players never actually see.
+const TICKS_PER_SECOND = 30;
 
 function terrainFor(seed: string) {
   const character = rollCharacter(seed);
@@ -61,10 +68,15 @@ for (const seed of seeds) {
   const world = createSimWorld(GRID, GRID, seed);
   seedInitialCivs(world, biomes, 1);
   const TICKS = worldFateForSeed(seed, SIM.worldCycleTicks).endTick;
+  const acts = endingActTicks(TICKS, TICKS_PER_SECOND);
   const civMax = new Map<number, number>();
   let advTick: number | null = null;
+  let endingBegun = false;
+  let silenced = false;
 
   for (let t = 0; t < TICKS; t++) {
+    if (!endingBegun && t >= acts.commit) { endingBegun = true; beginEnding(world, new Map()); }
+    if (!silenced && t >= acts.silence) { silenced = true; beginSilence(world); }
     const { events } = step(world, biomes, elevation);
     for (const e of events) {
       if (e.kind === 'colony_founded') {

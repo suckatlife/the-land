@@ -1644,6 +1644,13 @@ function eruptVolcano(
       events.push({ kind: 'civ_declining', civId: civ.id });
     }
     affectedCivIds.push(cid);
+    // Same first-trait rule as applyCatastrophe(): a standing volcano's
+    // eruption is a catastrophe like any other, and the civs it strikes and
+    // fails to kill earn the same scar.
+    if (!civ.trait) {
+      civ.trait = 'survivor';
+      civ.constitution = Math.min(1.2, civ.constitution + 0.08);
+    }
   }
   events.push({
     kind: 'catastrophe', centerRow: v.row, centerCol: v.col,

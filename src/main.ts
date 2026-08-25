@@ -29,6 +29,7 @@ import {
   resolveWorldEnding,
   scoreEndings,
   worldFateForSeed,
+  endingActTicks,
   type ResolvedWorldEnding,
   type ApocalypseKind,
   type WorldEndingKind,
@@ -1805,25 +1806,9 @@ let currentWorldFate: WorldFate = worldFateForSeed(currentSeed, SIM.worldCycleTi
 
 // --- The ending, as a staged sequence rather than a swap ---
 // A world used to be replaced at endTick with 2.5s of black. It now spends its
-// last ~102 world-seconds ending. Durations are world-seconds, so pause and the
-// speed control move them like everything else in the world.
-const ENDING_ACTS = { omen: 40, onset: 12, unmaking: 35, silence: 15 };
-const ENDING_SEQUENCE_TICKS = Math.round(
-  (ENDING_ACTS.omen + ENDING_ACTS.onset + ENDING_ACTS.unmaking + ENDING_ACTS.silence) * ticksPerSecond,
-);
-// Slack so the commit is never racing act 1's first frame.
-const ENDING_COMMIT_MARGIN_TICKS = 300;
-
-// Act boundaries are derived from endTick, not from a fraction of the world's
-// life: lifeFraction bottoms out at 0.58, so the shortest world is 17,400 ticks
-// and a fixed fraction would leave it less time than the sequence needs.
-function endingActTicks(endTick: number) {
-  const omen = endTick - ENDING_SEQUENCE_TICKS;
-  const onset = omen + ENDING_ACTS.omen * ticksPerSecond;
-  const unmaking = onset + ENDING_ACTS.onset * ticksPerSecond;
-  const silence = unmaking + ENDING_ACTS.unmaking * ticksPerSecond;
-  return { omen, onset, unmaking, silence, commit: omen - ENDING_COMMIT_MARGIN_TICKS };
-}
+// last ~102 world-seconds ending (see endingActTicks() in endings.ts).
+// Durations are world-seconds, so pause and the speed control move them like
+// everything else in the world.
 
 let committedEnding: { apocalypse: ApocalypseKind; ending: WorldEndingKind } | null = null;
 let endingOmenSpoken = false;
@@ -1846,7 +1831,7 @@ const ENDING_OMENS: Record<WorldEndingKind, string> = {
 // the unmaking, and the last one falls before the silence. Deterministic —
 // ordered by tile count then id, no RNG, so a seed still replays.
 function buildFadeSchedule(endTick: number): Map<number, number> {
-  const acts = endingActTicks(endTick);
+  const acts = endingActTicks(endTick, ticksPerSecond);
   const counts = new Map<number, number>();
   for (let row = 0; row < GRID_SIZE; row++) {
     for (let col = 0; col < GRID_SIZE; col++) {
@@ -1894,7 +1879,7 @@ function commitEnding() {
 // Returns true if the world turned over, in which case simWorld is a new one
 // and the caller must stop stepping the old.
 function endingCheckpoints(): boolean {
-  const acts = endingActTicks(currentWorldFate.endTick);
+  const acts = endingActTicks(currentWorldFate.endTick, ticksPerSecond);
   if (!committedEnding && simWorld.tick >= acts.commit) commitEnding();
   if (committedEnding && !endingOmenSpoken && simWorld.tick >= acts.omen) {
     endingOmenSpoken = true;
@@ -1931,7 +1916,7 @@ function endingCheckpoints(): boolean {
 };
 
 (window as any).__ending = () => {
-  const acts = endingActTicks(currentWorldFate.endTick);
+  const acts = endingActTicks(currentWorldFate.endTick, ticksPerSecond);
   return {
     tick: simWorld.tick,
     endTick: currentWorldFate.endTick,
@@ -8854,7 +8839,7 @@ document.getElementById('skip')!.addEventListener('click', () => {
   // ...but not once act 4 has opened: the silence adds no story, including a
   // replayed one.
   if (committedEnding && endingOmenSpoken
-      && simWorld.tick < endingActTicks(currentWorldFate.endTick).silence) {
+      && simWorld.tick < endingActTicks(currentWorldFate.endTick, ticksPerSecond).silence) {
     pushNarration(ENDING_OMENS[committedEnding.ending], { priority: 'high' });
   }
   accumulator = 0;

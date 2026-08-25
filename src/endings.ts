@@ -134,6 +134,33 @@ export interface WorldFate {
   causeAffinity: ApocalypseKind;
 }
 
+// A world spends its last ~102 world-seconds ending, staged as four acts:
+// omen, onset, unmaking (all before endTick), then silence, which runs up to
+// endTick itself. Durations are world-seconds, scaled by the caller's
+// ticksPerSecond. Lives here (not in main.ts, where it was previously
+// defined and duplicated) so any headless harness that steps a SimWorld can
+// reproduce the same suppression window instead of drifting from it — see #38.
+export const ENDING_ACTS = { omen: 40, onset: 12, unmaking: 35, silence: 15 };
+// Slack so the commit is never racing act 1's first frame.
+export const ENDING_COMMIT_MARGIN_TICKS = 300;
+
+export function endingSequenceTicks(ticksPerSecond: number): number {
+  return Math.round(
+    (ENDING_ACTS.omen + ENDING_ACTS.onset + ENDING_ACTS.unmaking + ENDING_ACTS.silence) * ticksPerSecond,
+  );
+}
+
+// Act boundaries are derived from endTick, not from a fraction of the world's
+// life: lifeFraction bottoms out at 0.58, so the shortest world is 17,400 ticks
+// and a fixed fraction would leave it less time than the sequence needs.
+export function endingActTicks(endTick: number, ticksPerSecond: number) {
+  const omen = endTick - endingSequenceTicks(ticksPerSecond);
+  const onset = omen + ENDING_ACTS.omen * ticksPerSecond;
+  const unmaking = onset + ENDING_ACTS.onset * ticksPerSecond;
+  const silence = unmaking + ENDING_ACTS.unmaking * ticksPerSecond;
+  return { omen, onset, unmaking, silence, commit: omen - ENDING_COMMIT_MARGIN_TICKS };
+}
+
 export interface ResolvedWorldEnding extends WorldEndingProfile {
   epitaph: string;
   dominantCivName: string | null;
