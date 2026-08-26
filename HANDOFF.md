@@ -394,3 +394,72 @@ CRLF-vs-LF trap has cost three separate debugging sessions (`src/biomes.ts` is
 CRLF on `main` while its neighbours are LF). `* text=auto eol=lf` is the fix,
 but it renormalises tracked files and belongs in its own PR where the diff can
 be read, not bundled into a docs rotation.
+
+---
+
+## The rally gate, measured and opened — claude — 2026-08-26
+
+The same miscalibration as the wonder gate (#35), spotted in that entry's
+"spotted, not done" and left unmeasured. Measured now.
+
+**The comment was wrong by 60x.** `rallyChance: 0.0002, rallyMinFortune: 0.1`
+carries the note *"keep rare (~1 in 10 declines)"*. Across **20 worlds at
+production fidelity** (`scripts/rally_gate.ts`, new — natural-wonder pull and
+volcanoes wired as `main.ts` wires them, real seed-rolled lifespans, stopping
+at the tick production commits the ending because `world.ending` blocks
+rallies outright):
+
+```
+604 declines, 1 rally  ->  1 in 604
+```
+
+**Where the boundary goes, and why it matters** — a Codex finding on the PR,
+confirmed against the source. The first cut of this harness stopped at
+`endTick - 1500` (the unmaking plus silence), copying `wonder_gate.ts`. That is
+the wrong line for a rally. `endingCheckpoints()` calls `commitEnding()` at
+`omen - 300` = **`endTick - 3360`**, and `commitEnding()` ends by calling
+`beginEnding()`, which sets `world.ending` there and then — so the harness was
+measuring **1,860 ticks per world in which the app can never rally**. Corrected
+to derive the cut from `ENDING_ACTS` rather than hardcode it.
+
+The distinction is specific: `wonder_gate.ts` is *not* wrong in the same way,
+because the wonder gate has no `world.ending` check and a stable civ really can
+raise a monument through the omen and onset. Only the gates that test
+`world.ending` — the rally and the refuge — were biased.
+
+**The bar was binding, not the roll.** Fortune is a mean-reverting walk with
+stationary sigma ~= 0.046, so 0.1 is a 2.2-sigma ask — open on only **1.1-2.1%**
+of a decline's ticks (consistent across all four shards). The harness counts,
+per decline episode, the ticks spent above each candidate bar, then reports
+expected rallies per decline as `1 - (1-chance)^openTicks`. That table is the
+calibration, and it says the roll was never the problem: even at `chance` 25x
+higher, a 0.1 bar still gives 1 in 15.
+
+**Moved one bar and one roll.** `rallyMinFortune` 0.1 -> **0.05** (~1.1 sigma,
+~14% of ticks — the same bar a golden age asks, since #36 set
+`wonderMinFortune` there for the same reason), `rallyChance` 0.0002 ->
+**0.0005**. Predicted 1 in 11.
+
+**Verified** by re-running the same 20 worlds with the new constants, on the
+corrected boundary:
+
+```
+1 in 6, 1 in 9, 1 in 16, 1 in 17   (per 5-world shard)
+581 declines, 57 rallies           ->  1 in 10 overall
+```
+
+which is exactly what the comment always claimed. About 3 rallies per world
+now, against 0.05 before — so "the viewer should never be certain a decline is
+fatal" becomes true rather than aspirational.
+
+**Could not verify:** whether a rally *reads* when it happens — whether the
+recovery is legible as a civ pulling out of a dive or just as a colour holding
+steady. That is a human's call at full resolution, and it is now actually
+observable often enough to make it.
+
+**Spotted, not done:** the denominator is slightly loose. `civ_declining` fires
+again when a civ that already rallied re-enters decline, but only the first
+decline is eligible (`!civ.hasRallied`), so the observed "1 in N" is a mild
+undercount of the true per-eligible-decline rate. The expected-value table uses
+eligible episodes and is exact; the two agree closely, which is why this was
+left rather than fixed.
