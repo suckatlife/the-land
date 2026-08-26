@@ -2195,3 +2195,81 @@ end-to-end; worth the same harness treatment.
 
 **Could not verify:** how a wonder *looks* rising in a live world — the code
 path runs, the visual call is a human's.
+
+---
+
+## A last flight finally makes landfall as a refuge — claude — 2026-08-26
+
+Issue #37: across 24 instrumented worlds, `last_flight` had fired 32 times and
+`refuge_founded` zero. The issue named four gating conditions and guessed the
+**parent-death race** bound. Measured (`scripts/refuge_race.ts`, new, 18-24
+worlds at production fidelity, tracking every desperate voyage by object
+identity from launch to whatever ended it):
+
+```
+38 last flights:  0 refuge  |  8 colony (21%)  |  30 lost (79%)
+lost, by cause:   nowhere 17 (57%, median age 6)   edge 7   drowned 6   aged 0
+```
+
+**The guess was wrong, and the real answer was a bug.** 57% of last flights
+died in a branch nobody had named: a voyage that reaches land where every
+landing candidate is water, rock, or already someone's falls through to
+`continue` and is *deleted*. Median age at death: **six ticks**. At
+`expeditionSpeed: 0.11` a ship needs ~9 ticks to cross one tile, so `age > 5`
+starts testing for landfall while the boat is still over its own harbour. Most
+last flights never went to sea at all.
+
+Fixed by having the voyage sail on when it finds nothing settleable —
+`surviving.push(exp)` instead of dropping it. `world.ending` deliberately keeps
+the old behaviour, so this cannot put a new boat on screen during the unmaking.
+That alone took `nowhere` from 57% of lost voyages to 5%. It produced **zero**
+refuges.
+
+**Because the race was real too, just not binding.** All 8 landfalls happened
+while the parent still lived, by a median of **1059 ticks**. The issue
+suggested launching the flight *earlier*; the measurement says the opposite —
+it must launch **later**, so the homeland dies during the voyage.
+
+Strength is useless as the trigger, which is worth writing down: death is
+scheduled by `phaseAge > phaseDuration` and nothing else, so measured remaining
+life barely moves across strength bands (median 918 ticks below 0.05, 684 below
+0.3, non-monotonic across ~110k samples). **Decline progress is the only real
+predictor.** So `lastFlightMinDecline` gates the launch on
+`phaseAge / phaseDuration`, with `lastFlightChance` raised 10x because the
+window it rolls against is a tenth as long.
+
+Swept, 24 worlds per point:
+
+```
+gate   flights  refuges          worlds with >=1
+0.75      26       0   ( 0%)        0 / 16
+0.85      38       5   (13%)        3 / 20
+0.90      30       8   (27%)        6 / 18   <- shipped
+0.95      29      11   (38%)        8 / 18
+```
+
+0.90 puts a refuge in roughly **one world in three** — rare enough to stay a
+beat, common enough to exist. It is one constant, and it moves smoothly, so it
+is easy to retune by eye.
+
+**Verified** by re-running the same 24 seeds against the committed constants
+rather than harness overrides: 18 worlds, 30 last flights, **8 refuges**, 6
+worlds with at least one — identical to the swept 0.90 row. `npm run build`
+passes.
+
+One caveat on reading the after-numbers: `nowhere` stops being a real branch
+once the drop is fixed, so the 4 voyages still labelled that way are loss-roll
+deaths that happened to occur over unusable ground. Counted honestly, the sea
+takes 12 of the 17 lost voyages and the map edge takes 5. The label is kept in
+the harness only so before/after runs stay comparable.
+
+**Could not verify:** whether a refuge *reads* — whether "a dead nation's name
+on a far shore" lands as that, or just as another civ appearing. The narration
+and the `refugee` founding story already exist; nobody has ever seen them fire,
+so this is the first chance to judge them.
+
+**Spotted, not done:** `edge` is now the second-largest sink (21% of lost
+voyages) — expeditions that sail off the grid and vanish. On a world drawn as a
+planet's limb, a ship leaving the map is arguably fine, but it was never a
+decision, just a bounds check. Worth a look before anyone tunes voyage length
+again.

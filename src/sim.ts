@@ -311,8 +311,27 @@ expeditionLaunchCityRadius: 11,  // launch coast must be within this radius (× 
   rallyMinFortune: 0.1,
 
   // Last flight — a declining civ may send one final expedition seaward.
-  lastFlightChance: 0.00005,
+  // It has to be a LAST flight to become a refuge: the survivors only found a
+  // successor nation if the homeland dies before they make landfall. Measured
+  // (scripts/refuge_race.ts, 18 worlds): every one of the 8 last flights that
+  // reached a shore did so while its parent was still alive, by a median of
+  // 1059 ticks — the voyage was not losing a race, it was never in one.
+  // Strength is no help as a trigger: death is scheduled by
+  // `phaseAge > phaseDuration` alone, and measured remaining life barely
+  // moves across strength bands (median 1035 ticks below 0.05, 679 below
+  // 0.2). Decline PROGRESS is the only real predictor, so gate on it — the
+  // flight leaves in the last tenth of the decline, ~160 ticks from the end
+  // rather than a thousand-odd. The chance rises 10x to match: the window it
+  // rolls against is now a tenth as long, so launches stay about as frequent.
+  // Swept (24 worlds per point) — the gate is the whole lever, and refuges
+  // scale smoothly with it, so this is one constant to move by eye later:
+  //   0.75 -> 0/26 flights became refuges     0 worlds in 16
+  //   0.85 -> 5/38  (13%)                     3 worlds in 20
+  //   0.90 -> 8/30  (27%)                     6 worlds in 18   <- here
+  //   0.95 -> 11/29 (38%)                     8 worlds in 18
+  lastFlightChance: 0.0005,
   lastFlightMinSize: 12,
+  lastFlightMinDecline: 0.9,
 
   // Wonders — a large, fortunate civ in its stable age may raise one
   // monument, which outlives it. The fortune bar is the binding condition:
@@ -1112,6 +1131,7 @@ function maybeLaunchExpeditions(world: SimWorld, biomes: Biome[][], tileCounts: 
       if (rand() > SIM.expeditionLaunchChance * characterOf(world).civ.expedition) continue;
     } else if (civ.phase === 'declining' && !civ.hasFled) {
       if ((tileCounts.get(civ.id) || 0) < SIM.lastFlightMinSize) continue;
+      if (civ.phaseAge < civ.phaseDuration * SIM.lastFlightMinDecline) continue;
       if (rand() > SIM.lastFlightChance) continue;
       desperate = true;
     } else {
@@ -1167,6 +1187,7 @@ function advanceExpeditions(world: SimWorld, biomes: Biome[][], changed: Array<{
         [ir, ic],
         [ir - 1, ic], [ir + 1, ic], [ir, ic - 1], [ir, ic + 1],
       ];
+      let landed = false;
       for (const [tr, tc] of landingCandidates) {
         if (tr < 0 || tr >= world.height || tc < 0 || tc >= world.width) continue;
         if (biomes[tr][tc] === 'water' || biomes[tr][tc] === 'rock') continue; // can't settle the peaks
@@ -1207,6 +1228,7 @@ function advanceExpeditions(world: SimWorld, biomes: Biome[][], changed: Array<{
             target.lastChangedTick = world.tick;
             changed.push({ row: tr, col: tc });
             events.push({ kind: 'refuge_founded', civId: newId, parentName: civ.name, row: tr, col: tc });
+            landed = true;
           } else {
             target.state = 'cleared';
             target.civId = exp.civId;
@@ -1214,11 +1236,23 @@ function advanceExpeditions(world: SimWorld, biomes: Biome[][], changed: Array<{
             target.lastChangedTick = world.tick;
             changed.push({ row: tr, col: tc });
             events.push({ kind: 'colony_founded', civId: exp.civId, desperate: exp.desperate, row: tr, col: tc });
+            landed = true;
           }
           break;
         }
       }
-      continue;
+      // A shore with nothing settleable on it is not the end of a voyage —
+      // it is a shore. Dropping the expedition here was the single largest
+      // sink in the last-flight pathway (issue #37): 57% of last flights died
+      // this way at a median age of SIX ticks, still within sight of the
+      // harbour they left, because at 0.11 tiles/tick a ship has barely
+      // cleared its own coastline by the time `age > 5` starts testing for
+      // landfall. Sail on; the loss roll and `expeditionMaxAge` still bound
+      // the voyage.
+      // `world.ending` keeps its old behaviour deliberately: during the
+      // staged ending a blocked landing still ends the voyage, so this fix
+      // cannot put a new boat on screen during the unmaking.
+      if (landed || world.ending) continue;
     }
 
     surviving.push(exp);
