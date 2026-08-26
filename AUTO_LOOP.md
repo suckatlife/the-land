@@ -21,7 +21,9 @@ it stands. `CLAUDE.md`'s invariants are non-negotiable.
    near-empty neolithic world; 5 minutes is contested; 10 is late and dense.
    Most of what's worth fixing only shows in one of the three.
 2. **Read `HANDOFF.md`** — the whole of the last entry, and skim the rest so you
-   don't redo or undo something already tried.
+   don't redo or undo something already tried. It is rotated, so "the rest" is
+   the current week; `docs/archive/handoff/` holds everything before that and is
+   worth a grep before you claim something is new.
 3. **Choose one thing.** A feature, a fix, or a real improvement to something
    that already exists. Justify it from what you SAW, not from what sounds good.
 4. **Build it.** Tuning constants first, architecture last.
