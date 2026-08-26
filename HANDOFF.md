@@ -463,3 +463,111 @@ decline is eligible (`!civ.hasRallied`), so the observed "1 in N" is a mild
 undercount of the true per-eligible-decline rate. The expected-value table uses
 eligible episodes and is exact; the two agree closely, which is why this was
 left rather than fixed.
+
+---
+
+## Civilisation archetypes: geography as culture, one level down — claude — 2026-08-24
+
+Issue #27, the top-ranked build from the landscape analysis. A `Civ` now
+carries an **archetype** — maritime, highland, sylvan or plains — read
+deterministically from the terrain within radius 4 of its founding site
+(`archetypeFor`, sim.ts), and one **earned trait** — survivor, refugee or
+iceborn — taken from the first great thing it lives through. No random draw
+for either: the archetype is the terrain's consequence, the trait is history's.
+
+**Behaviour, measured.** `ARCHETYPE_CIV` bends the same four levers
+`FORM_CIV` already bends, composed by multiplication at the same call sites
+(spread, expedition launch, ambition at all three civ-creation sites, and
+conquest as *defensibility* — the defender's ground raises the attacker's
+bar). `scripts/archetype_census.ts` (new) runs 12 worlds headlessly and
+censuses the result. Final: maritime 26% of civs / highland 6% / sylvan 20% /
+plains 48%; water-crossings per civ 2.36 / 0.65 / 1.49 / 1.45; peak size 288 /
+475 / 544 / 503. A viewer can infer the archetype from conduct: the sea
+people sail, the high people hold, the plains people sprawl.
+
+**Three calibration bugs the census caught before review:**
+1. First maritime threshold (water ≥ 0.25) captured **75% of all civs** — the
+   median founding site on a 96×96 island already has 39% water in radius 4.
+   Thresholds are now set from measured founding-site quantiles (0.55 water /
+   0.10 rock / 0.18 forest).
+2. First expedition multipliers let plains match maritime boat for boat
+   (bigger civs clear `expeditionMinSize` more often). The gap was widened
+   until the census separated.
+3. The iceborn trait as first designed — awarded at `ice_retreat` to civs
+   born before the advance — **could never fire**: retreat happens at ~90% of
+   the reference cycle but worlds die at 58–97% minus the ending, and no civ
+   spans the whole glaciation anyway (0 candidates in 12 worlds). The #35
+   dead-content trap, caught by the same instrument. It is now awarded at
+   `ice_peak` to living civs whose birthplace lies under the sheet
+   (`iceDepthAt > 0.15`): the glacier reached them and they did not move.
+   Fires for ~3% of civs.
+
+**Spotted, filed as #37:** `refuge_founded` — the beat this work wanted for
+the refugee trait — fired **zero times in 24 instrumented worlds** against 21
+last flights. The trait wiring stays (it costs nothing and fires the moment
+the pathway does); the pathway is its own measured fix.
+
+**The visible half.** Settlement *shape* is the exaggerated feature
+(`ARCH_SHAPE`, main.ts): highland builds tight and steep — 0.72× density
+radius, harder falloff edge, +1 storey inside the era's range; plains sprawls
+low and wide — 1.25× radius, softer edge, −1 storey; maritime and sylvan sit
+between. Roof language is the quiet second read (`ARCH_ROOFS`): each
+archetype draws from a fixed pair per roof pool instead of the whole set.
+One birth-narration line per archetype names the people in the terrain's own
+terms. Era treatment (lights, skylines, saturation) is untouched and
+composes on top.
+
+**Verified:** `scripts/archetype_smoke.mjs` (new) drives the real app —
+doorway dismissed, 15k ticks skipped: every civ carries an archetype, traits
+appear, zero page errors. FPS 2.3 vs 2.7 on main under SwiftShader — noise,
+not a regression signal, but this rig software-renders; a real-GPU check is
+worth a glance.
+
+**Could not verify:** whether the shapes and roofs *read* — whether a
+highland citadel and a plains sprawl are distinguishable at arm's length, and
+whether the roof pairings are the right frames. `ARCH_SHAPE` and `ARCH_ROOFS`
+are deliberately small tables for exactly that correction.
+
+**Census fidelity, after review — claude — 2026-08-26.** Two Codex P2 findings,
+both saying the census was not measuring the world it claimed to. It began the
+ending with an empty fade map, but `step()` uses that map to retire civs across
+the 35-second unmaking — with an empty one every civ kept spreading and
+conquering to the silence. And it left `volcanoes` and `wonderSites` empty,
+where production fills both: wonder pull moves where civs found (which is what
+`archetypeFor()` reads) and standing volcanoes award the survivor trait (which
+is what the trait census counts). `buildFadeSchedule()` moved from `main.ts`
+into `endings.ts` — parameterised on world and `ticksPerSecond`, the same
+treatment `endingActTicks()` got, so a harness can reproduce the ending without
+duplicating the math.
+
+**Then a third finding, and this one was mine.** Fixing "empty fade map" by
+always building one overcorrected: `main.ts` stages act 3 for **`rewilded`
+only** and passes an empty map for every other ending, so scheduling deaths
+unconditionally forced all 12 census worlds through rewilding behaviour — the
+round-one bug in reverse. Now gated on the resolved ending exactly as
+`commitEnding()` does, which means the census also has to accumulate a real
+`WorldHistory` (`createWorldHistory` / `rememberWorldEvents`), because
+`commitEndingKind()` reads one.
+
+**The calibration survives all three.** Re-run at 12 seeds, 385 civs:
+
+```
+maritime  19.0%  colonies/civ 2.88  avg peak 236
+highland   8.8%  colonies/civ 0.76  avg peak 668
+sylvan    21.0%  colonies/civ 1.48  avg peak 578
+plains    51.2%  colonies/civ 1.23  avg peak 421
+survivor 16.4%   iceborn 2.6%   refugee 0.0%
+```
+
+All four archetypes occur, and they diverge in the direction the multipliers
+claim: a maritime civ founds **3.8x** the colonies a highland one does, while a
+highland civ reaches **2.8x** its peak extent. Geography as culture, in numbers.
+
+Worth noting the numbers moved between rounds — sylvan's colonies/civ went
+2.27 to 1.48 once the fade schedule stopped applying to every ending. The
+conclusion held, but it was not guaranteed to, which is the argument for
+re-running rather than assuming a fidelity fix is cosmetic.
+
+`refugee` is 0.0% because `refuge_founded` never fires — 12 last flights, zero
+refuges, which is issue #37 exactly. That trait becomes reachable when #47
+lands; nothing here needs to change for it.
