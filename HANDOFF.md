@@ -526,8 +526,24 @@ take the coastal land first, so the desperate ones find somewhere to land:
                   flights  refuges  worlds with >=1  ordinary colonies/world
 main                  34        0        0 / 24               71.5
 fix, unscoped         28        6        5 / 24               88.1
-fix, scoped           24       10        7 / 24               70.0   <- shipped
+fix, scoped           24       10        7 / 24               70.0
 ```
+
+**Then the sample doubled, and the headline halved.** Those are 24 worlds. Run
+on a fresh 24 (seeds 24-47) the same build gives **4 refuges in 29 flights —
+14%, not 42%**. The first sample was lucky. Pooled over all 48 worlds, against
+`main` measured on the same 48:
+
+```
+                  worlds  flights  refuges  worlds with >=1  ordinary colonies/world
+main                  48       57        0        0                60.4
+gate 0.95, scoped     48       53       14 (26%) 11                60.7
+```
+
+**A refuge in about one world in four**, and colonisation genuinely untouched —
+60.4 to 60.7, which is the number the scoping was for. This is the figure to
+quote; the 42% was a small sample flattering itself, and it would have gone
+into the source comment unchallenged if the out-of-sample run had been skipped.
 
 The gate itself was swept at 24 worlds per point — 0.85: 6/30 (20%), 0.90:
 3/29 (10%), 0.95: 10/24 (42%), 0.98: 11/30 (37%) — and **that is a floor, not

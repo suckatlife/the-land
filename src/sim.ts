@@ -336,17 +336,16 @@ expeditionLaunchCityRadius: 11,  // launch coast must be within this radius (× 
   // flight leaves in the last twentieth of the decline, so the homeland falls
   // while the ship is still at sea. The chance rises to match: the window it
   // rolls against is a twentieth as long, so launches stay about as frequent
-  // (~1 per world). Swept at 24 worlds per point:
-  //   0.85 ->  6/30 flights became refuges (20%)    5 worlds
-  //   0.90 ->  3/29 (10%)                           3 worlds
-  //   0.95 -> 10/24 (42%)                           7 worlds   <- here
-  //   0.98 -> 11/30 (37%)                           9 worlds
-  // Read that as a floor, not a curve. ~25 flights per point is far too few
-  // to separate 20% from 42%; the 0.90 dip is noise, not a trough, and
-  // anything from 0.85 up would be defensible. What the sweep DOES establish
-  // is the only claim that matters: on `main` it is 0 refuges in 34 flights,
-  // and above 0.85 it is reliably not zero. The gate is the lever; its exact
-  // value is a taste call.
+  // (~1 per world). Measured over 48 worlds, against `main` on the same 48:
+  //   main          57 flights,  0 refuges ( 0%),  0 worlds
+  //   gate 0.95     53 flights, 14 refuges (26%), 11 worlds
+  // The gate was swept at 24 worlds per point (0.85 -> 20%, 0.90 -> 10%,
+  // 0.95 -> 42%, 0.98 -> 37%) but read that as a floor, not a curve: ~25
+  // flights per point cannot separate 20% from 42%, the 0.90 dip is noise,
+  // and 0.95's own 42% fell to 14% on a fresh 24 seeds — which is where the
+  // pooled 26% comes from. Anything from 0.85 up is defensible. What is
+  // solid is the only claim that matters: zero on `main`, reliably not zero
+  // above 0.85. The gate is the lever; its exact value is a taste call.
   //
   // 0.95 rather than 0.98 for that taste call: the race should stay a race.
   // At 0.95 the voyages that just miss, miss by 13-43 ticks. At 0.98 the
