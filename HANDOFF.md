@@ -2151,6 +2151,53 @@ handler.
 
 ---
 
+## The wonder gate, measured and opened — claude — 2026-08-24
+
+Issue #35: no instrumented world had ever built a wonder. The issue asked for
+measurement before tuning, and guessed the binding condition was
+`wonderChance` or `wonderMinSize`. **It was neither — it was the fortune bar.**
+
+`scripts/wonder_gate.ts` (new; runs the sim headlessly in Node via rolldown,
+replicating `generateWorldTerrain`'s land-target nudge) instrumented each gate
+condition independently across 20 seeds. Codex's reviews caught the first
+version simulating 30000-tick lives with no natural wonders in play, and then
+the over-corrected ending cut; the harness now mirrors production —
+`worldFateForSeed` lifespans (58–97% of the cycle), seed-placed natural
+wonders and volcanoes fed back through `setWonderSites`/`setVolcanoes`, and
+ordinary life counted through the omen and onset acts (the wonder gate has no
+`!world.ending` guard), excluding only the unmaking and silence. At that
+fidelity, ~3.4M civ-ticks:
+
+- `stable`: ~41–49% of civ-ticks depending on window. Not binding.
+- `size >= 160`: healthy everywhere — every form's top civs clear it
+  (archipelago's largest run 480–870 tiles). Not binding.
+- `fortune > 0.12`: **~0.1%**. The fortune walk (step ±0.008, revert 0.005)
+  has stationary σ ≈ 0.046, so 0.12 is a 2.6σ ask that must coincide with the
+  other three conditions. The full gate opened ~176 ticks/world. Realized:
+  **1 wonder across 20 production-fidelity worlds.** "No world has ever
+  built one" was the expected outcome, not bad luck.
+
+**Fix: `wonderMinFortune` 0.12 → 0.05** (~1.1σ, the top ~14% of a civ's
+luck). Chance and size untouched, per the issue's warning not to make wonders
+routine. The same 20 seeds at 0.05, final window: **20 wonders — 8 worlds
+none, 7 one, 2 two, 3 three.** (0.06 gave 15 with 11 worlds empty — a shade
+too scarce for the record card; 0.04 tipped toward routine.)
+
+Also verified the never-exercised downstream path by reading it end to end:
+narration (`WONDER_TITLES` covers all six eras), ping, `drawWonders` build
+animation and dead-civ ruin state, and `endings.ts` history count all hang off
+`wonder_built`/`civ.wonder` correctly.
+
+**Spotted, not done:** the rally gate has the same shape of miscalibration —
+`rallyMinFortune: 0.1` is ~2.2σ (~1.3% of ticks) and its comment claims
+"~1 in 10 declines" while the numbers give more like 1 in 100. Not measured
+end-to-end; worth the same harness treatment.
+
+**Could not verify:** how a wonder *looks* rising in a live world — the code
+path runs, the visual call is a human's.
+
+---
+
 ## Civilisation archetypes: geography as culture, one level down — claude — 2026-08-24
 
 Issue #27, the top-ranked build from the landscape analysis. A `Civ` now
