@@ -9,7 +9,10 @@ import {
   setVolcanoes, setWonderSites,
   type CivArchetype, type CivTrait,
 } from '../src/sim';
-import { worldFateForSeed, endingActTicks, buildFadeSchedule } from '../src/endings';
+import {
+  worldFateForSeed, endingActTicks, buildFadeSchedule,
+  createWorldHistory, rememberWorldEvents, commitEndingKind,
+} from '../src/endings';
 
 const GRID = 96;
 const LAND_TARGET = { min: 0.20, max: 0.70, step: 0.02, tries: 12 };
@@ -84,8 +87,13 @@ for (const seed of seeds) {
   const nat = placeNaturalWonders(biomes, elevation, seed, form);
   setVolcanoes(world, nat.filter(w => w.kind === 'volcano').map(w => ({ row: w.row, col: w.col })));
   setWonderSites(world, nat.map(w => ({ row: w.row, col: w.col, pull: WONDER_PULL[w.kind], radius: WONDER_RADIUS[w.kind] })));
-  const TICKS = worldFateForSeed(seed, SIM.worldCycleTicks).endTick;
+  const fate = worldFateForSeed(seed, SIM.worldCycleTicks);
+  const TICKS = fate.endTick;
   const acts = endingActTicks(TICKS, TICKS_PER_SECOND);
+  // commitEndingKind() reads the world's accumulated history, so the census
+  // has to keep one the way main.ts does — otherwise it cannot tell which
+  // ending a seed resolves to, and the fade schedule below is a guess.
+  const history = createWorldHistory(biomes);
   const civMax = new Map<number, number>();
   let advTick: number | null = null;
   let endingBegun = false;
@@ -94,13 +102,19 @@ for (const seed of seeds) {
   for (let t = 0; t < TICKS; t++) {
     if (!endingBegun && t >= acts.commit) {
       endingBegun = true;
-      // The real schedule, not an empty map: step() uses it to retire civs
-      // across the unmaking, so an empty one leaves everyone spreading and
-      // conquering right up to the silence.
-      beginEnding(world, buildFadeSchedule(world, TICKS, TICKS_PER_SECOND));
+      // Exactly main.ts's commitEnding(): phase 1 stages act 3 for `rewilded`
+      // only, so every other ending gets an empty map and keeps today's act 3.
+      // Scheduling deaths for all of them would force every world through
+      // rewilding — the round-one fidelity bug in reverse.
+      const kind = commitEndingKind(world, biomes, history, fate).ending;
+      const fade = kind === 'rewilded'
+        ? buildFadeSchedule(world, TICKS, TICKS_PER_SECOND)
+        : new Map<number, number>();
+      beginEnding(world, fade);
     }
     if (!silenced && t >= acts.silence) { silenced = true; beginSilence(world); }
     const { events } = step(world, biomes, elevation);
+    rememberWorldEvents(history, events);
     for (const e of events) {
       if (e.kind === 'colony_founded') {
         const c = world.civs.get(e.civId);

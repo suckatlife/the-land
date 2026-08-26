@@ -540,20 +540,33 @@ into `endings.ts` — parameterised on world and `ticksPerSecond`, the same
 treatment `endingActTicks()` got, so a harness can reproduce the ending without
 duplicating the math.
 
-**The calibration survives.** Re-run at 12 seeds, 388 civs:
+**Then a third finding, and this one was mine.** Fixing "empty fade map" by
+always building one overcorrected: `main.ts` stages act 3 for **`rewilded`
+only** and passes an empty map for every other ending, so scheduling deaths
+unconditionally forced all 12 census worlds through rewilding behaviour — the
+round-one bug in reverse. Now gated on the resolved ending exactly as
+`commitEnding()` does, which means the census also has to accumulate a real
+`WorldHistory` (`createWorldHistory` / `rememberWorldEvents`), because
+`commitEndingKind()` reads one.
+
+**The calibration survives all three.** Re-run at 12 seeds, 385 civs:
 
 ```
-maritime  18.6%  colonies/civ 2.53  avg peak 320
-highland   8.8%  colonies/civ 0.76  avg peak 608
-sylvan    22.9%  colonies/civ 2.27  avg peak 358
-plains    49.7%  colonies/civ 1.24  avg peak 538
-survivor 14.7%   iceborn 2.6%   refugee 0.0%
+maritime  19.0%  colonies/civ 2.88  avg peak 236
+highland   8.8%  colonies/civ 0.76  avg peak 668
+sylvan    21.0%  colonies/civ 1.48  avg peak 578
+plains    51.2%  colonies/civ 1.23  avg peak 421
+survivor 16.4%   iceborn 2.6%   refugee 0.0%
 ```
 
 All four archetypes occur, and they diverge in the direction the multipliers
-claim: a maritime civ founds **3.3x** the colonies a highland one does, while a
-highland civ reaches nearly twice its peak extent. Geography as culture, in
-numbers.
+claim: a maritime civ founds **3.8x** the colonies a highland one does, while a
+highland civ reaches **2.8x** its peak extent. Geography as culture, in numbers.
+
+Worth noting the numbers moved between rounds — sylvan's colonies/civ went
+2.27 to 1.48 once the fade schedule stopped applying to every ending. The
+conclusion held, but it was not guaranteed to, which is the argument for
+re-running rather than assuming a fidelity fix is cosmetic.
 
 `refugee` is 0.0% because `refuge_founded` never fires — 12 last flights, zero
 refuges, which is issue #37 exactly. That trait becomes reachable when #47
