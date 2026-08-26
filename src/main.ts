@@ -25,6 +25,7 @@ import {
   createWorldHistory,
   rememberWorldEvents,
   commitEndingKind,
+  buildFadeSchedule,
   measure as measureEnding,
   resolveWorldEnding,
   scoreEndings,
@@ -1825,32 +1826,6 @@ const ENDING_OMENS: Record<WorldEndingKind, string> = {
   garden: 'Nothing is being built that was not asked for.',
 };
 
-// The quiet end is *scheduled*, not merely unforced: ordinary decline takes
-// ~50 world-seconds and may not even have begun, so left alone the silence
-// would open with the lights still on. Smallest civs go first, spread across
-// the unmaking, and the last one falls before the silence. Deterministic —
-// ordered by tile count then id, no RNG, so a seed still replays.
-function buildFadeSchedule(endTick: number): Map<number, number> {
-  const acts = endingActTicks(endTick, ticksPerSecond);
-  const counts = new Map<number, number>();
-  for (let row = 0; row < GRID_SIZE; row++) {
-    for (let col = 0; col < GRID_SIZE; col++) {
-      const id = simWorld.tiles[row][col].civId;
-      if (id != null) counts.set(id, (counts.get(id) ?? 0) + 1);
-    }
-  }
-  const living = [...simWorld.civs.values()]
-    .filter((c) => c.phase !== 'dead')
-    .sort((a, b) => (counts.get(a.id) ?? 0) - (counts.get(b.id) ?? 0) || a.id - b.id);
-
-  const schedule = new Map<number, number>();
-  const span = acts.silence - acts.unmaking;
-  living.forEach((civ, i) => {
-    schedule.set(civ.id, acts.unmaking + Math.round(((i + 1) / (living.length + 1)) * span));
-  });
-  return schedule;
-}
-
 // Debug only: force the title the next commitment will use, so the staged acts
 // can be exercised without hunting for a seed that produces them.
 let forcedEndingKind: WorldEndingKind | null = null;
@@ -1866,7 +1841,7 @@ function commitEnding() {
   // `world_empire` get the omen and the held silence but keep today's act 3,
   // because each needs a different gesture and none of them is a death.
   const fade = committedEnding.ending === 'rewilded'
-    ? buildFadeSchedule(currentWorldFate.endTick)
+    ? buildFadeSchedule(simWorld, currentWorldFate.endTick, ticksPerSecond)
     : new Map<number, number>();
   beginEnding(simWorld, fade);
 }

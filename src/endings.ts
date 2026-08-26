@@ -161,6 +161,39 @@ export function endingActTicks(endTick: number, ticksPerSecond: number) {
   return { omen, onset, unmaking, silence, commit: omen - ENDING_COMMIT_MARGIN_TICKS };
 }
 
+// The quiet end is *scheduled*, not merely unforced: ordinary decline takes
+// ~50 world-seconds and may not even have begun, so left alone the silence
+// would open with the lights still on. Smallest civs go first, spread across
+// the unmaking, and the last one falls before the silence. Deterministic —
+// ordered by tile count then id, no RNG, so a seed still replays.
+//
+// Lives here rather than in main.ts so headless harnesses can reproduce the
+// ending exactly, for the same reason endingActTicks() was moved: a census
+// that begins the ending with an empty schedule leaves every civ spreading
+// and conquering through the unmaking, which is not what anyone watches.
+export function buildFadeSchedule(
+  world: SimWorld, endTick: number, ticksPerSecond: number,
+): Map<number, number> {
+  const acts = endingActTicks(endTick, ticksPerSecond);
+  const counts = new Map<number, number>();
+  for (let row = 0; row < world.height; row++) {
+    for (let col = 0; col < world.width; col++) {
+      const id = world.tiles[row][col].civId;
+      if (id != null) counts.set(id, (counts.get(id) ?? 0) + 1);
+    }
+  }
+  const living = [...world.civs.values()]
+    .filter((c) => c.phase !== 'dead')
+    .sort((a, b) => (counts.get(a.id) ?? 0) - (counts.get(b.id) ?? 0) || a.id - b.id);
+
+  const schedule = new Map<number, number>();
+  const span = acts.silence - acts.unmaking;
+  living.forEach((civ, i) => {
+    schedule.set(civ.id, acts.unmaking + Math.round(((i + 1) / (living.length + 1)) * span));
+  });
+  return schedule;
+}
+
 export interface ResolvedWorldEnding extends WorldEndingProfile {
   epitaph: string;
   dominantCivName: string | null;

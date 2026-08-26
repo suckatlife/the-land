@@ -3,11 +3,13 @@
 // four kinds actually occur, and the behaviour multipliers are only real if
 // the archetypes measurably diverge — this script checks both.
 import { generateBiomeMap, landFraction } from '../src/biomes';
+import { placeNaturalWonders, type NaturalWonderKind } from '../src/naturalWonders';
 import {
   createSimWorld, rollCharacter, seedInitialCivs, step, beginEnding, beginSilence, SIM,
+  setVolcanoes, setWonderSites,
   type CivArchetype, type CivTrait,
 } from '../src/sim';
-import { worldFateForSeed, endingActTicks } from '../src/endings';
+import { worldFateForSeed, endingActTicks, buildFadeSchedule } from '../src/endings';
 
 const GRID = 96;
 const LAND_TARGET = { min: 0.20, max: 0.70, step: 0.02, tries: 12 };
@@ -18,6 +20,18 @@ const LAND_TARGET = { min: 0.20, max: 0.70, step: 0.02, tries: 12 };
 // on. Running raw simulation straight to endTick instead would count
 // behavior from a window players never actually see.
 const TICKS_PER_SECOND = 30;
+// main.ts's rebuildNaturalWonders() / syncSimWonders() feed these to the sim:
+// wonder pull moves where civs found, and standing volcanoes damage civs and
+// award the survivor trait — both of which this census is measuring. Copied
+// from the top of main.ts, which cannot be imported without a DOM.
+const WONDER_PULL: Record<NaturalWonderKind, number> = {
+  volcano: -4, crater_lake: 3, monolith: 2, rainbow_hills: 1.5, karst_spires: 1.5, salt_flat: 2,
+  atoll: 3, canyon: -2, dune_sea: -3,
+};
+const WONDER_RADIUS: Record<NaturalWonderKind, number> = {
+  volcano: 5, crater_lake: 8, monolith: 7, rainbow_hills: 6, karst_spires: 6, salt_flat: 6,
+  atoll: 6, canyon: 8, dune_sea: 9,
+};
 
 function terrainFor(seed: string) {
   const character = rollCharacter(seed);
@@ -64,9 +78,12 @@ function foundingFracs(biomes: string[][], row: number, col: number) {
 let iceAdvances = 0, iceRetreats = 0, icebornCandidates = 0, lastFlights = 0, refugesFounded = 0;
 
 for (const seed of seeds) {
-  const { biomes, elevation } = terrainFor(seed);
+  const { biomes, elevation, form } = terrainFor(seed);
   const world = createSimWorld(GRID, GRID, seed);
   seedInitialCivs(world, biomes, 1);
+  const nat = placeNaturalWonders(biomes, elevation, seed, form);
+  setVolcanoes(world, nat.filter(w => w.kind === 'volcano').map(w => ({ row: w.row, col: w.col })));
+  setWonderSites(world, nat.map(w => ({ row: w.row, col: w.col, pull: WONDER_PULL[w.kind], radius: WONDER_RADIUS[w.kind] })));
   const TICKS = worldFateForSeed(seed, SIM.worldCycleTicks).endTick;
   const acts = endingActTicks(TICKS, TICKS_PER_SECOND);
   const civMax = new Map<number, number>();
@@ -75,7 +92,13 @@ for (const seed of seeds) {
   let silenced = false;
 
   for (let t = 0; t < TICKS; t++) {
-    if (!endingBegun && t >= acts.commit) { endingBegun = true; beginEnding(world, new Map()); }
+    if (!endingBegun && t >= acts.commit) {
+      endingBegun = true;
+      // The real schedule, not an empty map: step() uses it to retire civs
+      // across the unmaking, so an empty one leaves everyone spreading and
+      // conquering right up to the silence.
+      beginEnding(world, buildFadeSchedule(world, TICKS, TICKS_PER_SECOND));
+    }
     if (!silenced && t >= acts.silence) { silenced = true; beginSilence(world); }
     const { events } = step(world, biomes, elevation);
     for (const e of events) {
