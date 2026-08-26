@@ -529,14 +529,19 @@ fix, unscoped         28        6        5 / 24               88.1
 fix, scoped           24       10        7 / 24               70.0   <- shipped
 ```
 
-**0.95, not 0.98, and the reason is taste rather than arithmetic.** Refuges
-keep climbing with the gate, but at 0.95 the voyages that just miss, miss by
-**13-43 ticks** — the race is genuinely close. At 0.98 the flight leaves ~28
-ticks before the homeland falls, and arriving too late stops being possible,
-which trades a tense beat for a routine one. The sweep is in the source
-comment: it is one constant and it moves smoothly, so it is easy to retune by
-eye, and this is the kind of call that should be made watching rather than
-reading.
+The gate itself was swept at 24 worlds per point — 0.85: 6/30 (20%), 0.90:
+3/29 (10%), 0.95: 10/24 (42%), 0.98: 11/30 (37%) — and **that is a floor, not
+a curve.** ~25 flights per point cannot separate 20% from 42%; the 0.90 dip is
+noise, not a trough. The sweep establishes the one claim that matters — `main`
+is 0 in 34, and anything above 0.85 is reliably not zero — and nothing finer.
+Said plainly in the source comment rather than dressed up as calibration.
+
+**0.95 is therefore a taste call, not an arithmetic one.** It goes there
+because the race should stay a race: at 0.95 the voyages that just miss, miss
+by **13-43 ticks**. At 0.98 the flight leaves ~28 ticks before the homeland
+falls, and arriving too late stops being possible, which trades a tense beat
+for a routine one. That is the kind of judgement that should be made watching,
+not reading, and it is one constant to move.
 
 **Where the measurement boundary goes.** Codex's other finding, and it changed
 the answer rather than just the decimals. The first cut of this harness stopped

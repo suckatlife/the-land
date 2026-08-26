@@ -336,17 +336,22 @@ expeditionLaunchCityRadius: 11,  // launch coast must be within this radius (× 
   // flight leaves in the last twentieth of the decline, so the homeland falls
   // while the ship is still at sea. The chance rises to match: the window it
   // rolls against is a twentieth as long, so launches stay about as frequent
-  // (~1.6 per world against ~2 before). The gate is the whole lever and
-  // refuges scale smoothly with it, so this is one constant to move by eye:
-  //   0.75 ->  2/26 flights became refuges ( 8%)    2 worlds in 16
-  //   0.85 ->  2/31 ( 6%)                           2 worlds in 16
-  //   0.90 ->  3/35 ( 9%)                           3 worlds in 21
-  //   0.95 ->  6/28 (21%)                           5 worlds in 17   <- here
-  //   0.98 -> 10/29 (34%)                           -
-  // 0.95 rather than 0.98 because the race should stay a race: at 0.95 the
-  // voyages that just miss, miss by 5-60 ticks. At 0.98 the flight leaves
-  // ~28 ticks before the homeland falls and arriving too late stops being
-  // possible, which trades a tense beat for a routine one.
+  // (~1 per world). Swept at 24 worlds per point:
+  //   0.85 ->  6/30 flights became refuges (20%)    5 worlds
+  //   0.90 ->  3/29 (10%)                           3 worlds
+  //   0.95 -> 10/24 (42%)                           7 worlds   <- here
+  //   0.98 -> 11/30 (37%)                           9 worlds
+  // Read that as a floor, not a curve. ~25 flights per point is far too few
+  // to separate 20% from 42%; the 0.90 dip is noise, not a trough, and
+  // anything from 0.85 up would be defensible. What the sweep DOES establish
+  // is the only claim that matters: on `main` it is 0 refuges in 34 flights,
+  // and above 0.85 it is reliably not zero. The gate is the lever; its exact
+  // value is a taste call.
+  //
+  // 0.95 rather than 0.98 for that taste call: the race should stay a race.
+  // At 0.95 the voyages that just miss, miss by 13-43 ticks. At 0.98 the
+  // flight leaves ~28 ticks before the homeland falls, and arriving too late
+  // stops being possible, which trades a tense beat for a routine one.
   lastFlightChance: 0.001,
   lastFlightMinSize: 12,
   lastFlightMinDecline: 0.95,
