@@ -1,0 +1,4 @@
+# An append-only log: two branches adding entries at the end is not a
+# conflict, it is both entries. Union merge keeps them and skips the markers,
+# which is what every manual resolution of this file has done by hand.
+HANDOFF.md merge=union
