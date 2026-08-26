@@ -2207,8 +2207,8 @@ worlds at production fidelity, tracking every desperate voyage by object
 identity from launch to whatever ended it):
 
 ```
-38 last flights:  0 refuge  |  8 colony (21%)  |  30 lost (79%)
-lost, by cause:   nowhere 17 (57%, median age 6)   edge 7   drowned 6   aged 0
+34 last flights:  0 refuge  |  8 colony  |  26 lost
+lost, by cause:   nowhere 16 (62%, median age 6)   edge 6   drowned 4   aged 0
 ```
 
 **The guess was wrong, and the real answer was a bug.** 57% of last flights
@@ -2219,11 +2219,16 @@ landing candidate is water, rock, or already someone's falls through to
 starts testing for landfall while the boat is still over its own harbour. Most
 last flights never went to sea at all.
 
-Fixed by having the voyage sail on when it finds nothing settleable —
-`surviving.push(exp)` instead of dropping it. `world.ending` deliberately keeps
-the old behaviour, so this cannot put a new boat on screen during the unmaking.
-That alone took `nowhere` from 57% of lost voyages to 5%. It produced **zero**
-refuges.
+Fixed by having the voyage sail on when it finds nothing settleable — but
+**only until it has actually reached open water**. Codex caught the first cut
+of this: with a fixed heading, a ship that crossed the sea and met an occupied
+shore would keep going, track visibly across the continent, and could settle
+the far coast. An `atSea` flag confines the fix to its actual case — a ship
+still clearing its own harbour. Once it is at sea the old behaviour stands.
+`world.ending` also keeps its old behaviour, so no new boat can appear during
+the unmaking.
+
+That fix alone produced **zero** refuges.
 
 **Because the race was real too, just not binding.** All 8 landfalls happened
 while the parent still lived, by a median of **1059 ticks**. The issue
@@ -2238,30 +2243,40 @@ predictor.** So `lastFlightMinDecline` gates the launch on
 `phaseAge / phaseDuration`, with `lastFlightChance` raised 10x because the
 window it rolls against is a tenth as long.
 
-Swept, 24 worlds per point:
+Swept, 24 worlds per point, with both of Codex's corrections applied:
 
 ```
-gate   flights  refuges          worlds with >=1
-0.75      26       0   ( 0%)        0 / 16
-0.85      38       5   (13%)        3 / 20
-0.90      30       8   (27%)        6 / 18   <- shipped
-0.95      29      11   (38%)        8 / 18
+gate   flights  refuges           worlds with >=1
+0.75      26       2   ( 8%)         2 / 16
+0.85      31       2   ( 6%)         2 / 16
+0.90      35       3   ( 9%)         3 / 21
+0.95      28       6   (21%)         5 / 17   <- shipped
+0.98      29      10   (34%)         -
 ```
 
-0.90 puts a refuge in roughly **one world in three** — rare enough to stay a
-beat, common enough to exist. It is one constant, and it moves smoothly, so it
-is easy to retune by eye.
+**0.95, not 0.98, and the reason is taste rather than arithmetic.** The number
+keeps climbing, but at 0.95 the voyages that just miss, miss by **5-60 ticks** —
+the race is genuinely close. At 0.98 the flight leaves ~28 ticks before the
+homeland falls and arriving too late stops being possible, which trades a tense
+beat for a routine one. The table is in the source comment: it is one constant
+and it moves smoothly, so it is easy to retune by eye.
 
-**Verified** by re-running the same 24 seeds against the committed constants
-rather than harness overrides: 18 worlds, 30 last flights, **8 refuges**, 6
-worlds with at least one — identical to the swept 0.90 row. `npm run build`
-passes.
+**Where the measurement boundary goes.** Codex's other finding, and it changed
+the answer rather than just the decimals. The first cut of this harness stopped
+at `endTick - 1500`, copying `wonder_gate.ts`. Wrong line: `endingCheckpoints()`
+commits at `omen - 300` = **`endTick - 3360`**, and `commitEnding()` calls
+`beginEnding()`, which sets `world.ending` — and the refuge path reads
+`if (world.ending) break`. So the harness was admitting **1,860 ticks per world
+of last flights the app can never launch**, precisely inside the late-life
+window being calibrated. Corrected to derive the cut from `ENDING_ACTS`.
 
-One caveat on reading the after-numbers: `nowhere` stops being a real branch
-once the drop is fixed, so the 4 voyages still labelled that way are loss-roll
-deaths that happened to occur over unusable ground. Counted honestly, the sea
-takes 12 of the 17 lost voyages and the map edge takes 5. The label is kept in
-the harness only so before/after runs stay comparable.
+Between that and the `atSea` restriction, the shipped constant moved from 0.90
+to 0.95 — which is the whole argument for re-measuring after a review rather
+than patching the code and keeping the old table.
+
+`wonder_gate.ts` is deliberately left alone: the wonder gate has no
+`world.ending` check, so a stable civ really can raise a monument through the
+omen and onset, and its 1,500-tick cut is right for what it measures.
 
 **Could not verify:** whether a refuge *reads* — whether "a dead nation's name
 on a far shore" lands as that, or just as another civ appearing. The narration

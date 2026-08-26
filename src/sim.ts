@@ -179,6 +179,10 @@ export interface Expedition {
   age: number;
   trail: Array<{ row: number; col: number }>;
   desperate: boolean;
+  // Has this voyage ever actually been over open water? Until it has, it is
+  // still leaving its own harbour, and a "shore with nothing settleable" is
+  // its own coastline rather than a landfall. See advanceExpeditions().
+  atSea: boolean;
 }
 
 // The catastrophe that pressure is building toward — rolled when pressure
@@ -320,18 +324,23 @@ expeditionLaunchCityRadius: 11,  // launch coast must be within this radius (× 
   // `phaseAge > phaseDuration` alone, and measured remaining life barely
   // moves across strength bands (median 1035 ticks below 0.05, 679 below
   // 0.2). Decline PROGRESS is the only real predictor, so gate on it — the
-  // flight leaves in the last tenth of the decline, ~160 ticks from the end
-  // rather than a thousand-odd. The chance rises 10x to match: the window it
-  // rolls against is now a tenth as long, so launches stay about as frequent.
-  // Swept (24 worlds per point) — the gate is the whole lever, and refuges
-  // scale smoothly with it, so this is one constant to move by eye later:
-  //   0.75 -> 0/26 flights became refuges     0 worlds in 16
-  //   0.85 -> 5/38  (13%)                     3 worlds in 20
-  //   0.90 -> 8/30  (27%)                     6 worlds in 18   <- here
-  //   0.95 -> 11/29 (38%)                     8 worlds in 18
-  lastFlightChance: 0.0005,
+  // flight leaves in the last twentieth of the decline, so the homeland falls
+  // while the ship is still at sea. The chance rises to match: the window it
+  // rolls against is a twentieth as long, so launches stay about as frequent
+  // (~1.6 per world against ~2 before). The gate is the whole lever and
+  // refuges scale smoothly with it, so this is one constant to move by eye:
+  //   0.75 ->  2/26 flights became refuges ( 8%)    2 worlds in 16
+  //   0.85 ->  2/31 ( 6%)                           2 worlds in 16
+  //   0.90 ->  3/35 ( 9%)                           3 worlds in 21
+  //   0.95 ->  6/28 (21%)                           5 worlds in 17   <- here
+  //   0.98 -> 10/29 (34%)                           -
+  // 0.95 rather than 0.98 because the race should stay a race: at 0.95 the
+  // voyages that just miss, miss by 5-60 ticks. At 0.98 the flight leaves
+  // ~28 ticks before the homeland falls and arriving too late stops being
+  // possible, which trades a tense beat for a routine one.
+  lastFlightChance: 0.001,
   lastFlightMinSize: 12,
-  lastFlightMinDecline: 0.9,
+  lastFlightMinDecline: 0.95,
 
   // Wonders — a large, fortunate civ in its stable age may raise one
   // monument, which outlives it. The fortune bar is the binding condition:
@@ -1156,6 +1165,7 @@ function maybeLaunchExpeditions(world: SimWorld, biomes: Biome[][], tileCounts: 
       age: 0,
       trail: [{ row: coast.row, col: coast.col }],
       desperate,
+      atSea: false,
     });
   }
 }
@@ -1180,6 +1190,7 @@ function advanceExpeditions(world: SimWorld, biomes: Biome[][], changed: Array<{
 
     exp.trail.push({ row: ir, col: ic });
     if (exp.trail.length > 12) exp.trail.shift();
+    if (biomes[ir][ic] === 'water') exp.atSea = true;
 
     if (biomes[ir][ic] !== 'water' && exp.age > 5) {
       // Look for a settleable tile at the landing spot or just inland.
@@ -1241,18 +1252,29 @@ function advanceExpeditions(world: SimWorld, biomes: Biome[][], changed: Array<{
           break;
         }
       }
-      // A shore with nothing settleable on it is not the end of a voyage —
-      // it is a shore. Dropping the expedition here was the single largest
-      // sink in the last-flight pathway (issue #37): 57% of last flights died
-      // this way at a median age of SIX ticks, still within sight of the
-      // harbour they left, because at 0.11 tiles/tick a ship has barely
-      // cleared its own coastline by the time `age > 5` starts testing for
-      // landfall. Sail on; the loss roll and `expeditionMaxAge` still bound
-      // the voyage.
-      // `world.ending` keeps its old behaviour deliberately: during the
-      // staged ending a blocked landing still ends the voyage, so this fix
-      // cannot put a new boat on screen during the unmaking.
-      if (landed || world.ending) continue;
+      // A ship that has not yet reached open water is still leaving its own
+      // harbour, and the "shore" under it is its own coastline. Dropping the
+      // voyage there was the single largest sink in the last-flight pathway
+      // (issue #37): 62% of last flights died that way at a median age of SIX
+      // ticks, because at 0.11 tiles/tick a ship has barely cleared its
+      // launch tile by the time `age > 5` starts testing for landfall. Let it
+      // keep going until it is actually at sea.
+      //
+      // Once `atSea` is set the old behaviour stands: a voyage that crosses
+      // the water and meets a shore with nothing settleable on it ends there.
+      // It must not sail ON, because its direction is fixed — it would track
+      // visibly across the continent and could settle the far coast.
+      //
+      // Desperate voyages ONLY. An ordinary colonising expedition dies in this
+      // same branch and for the same wrong reason, but freeing it too measured
+      // at **88.1 ordinary colonies per world against 71.5** — a 23% busier
+      // world, which is a balance decision about how much the map fills in,
+      // not a fix to issue #37. Left as it is deliberately; it wants its own
+      // change and its own look at a real screen.
+      //
+      // `world.ending` also keeps its old behaviour, so this cannot put a new
+      // boat on screen during the unmaking.
+      if (landed || exp.atSea || !exp.desperate || world.ending) continue;
     }
 
     surviving.push(exp);

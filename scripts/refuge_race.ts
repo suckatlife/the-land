@@ -25,10 +25,17 @@ const WONDER_RADIUS: Record<NaturalWonderKind, number> = {
   volcano: 5, crater_lake: 8, monolith: 7, rainbow_hills: 6, karst_spires: 6, salt_flat: 6,
   atoll: 6, canyon: 8, dune_sea: 9,
 };
-// Same tail cut as wonder_gate.ts: the last (35 + 15) seconds are the staged
-// ending, not ordinary life. Refuges are explicitly blocked once `world.ending`
-// is set, so counting that window would measure a rule, not a race.
-const ENDING_TAIL_TICKS = Math.round((35 + 15) * 30);
+// Production does NOT run ordinary life to endTick. main.ts's
+// endingCheckpoints() calls commitEnding() at `omen - 300` — that is
+// endTick - ((40+12+35+15) * 30) - 300 = endTick - 3360 — and commitEnding()
+// calls beginEnding(), which sets `world.ending` there and then. Both the
+// rally (`!world.ending`) and the refuge (`if (world.ending) break`) are
+// blocked from that tick onward, so every tick past it is one the app can
+// never fire in. Measuring through it inflates the eligible window by ~1860
+// ticks per world and biases any constant calibrated from it.
+const ENDING_ACTS_SECONDS = 40 + 12 + 35 + 15;
+const ENDING_COMMIT_MARGIN_TICKS = 300;
+const ENDING_TAIL_TICKS = Math.round(ENDING_ACTS_SECONDS * 30) + ENDING_COMMIT_MARGIN_TICKS;
 
 function terrainFor(seed: string) {
   const character = rollCharacter(seed);
@@ -75,6 +82,10 @@ interface Flight {
   strengthAtLaunch: number;
 }
 const flights: Flight[] = [];
+// The harbour fix is not last-flight-only: an ORDINARY expedition dies in the
+// same branch, so freeing it changes how much the world colonises overall.
+// That is a world-behaviour change beyond issue #37's scope, so count it.
+const worldColonies: Array<{ seed: string; ordinary: number; desperate: number; ticks: number }> = [];
 
 // sim.ts keeps effectiveStrength() private; this is its line-for-line twin
 // (max(0, vitality + fortune)), used only to read the world, never to drive it.
@@ -122,6 +133,7 @@ for (const seed of seeds) {
   // Sampled every 10 ticks: a declining civ's strength, paired with its death
   // tick once the world has finished running.
   const decl = new Map<number, Array<{ t: number; s: number }>>();
+  let ordinaryColonies = 0, desperateColonies = 0;
   const deathTick = new Map<number, number>();
   const open: Flight[] = [];
 
@@ -139,6 +151,9 @@ for (const seed of seeds) {
     }
 
     // A last_flight event means maybeLaunchExpeditions just pushed its voyage.
+    for (const e of events) {
+      if (e.kind === 'colony_founded') { if (e.desperate) desperateColonies++; else ordinaryColonies++; }
+    }
     for (const e of events) {
       if (e.kind !== 'last_flight') continue;
       const exp = world.expeditions.find(x => x.desperate && x.civId === e.civId && !tracked.has(x));
@@ -172,6 +187,7 @@ for (const seed of seeds) {
   // A parent that died after its flight resolved still matters: the margin is
   // how much LATER the death was, so fill it in once the world is finished.
   for (const f of open) f.parentDeathTick = deathTick.get(f.civId) ?? null;
+  worldColonies.push({ seed, ordinary: ordinaryColonies, desperate: desperateColonies, ticks: TICKS });
   for (const [cid, tr] of decl) {
     const d = deathTick.get(cid);
     if (d === undefined) continue;
@@ -185,6 +201,7 @@ for (const seed of seeds) {
 // Sharding: running seeds in parallel processes and aggregating raw records
 // keeps a 24-world sweep to a few minutes without changing any per-world result.
 if (process.env.RAW) {
+  for (const w of worldColonies) console.log(JSON.stringify({ colonies: w }));
   for (const f of flights) console.log(JSON.stringify(f));
   for (let i = 0; i < BANDS.length; i++) {
     for (const r of bandRemaining[i]) console.log(JSON.stringify({ band: BANDS[i], remaining: r }));
