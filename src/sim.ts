@@ -307,8 +307,16 @@ expeditionLaunchCityRadius: 11,  // launch coast must be within this radius (× 
 
   // Rallies — a declining civ with good fortune can pull back to stable, once.
   // Uncertainty needs both outcomes possible; keep rare (~1 in 10 declines).
-  rallyChance: 0.0002,
-  rallyMinFortune: 0.1,
+  // The same arithmetic that closed the wonder gate closed this one: fortune
+  // is a mean-reverting walk with stationary sigma ~= 0.046, so a 0.1 bar is a
+  // 2.2-sigma ask open on only ~1.5% of a decline's ticks, and it had to
+  // coincide with the roll. Measured across 20 worlds at production fidelity
+  // (scripts/rally_gate.ts): 604 declines, ONE rally — 1 in 604, not 1 in 10.
+  // The bar was binding, not the roll. At 0.05 (~1.1 sigma, the same bar a
+  // golden age asks) the window is ~14% of ticks, and 0.0005 lands the pair at
+  // 1 in 11 measured — the number this comment always claimed.
+  rallyChance: 0.0005,
+  rallyMinFortune: 0.05,
 
   // Last flight — a declining civ may send one final expedition seaward.
   lastFlightChance: 0.00005,
