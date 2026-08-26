@@ -314,7 +314,8 @@ expeditionLaunchCityRadius: 11,  // launch coast must be within this radius (× 
   // (scripts/rally_gate.ts): 604 declines, ONE rally — 1 in 604, not 1 in 10.
   // The bar was binding, not the roll. At 0.05 (~1.1 sigma, the same bar a
   // golden age asks) the window is ~14% of ticks, and 0.0005 lands the pair at
-  // 1 in 11 measured — the number this comment always claimed.
+  // 1 in 10 measured (581 declines, 57 rallies) — the number this comment
+  // always claimed.
   rallyChance: 0.0005,
   rallyMinFortune: 0.05,
 

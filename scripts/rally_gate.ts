@@ -27,7 +27,17 @@ const WONDER_RADIUS: Record<NaturalWonderKind, number> = {
   volcano: 5, crater_lake: 8, monolith: 7, rainbow_hills: 6, karst_spires: 6, salt_flat: 6,
   atoll: 6, canyon: 8, dune_sea: 9,
 };
-const ENDING_TAIL_TICKS = Math.round((35 + 15) * 30);
+// Production does NOT run ordinary life to endTick. main.ts's
+// endingCheckpoints() calls commitEnding() at `omen - 300` — that is
+// endTick - ((40+12+35+15) * 30) - 300 = endTick - 3360 — and commitEnding()
+// calls beginEnding(), which sets `world.ending` there and then. Both the
+// rally (`!world.ending`) and the refuge (`if (world.ending) break`) are
+// blocked from that tick onward, so every tick past it is one the app can
+// never fire in. Measuring through it inflates the eligible window by ~1860
+// ticks per world and biases any constant calibrated from it.
+const ENDING_ACTS_SECONDS = 40 + 12 + 35 + 15;
+const ENDING_COMMIT_MARGIN_TICKS = 300;
+const ENDING_TAIL_TICKS = Math.round(ENDING_ACTS_SECONDS * 30) + ENDING_COMMIT_MARGIN_TICKS;
 
 function terrainFor(seed: string) {
   const character = rollCharacter(seed);
