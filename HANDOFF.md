@@ -466,6 +466,126 @@ left rather than fixed.
 
 ---
 
+## A last flight finally makes landfall as a refuge — claude — 2026-08-26
+
+Issue #37: across 24 instrumented worlds, `last_flight` had fired 32 times and
+`refuge_founded` zero. The issue named four gating conditions and guessed the
+**parent-death race** bound. Measured (`scripts/refuge_race.ts`, new, 18-24
+worlds at production fidelity, tracking every desperate voyage by object
+identity from launch to whatever ended it):
+
+```
+34 last flights:  0 refuge  |  8 colony  |  26 lost
+lost, by cause:   nowhere 16 (62%, median age 6)   edge 6   drowned 4   aged 0
+```
+
+**The guess was wrong, and the real answer was a bug.** 57% of last flights
+died in a branch nobody had named: a voyage that reaches land where every
+landing candidate is water, rock, or already someone's falls through to
+`continue` and is *deleted*. Median age at death: **six ticks**. At
+`expeditionSpeed: 0.11` a ship needs ~9 ticks to cross one tile, so `age > 5`
+starts testing for landfall while the boat is still over its own harbour. Most
+last flights never went to sea at all.
+
+Fixed by having the voyage sail on when it finds nothing settleable — but
+**only until it has actually reached open water**. Codex caught the first cut
+of this: with a fixed heading, a ship that crossed the sea and met an occupied
+shore would keep going, track visibly across the continent, and could settle
+the far coast. An `atSea` flag confines the fix to its actual case — a ship
+still clearing its own harbour. Once it is at sea the old behaviour stands.
+`world.ending` also keeps its old behaviour, so no new boat can appear during
+the unmaking.
+
+That fix alone produced **zero** refuges.
+
+**Because the race was real too, just not binding.** All 8 landfalls happened
+while the parent still lived, by a median of **1059 ticks**. The issue
+suggested launching the flight *earlier*; the measurement says the opposite —
+it must launch **later**, so the homeland dies during the voyage.
+
+Strength is useless as the trigger, which is worth writing down: death is
+scheduled by `phaseAge > phaseDuration` and nothing else, so measured remaining
+life barely moves across strength bands (median 918 ticks below 0.05, 684 below
+0.3, non-monotonic across ~110k samples). **Decline progress is the only real
+predictor.** So `lastFlightMinDecline` gates the launch on
+`phaseAge / phaseDuration`, with `lastFlightChance` raised 10x because the
+window it rolls against is a tenth as long.
+
+**And one thing the review did not raise.** The harbour branch kills *ordinary*
+colonising expeditions too, and the first fix freed them all. Measured: **88.1
+ordinary colonies per world against main's 71.5** — a 23% busier world, to fix
+a beat that fires in one world in three. Against a brief that says a change
+making the world busier is probably the wrong change, that is not a side
+effect to ship quietly. Scoped to desperate voyages only: **70.0 per world**,
+unchanged from main within noise.
+
+Scoping made the fix work *better*, not worse — ordinary expeditions no longer
+take the coastal land first, so the desperate ones find somewhere to land:
+
+```
+                  flights  refuges  worlds with >=1  ordinary colonies/world
+main                  34        0        0 / 24               71.5
+fix, unscoped         28        6        5 / 24               88.1
+fix, scoped           24       10        7 / 24               70.0
+```
+
+**Then the sample doubled, and the headline halved.** Those are 24 worlds. Run
+on a fresh 24 (seeds 24-47) the same build gives **4 refuges in 29 flights —
+14%, not 42%**. The first sample was lucky. Pooled over all 48 worlds, against
+`main` measured on the same 48:
+
+```
+                  worlds  flights  refuges  worlds with >=1  ordinary colonies/world
+main                  48       57        0        0                60.4
+gate 0.95, scoped     48       53       14 (26%) 11                60.7
+```
+
+**A refuge in about one world in four**, and colonisation genuinely untouched —
+60.4 to 60.7, which is the number the scoping was for. This is the figure to
+quote; the 42% was a small sample flattering itself, and it would have gone
+into the source comment unchallenged if the out-of-sample run had been skipped.
+
+The gate itself was swept at 24 worlds per point — 0.85: 6/30 (20%), 0.90:
+3/29 (10%), 0.95: 10/24 (42%), 0.98: 11/30 (37%) — and **that is a floor, not
+a curve.** ~25 flights per point cannot separate 20% from 42%; the 0.90 dip is
+noise, not a trough. The sweep establishes the one claim that matters — `main`
+is 0 in 34, and anything above 0.85 is reliably not zero — and nothing finer.
+Said plainly in the source comment rather than dressed up as calibration.
+
+**0.95 is therefore a taste call, not an arithmetic one.** It goes there
+because the race should stay a race: at 0.95 the voyages that just miss, miss
+by **13-43 ticks**. At 0.98 the flight leaves ~28 ticks before the homeland
+falls, and arriving too late stops being possible, which trades a tense beat
+for a routine one. That is the kind of judgement that should be made watching,
+not reading, and it is one constant to move.
+
+**Where the measurement boundary goes.** Codex's other finding, and it changed
+the answer rather than just the decimals. The first cut of this harness stopped
+at `endTick - 1500`, copying `wonder_gate.ts`. Wrong line: `endingCheckpoints()`
+commits at `omen - 300` = **`endTick - 3360`**, and `commitEnding()` calls
+`beginEnding()`, which sets `world.ending` — and the refuge path reads
+`if (world.ending) break`. So the harness was admitting **1,860 ticks per world
+of last flights the app can never launch**, precisely inside the late-life
+window being calibrated. Corrected to derive the cut from `ENDING_ACTS`.
+
+Between that and the `atSea` restriction, the shipped constant moved from 0.90
+to 0.95 — which is the whole argument for re-measuring after a review rather
+than patching the code and keeping the old table.
+
+`wonder_gate.ts` is deliberately left alone: the wonder gate has no
+`world.ending` check, so a stable civ really can raise a monument through the
+omen and onset, and its 1,500-tick cut is right for what it measures.
+
+**Could not verify:** whether a refuge *reads* — whether "a dead nation's name
+on a far shore" lands as that, or just as another civ appearing. The narration
+and the `refugee` founding story already exist; nobody has ever seen them fire,
+so this is the first chance to judge them.
+
+**Spotted, not done:** `edge` is now the second-largest sink (21% of lost
+voyages) — expeditions that sail off the grid and vanish. On a world drawn as a
+planet's limb, a ship leaving the map is arguably fine, but it was never a
+decision, just a bounds check. Worth a look before anyone tunes voyage length
+again.
 ## Civilisation archetypes: geography as culture, one level down — claude — 2026-08-24
 
 Issue #27, the top-ranked build from the landscape analysis. A `Civ` now
