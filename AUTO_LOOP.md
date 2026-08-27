@@ -56,6 +56,16 @@ it stands. `CLAUDE.md`'s invariants are non-negotiable.
   (Standing project constraints — see `CLAUDE.md`.)
 - **One turn, one change.** If you find three things, do one and write the other
   two into `HANDOFF.md` under "spotted, not done".
+- **Backpressure: do not start new work while three or more pull requests are
+  already waiting on Lawrence.** Count the open non-draft PRs before choosing a
+  turn; at three or more, stop and say so rather than opening a fourth. The
+  checkpoint in `scripts/loop/rounds.sh` bounds a single PR — this bounds the
+  queue, and the bound is **review capacity, not agent behaviour**. A night that
+  produces six PRs produces six *stale* PRs, diverging from each other and from
+  `main`. Unreviewed work is not progress; it is inventory, and it rots. If the
+  queue is full, shrink it instead: answer an outstanding review comment, rebase
+  a PR that has fallen behind, or write a blocked question up so that answering
+  it costs one reply.
 - **Keep it small enough to review.** If a turn's diff is heading past ~400
   lines of source, stop and reconsider the scope.
 - **Don't rewrite this file.** If a rule is wrong, argue for the change in
