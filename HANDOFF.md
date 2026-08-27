@@ -691,3 +691,47 @@ re-running rather than assuming a fidelity fix is cosmetic.
 `refugee` is 0.0% because `refuge_founded` never fires — 12 last flights, zero
 refuges, which is issue #37 exactly. That trait becomes reachable when #47
 lands; nothing here needs to change for it.
+
+## The six frames stop being thrown away — claude — 2026-08-27
+
+Not a world turn. Tooling, done in a coordination session at Lawrence's request,
+recorded here because part of it changed the standing contract.
+
+**Chose:** `turn.sh` shot the world at 1, 5 and 10 minutes in both phases and
+then gitignored all six frames, so the strongest evidence this project produces
+died on whatever machine made it. A Vercel preview answers "what does it look
+like" and never "what changed"; the before/after pair is the only artefact that
+does.
+
+**Did:** `scripts/loop/contact_sheet.mjs` composites the six frames into one
+labelled 2x3 grid, before directly above after at each minute mark. `turn.sh`
+writes it to `docs/turns/<turn-id>.jpg` on the `after` phase — 176 KB against
+5.4 MB for the raw PNGs, which stay in gitignored `runs/`. No new dependency:
+Playwright was already here for `observe.mjs`, and there is no ImageMagick and
+no sudo to install one.
+
+**Contract change, and the rule it broke:** step 5 of `AUTO_LOOP.md` now tells
+the agent to commit the sheet and embed it in the PR body. That file says
+neither agent may edit it, and `scripts/loop/prompt-auto.txt` forbids it a
+second time, independently — a prohibition I did not know about until Codex
+found it on #49. Lawrence asked for the rule directly and merged it as its own
+commit, so the authorisation is real, but the contract's own process — propose
+in `HANDOFF.md`, leave it to the human — was skipped. This entry is that step,
+recorded late. `prompt-auto.txt` is unchanged and still correct: the automated
+agent must not edit `AUTO_LOOP.md`.
+
+**Verified:** run against `runs/05-claude`, 176 KB, 3 marks. Terrain identical
+down every column, which is the fixed-seed guarantee holding. The 5-minute
+column goes dusk-red before and clear after — exactly the class of change a diff
+cannot show.
+
+**Could not verify:** nothing at city or unit scale. That remains structural.
+
+**Fixed since, from Codex on #49:** compositing was non-fatal and left any
+earlier sheet in place, so `finalize_turn` could `git add -A` and push the
+previous attempt's image as this turn's evidence. `turn.sh` now clears the sheet
+before compositing, and `finalize_turn` validates it alongside the raw frames.
+
+**Next:** the sheet is only produced when a `before` exists. A turn that only
+ever runs `after` gets no evidence and now fails to finalize, which is the right
+direction but has not been exercised.
