@@ -1,0 +1,26 @@
+# The gate. Before this file the only required status on main was Vercel's, so a
+# typecheck failure reached main unless someone remembered to run the build.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  # A PR that gets three pushes in a minute only needs the last one checked.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # tsc runs with noUnusedLocals, then vite build.
+      - run: npm run build
