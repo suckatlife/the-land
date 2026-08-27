@@ -20,6 +20,10 @@
 #
 # Uses gh's built-in jq only — standalone jq is not installed here.
 #
+# Exit codes: 0 = ok to push, 1 = checkpoint reached (stop),
+#             2 = repo could not be determined, 3 = round count unavailable.
+# Anything non-zero means stop.
+#
 #   scripts/loop/rounds.sh 38
 set -uo pipefail
 PR="${1:?usage: rounds.sh <pr-number>}"
@@ -38,8 +42,17 @@ granted=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
 budget="${granted:-$DEFAULT_BUDGET}"
 [ -z "$budget" ] && budget="$DEFAULT_BUDGET"
 
-rounds=$(gh api "repos/$REPO/pulls/$PR/reviews" --paginate \
-  --jq "[.[] | select(.user.login == \"$REVIEWER\") | select(\"$since\" == \"\" or .submitted_at > \"$since\")] | length" 2>/dev/null | tail -1)
+# Fail closed. Suppressing an API error and normalising to zero rounds would
+# report "budget available" for a PR that is genuinely stopped — and a caller
+# that clears a checkpoint label on that answer would silently release it. A
+# transient network blip must never look like permission to keep pushing.
+reviews_raw=$(gh api "repos/$REPO/pulls/$PR/reviews" --paginate \
+  --jq "[.[] | select(.user.login == \"$REVIEWER\") | select(\"$since\" == \"\" or .submitted_at > \"$since\")] | length" 2>/dev/null)
+if [ $? -ne 0 ]; then
+  echo "Cannot read reviews for PR #$PR - the API call failed. Failing closed: treat this as 'do not push'." >&2
+  exit 3
+fi
+rounds=$(printf '%s\n' "$reviews_raw" | tail -1)
 rounds=${rounds:-0}
 
 if [ -n "$since" ]; then
