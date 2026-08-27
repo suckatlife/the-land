@@ -16,6 +16,19 @@ cd "$ROOT"
 OUT="runs/$TURN/$PHASE"
 mkdir -p "$OUT"
 
+# Clear this turn's sheet at the START of an `after` run, before any gate can
+# exit. Doing it just before compositing was not enough: that code sits behind
+# `$STATUS -eq 0`, so an observe failure skipped the cleanup and left the
+# PREVIOUS successful run's sheet on disk. If the agent then finished and exited
+# zero, finalize_turn found frames and a sheet, re-ran only the build, and could
+# commit stale evidence for a change whose runtime gate had failed.
+#
+# Clearing it here means every failed refresh leaves finalization with no
+# acceptable artifact, whatever path the failure took.
+if [ "$PHASE" = "after" ]; then
+  rm -f "docs/turns/$TURN.jpg" "runs/$TURN/contact-sheet.jpg"
+fi
+
 # WSL2 has no system browser libs and no sudo; they live in an ephemeral /tmp
 # dir that does not survive a reboot. Re-extract them if they've gone.
 LIBS=/tmp/pwlibs/extract/usr/lib/x86_64-linux-gnu
@@ -74,13 +87,8 @@ echo "frames + logs in $OUT"
 # rather than leaving you wondering where the image went.
 if [ "$PHASE" = "after" ] && [ "$STATUS" -eq 0 ] && [ -d "runs/$TURN/before" ]; then
   mkdir -p docs/turns
-  # Clear any sheet from an earlier attempt at this turn BEFORE compositing.
-  # Non-fatal compositing plus a leftover file meant a failed refresh left the
-  # PREVIOUS attempt's image in place, and finalize_turn would `git add -A` and
-  # push it as this turn's evidence. Stale evidence is worse than none, because
-  # it gets trusted: a reviewer reads it as a picture of the change in front of
-  # them. Failing leaves no sheet, and the driver refuses to finalize without one.
-  rm -f "docs/turns/$TURN.jpg" "runs/$TURN/contact-sheet.jpg"
+  # The sheet was already cleared at the top of this run, so a compositing
+  # failure below leaves none — and the driver refuses to finalize without one.
   if node scripts/loop/contact_sheet.mjs "runs/$TURN"; then
     cp "runs/$TURN/contact-sheet.jpg" "docs/turns/$TURN.jpg"
     echo "== commit docs/turns/$TURN.jpg and embed it in the PR body =="
