@@ -1,0 +1,68 @@
+# Run the review checkpoint where `gh` actually exists.
+#
+# scripts/loop/rounds.sh is what stops a builder and a reviewer improving each
+# other forever — PR #1 reached 33 review rounds before anyone noticed the loop
+# had no exit. The script needs `gh`, and the cloud container where the work
+# actually happens has no `gh`, so rounds were being counted by hand. That is
+# precisely the manual step the script exists to remove, and it is the step that
+# gets skipped at 3am.
+#
+# A GitHub runner has both `gh` and a token. Running it here makes the
+# checkpoint structural instead of conscientious.
+#
+# This never blocks a merge. The checkpoint stops the *builder*; Lawrence merges
+# whenever he likes. It labels instead, so the review queue stays greppable:
+#   gh pr list --label checkpoint
+name: checkpoint
+
+on:
+  pull_request_review:
+    types: [submitted]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: checkpoint-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  checkpoint:
+    runs-on: ubuntu-latest
+    # Deliberately not gated on the reviewer's login. rounds.sh already decides
+    # whose reviews count; a second copy of that rule here could disagree with it
+    # and skip silently, which is the failure mode this workflow exists to remove.
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Evaluate the round budget
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set +e
+          output="$(bash scripts/loop/rounds.sh "$PR" 2>&1)"; status=$?
+          set -e
+          echo "$output"
+
+          if [ "$status" -eq 0 ]; then
+            # Budget available again — Lawrence granted more rounds. Clear the
+            # flag so the PR leaves the review queue.
+            gh pr edit "$PR" --remove-label checkpoint 2>/dev/null || true
+            exit 0
+          fi
+
+          # Say it once. Re-running on an already-stalled PR should stay quiet.
+          if gh pr view "$PR" --json labels --jq '.labels[].name' | grep -qx checkpoint; then
+            echo "Already flagged; not commenting again."
+            exit 0
+          fi
+
+          gh label create checkpoint \
+            --color BFA100 \
+            --description "Builder stopped at the round budget; awaiting @claude continue" \
+            2>/dev/null || true
+          gh pr edit "$PR" --add-label checkpoint
+          gh pr comment "$PR" --body-file .github/checkpoint-comment.md
