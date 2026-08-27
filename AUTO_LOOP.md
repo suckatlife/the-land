@@ -31,6 +31,11 @@ it stands. `CLAUDE.md`'s invariants are non-negotiable.
    `scripts/loop/turn.sh after <turn-id>` — same three frames, into
    `runs/<turn-id>/after/`. The gate must pass. A failing gate means you do not
    hand off; you fix it or you revert your own change.
+   The same run also writes `docs/turns/<turn-id>.jpg` — a before/after contact
+   sheet, one image, both phases at every minute mark. **Commit it and embed it
+   at the top of the PR body.** It is how the change gets reviewed from a phone
+   without reading a diff, and it is the only artefact that shows what moved;
+   a Vercel preview shows the world now and never the difference.
 6. **Commit** on the loop branch, then **tag** the turn:
    `git tag turn-<NN>-<agent>` and push branch + tag.
    When the prompt says the outer automation owns git, leave the completed
