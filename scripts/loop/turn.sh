@@ -62,4 +62,24 @@ STATUS=${PIPESTATUS[0]}
 echo
 echo "== $PHASE gate for $TURN: $([ $STATUS -eq 0 ] && echo PASS || echo FAIL) =="
 echo "frames + logs in $OUT"
+
+# One reviewable image, and only in the `after` phase, where there is a before to
+# compare against. The six raw frames stay in gitignored runs/ — six 900KB PNGs
+# per turn is not something a public repo should carry. The sheet is ~175KB,
+# renders inline in a PR on a phone, and puts before directly above after at the
+# same minute mark, which is the comparison actually being made.
+#
+# Non-fatal by design: the gate is the build and the observe run. A compositing
+# failure must not turn a passing turn into a failing one, but it says so loudly
+# rather than leaving you wondering where the image went.
+if [ "$PHASE" = "after" ] && [ "$STATUS" -eq 0 ] && [ -d "runs/$TURN/before" ]; then
+  if node scripts/loop/contact_sheet.mjs "runs/$TURN"; then
+    mkdir -p docs/turns
+    cp "runs/$TURN/contact-sheet.jpg" "docs/turns/$TURN.jpg"
+    echo "== commit docs/turns/$TURN.jpg and embed it in the PR body =="
+  else
+    echo "== contact sheet FAILED (non-fatal) — the gate result above still stands =="
+  fi
+fi
+
 exit $STATUS
