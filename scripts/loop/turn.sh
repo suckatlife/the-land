@@ -73,12 +73,20 @@ echo "frames + logs in $OUT"
 # failure must not turn a passing turn into a failing one, but it says so loudly
 # rather than leaving you wondering where the image went.
 if [ "$PHASE" = "after" ] && [ "$STATUS" -eq 0 ] && [ -d "runs/$TURN/before" ]; then
+  mkdir -p docs/turns
+  # Clear any sheet from an earlier attempt at this turn BEFORE compositing.
+  # Non-fatal compositing plus a leftover file meant a failed refresh left the
+  # PREVIOUS attempt's image in place, and finalize_turn would `git add -A` and
+  # push it as this turn's evidence. Stale evidence is worse than none, because
+  # it gets trusted: a reviewer reads it as a picture of the change in front of
+  # them. Failing leaves no sheet, and the driver refuses to finalize without one.
+  rm -f "docs/turns/$TURN.jpg" "runs/$TURN/contact-sheet.jpg"
   if node scripts/loop/contact_sheet.mjs "runs/$TURN"; then
-    mkdir -p docs/turns
     cp "runs/$TURN/contact-sheet.jpg" "docs/turns/$TURN.jpg"
     echo "== commit docs/turns/$TURN.jpg and embed it in the PR body =="
   else
-    echo "== contact sheet FAILED (non-fatal) — the gate result above still stands =="
+    echo "== contact sheet FAILED — no sheet written =="
+    echo "== the gate result above still stands, but the driver will not finalize =="
   fi
 fi
 
