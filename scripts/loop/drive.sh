@@ -139,6 +139,9 @@ finalize_turn() {
       }
     done
   done
+  [[ -s "$worktree/docs/turns/$turn.jpg" ]] || {
+    printf 'missing contact sheet: docs/turns/%s.jpg\n' "$turn" >&2; return 1;
+  }
   git -C "$worktree" diff --check || return 1
   git -C "$worktree" diff --quiet HEAD -- src public index.html && {
     printf 'turn did not change the product surface\n' >&2; return 1;

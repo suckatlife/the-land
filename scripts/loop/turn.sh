@@ -16,6 +16,19 @@ cd "$ROOT"
 OUT="runs/$TURN/$PHASE"
 mkdir -p "$OUT"
 
+# Clear this turn's sheet at the START of an `after` run, before any gate can
+# exit. Doing it just before compositing was not enough: that code sits behind
+# `$STATUS -eq 0`, so an observe failure skipped the cleanup and left the
+# PREVIOUS successful run's sheet on disk. If the agent then finished and exited
+# zero, finalize_turn found frames and a sheet, re-ran only the build, and could
+# commit stale evidence for a change whose runtime gate had failed.
+#
+# Clearing it here means every failed refresh leaves finalization with no
+# acceptable artifact, whatever path the failure took.
+if [ "$PHASE" = "after" ]; then
+  rm -f "docs/turns/$TURN.jpg" "runs/$TURN/contact-sheet.jpg"
+fi
+
 # WSL2 has no system browser libs and no sudo; they live in an ephemeral /tmp
 # dir that does not survive a reboot. Re-extract them if they've gone.
 LIBS=/tmp/pwlibs/extract/usr/lib/x86_64-linux-gnu
@@ -73,12 +86,15 @@ echo "frames + logs in $OUT"
 # failure must not turn a passing turn into a failing one, but it says so loudly
 # rather than leaving you wondering where the image went.
 if [ "$PHASE" = "after" ] && [ "$STATUS" -eq 0 ] && [ -d "runs/$TURN/before" ]; then
+  mkdir -p docs/turns
+  # The sheet was already cleared at the top of this run, so a compositing
+  # failure below leaves none — and the driver refuses to finalize without one.
   if node scripts/loop/contact_sheet.mjs "runs/$TURN"; then
-    mkdir -p docs/turns
     cp "runs/$TURN/contact-sheet.jpg" "docs/turns/$TURN.jpg"
     echo "== commit docs/turns/$TURN.jpg and embed it in the PR body =="
   else
-    echo "== contact sheet FAILED (non-fatal) — the gate result above still stands =="
+    echo "== contact sheet FAILED — no sheet written =="
+    echo "== the gate result above still stands, but the driver will not finalize =="
   fi
 fi
 
