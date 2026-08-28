@@ -59,6 +59,23 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0     # full history: turns reference earlier commits and tags
+          # Push as Lawrence, not as github-actions[bot].
+          #
+          # GitHub restricts workflow runs triggered by commits pushed with the
+          # default GITHUB_TOKEN, so that a workflow cannot recursively trigger
+          # itself. The consequence here was that a resumed turn pushed, and the
+          # `ci` run for that push sat at `action_required` having executed
+          # nothing — the gate looked present and was not running. That happened
+          # on #21 on 2026-08-27 and needed a manual approval click.
+          #
+          # A personal access token is not subject to that restriction, so CI
+          # runs on agent pushes the way it does on everyone else's.
+          #
+          # Falls back to the default token when the secret is absent, so the
+          # workflow still works in a fork or before the secret is added — it
+          # just goes back to needing the approval click.
+          token: ${{ secrets.AGENT_PUSH_TOKEN || github.token }}
+          persist-credentials: true
       - uses: anthropics/claude-code-action@v1
         with:
           # Subscription auth. Swap to anthropic_api_key for API billing.
