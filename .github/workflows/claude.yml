@@ -71,9 +71,19 @@ jobs:
           # A personal access token is not subject to that restriction, so CI
           # runs on agent pushes the way it does on everyone else's.
           #
-          # Falls back to the default token when the secret is absent, so the
-          # workflow still works in a fork or before the secret is added — it
-          # just goes back to needing the approval click.
+          # The `||` covers the secret being ABSENT — a fork, or before it is
+          # added — where the workflow falls back to the default token and goes
+          # back to needing the approval click.
+          #
+          # It does NOT cover the token being EXPIRED or revoked. An expired PAT
+          # is still a non-empty secret, so it is still selected, and checkout
+          # fails authentication before Claude runs at all. There is no silent
+          # degrade: the turn stops, loudly, at the first step.
+          #
+          # That is the better failure. The bug this whole change fixes was a
+          # gate that looked present and was not running; a red checkout is
+          # visible in a way that is not. But it means ROTATION IS REQUIRED —
+          # when this token lapses, agent turns stop until it is replaced.
           token: ${{ secrets.AGENT_PUSH_TOKEN || github.token }}
           persist-credentials: true
       - uses: anthropics/claude-code-action@v1
