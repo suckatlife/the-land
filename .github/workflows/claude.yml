@@ -59,6 +59,33 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0     # full history: turns reference earlier commits and tags
+          # Push as Lawrence, not as github-actions[bot].
+          #
+          # GitHub restricts workflow runs triggered by commits pushed with the
+          # default GITHUB_TOKEN, so that a workflow cannot recursively trigger
+          # itself. The consequence here was that a resumed turn pushed, and the
+          # `ci` run for that push sat at `action_required` having executed
+          # nothing — the gate looked present and was not running. That happened
+          # on #21 on 2026-08-27 and needed a manual approval click.
+          #
+          # A personal access token is not subject to that restriction, so CI
+          # runs on agent pushes the way it does on everyone else's.
+          #
+          # The `||` covers the secret being ABSENT — a fork, or before it is
+          # added — where the workflow falls back to the default token and goes
+          # back to needing the approval click.
+          #
+          # It does NOT cover the token being EXPIRED or revoked. An expired PAT
+          # is still a non-empty secret, so it is still selected, and checkout
+          # fails authentication before Claude runs at all. There is no silent
+          # degrade: the turn stops, loudly, at the first step.
+          #
+          # That is the better failure. The bug this whole change fixes was a
+          # gate that looked present and was not running; a red checkout is
+          # visible in a way that is not. But it means ROTATION IS REQUIRED —
+          # when this token lapses, agent turns stop until it is replaced.
+          token: ${{ secrets.AGENT_PUSH_TOKEN || github.token }}
+          persist-credentials: true
       - uses: anthropics/claude-code-action@v1
         with:
           # Subscription auth. Swap to anthropic_api_key for API billing.
