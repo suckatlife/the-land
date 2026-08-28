@@ -3156,6 +3156,33 @@ function rebuildBuildingSprites() {
   }
 }
 
+/** Tiles of travel over which a voyage dissolves as it leaves the world.
+ *
+ *  At `expeditionSpeed` 0.11 tiles/tick this is a little over a second of fade
+ *  at 30 ticks/sec — long enough to read as a ship going beyond the map rather
+ *  than blinking out of existence, short enough not to look like a bug. */
+const EXIT_FADE_TILES = 4;
+
+/** How visible a voyage should be, from how far it still has to travel before
+ *  it leaves the grid ALONG ITS CURRENT HEADING.
+ *
+ *  Distance to the nearest edge would be wrong: a ship sailing parallel to an
+ *  edge can run beside it for its whole life and is in no danger of leaving.
+ *  What matters is where this heading actually takes it — the sim drops a
+ *  voyage the tick its rounded position goes out of bounds (`advanceExpeditions`),
+ *  and that drop was a bounds check rather than a decision. It still is; this
+ *  only stops it being abrupt. */
+function exitFade(row: number, col: number, dirRow: number, dirCol: number, h: number, w: number): number {
+  let tiles = Infinity;
+  if (dirRow > 0) tiles = Math.min(tiles, (h - 1 - row) / dirRow);
+  else if (dirRow < 0) tiles = Math.min(tiles, row / -dirRow);
+  if (dirCol > 0) tiles = Math.min(tiles, (w - 1 - col) / dirCol);
+  else if (dirCol < 0) tiles = Math.min(tiles, col / -dirCol);
+  if (!Number.isFinite(tiles)) return 1;
+  const k = Math.max(0, Math.min(1, tiles / EXIT_FADE_TILES));
+  return k * k * (3 - 2 * k);   // smoothstep: no hard corner at either end
+}
+
 let expWasEmpty = true;
 function drawExpeditions() {
   const g = expeditionGfx;
@@ -3174,10 +3201,16 @@ function drawExpeditions() {
     // Desperate voyages keep sailing after their nation dies — keep drawing them.
     if (!civ || (civ.phase === 'dead' && !exp.desperate)) continue;
 
+    // One fade for the whole voyage, ship and wake together. Fading only the
+    // ship would leave its trail pointing at nothing, which reads worse than
+    // the pop it replaces.
+    const fade = exitFade(exp.row, exp.col, exp.dirRow, exp.dirCol, simWorld.height, simWorld.width);
+    if (fade <= 0.01) continue;
+
     const n = exp.trail.length;
     for (let i = 0; i < n; i++) {
       const t = exp.trail[i];
-      const alpha = ((i + 1) / n) * 0.7;
+      const alpha = ((i + 1) / n) * 0.7 * fade;
       const { x, y } = gridToScreen(t.col, t.row);
       g.circle(x, y, 2.5).fill({ color: civ.color, alpha });
     }
@@ -3189,36 +3222,36 @@ function drawExpeditions() {
     const ahead = gridToScreen(exp.col + exp.dirCol, exp.row + exp.dirRow);
     let hx = ahead.x - x, hy = ahead.y - y;
     const hl = Math.hypot(hx, hy) || 1; hx /= hl; hy /= hl;
-    drawExpeditionShip(g, x, y, hx, hy, civ.color);
+    drawExpeditionShip(g, x, y, hx, hy, civ.color, fade);
   }
 }
 
 // A long, narrow longship pointed along (hx,hy): a deep raked bow, a bare mast
 // rising screen-up with a civ-coloured pennant streaming astern, and a spreading
 // foam wake — the look of a fast voyage of discovery.
-function drawExpeditionShip(g: Graphics, x: number, y: number, hx: number, hy: number, color: number) {
+function drawExpeditionShip(g: Graphics, x: number, y: number, hx: number, hy: number, color: number, fade = 1) {
   const px = -hy, py = hx; // beam
   const L = 7, W = 1.9;
   // Spreading V-wake astern (drawn first, under the hull).
   const sx = x - hx * L, sy = y - hy * L;
   g.poly([sx, sy, sx - hx * 6 + px * 4, sy - hy * 6 + py * 4, sx - hx * 4, sy - hy * 4])
-    .fill({ color: 0xffffff, alpha: 0.16 });
+    .fill({ color: 0xffffff, alpha: 0.16 * fade });
   g.poly([sx, sy, sx - hx * 6 - px * 4, sy - hy * 6 - py * 4, sx - hx * 4, sy - hy * 4])
-    .fill({ color: 0xffffff, alpha: 0.16 });
+    .fill({ color: 0xffffff, alpha: 0.16 * fade });
   // Hull: a long double-ender with a raked bow.
   g.poly([
     x + hx * L * 1.35, y + hy * L * 1.35,   // long bow
     x + px * W, y + py * W,
     x - hx * L, y - hy * L,                 // stern
     x - px * W, y - py * W,
-  ]).fill({ color: 0x3c352c, alpha: 0.95 });
+  ]).fill({ color: 0x3c352c, alpha: 0.95 * fade });
   // Mast rising screen-up, with a civ-coloured pennant streaming astern.
   const mh = 7;
   g.poly([x, y - mh, x - hx * 6, y - mh + 1.6, x - hx * 6, y - mh - 1.6])
-    .fill({ color: lerpColor(color, 0xffffff, 0.15), alpha: 0.92 });
+    .fill({ color: lerpColor(color, 0xffffff, 0.15), alpha: 0.92 * fade });
   g.poly([x - 0.5, y - 1, x + 0.5, y - 1, x + 0.5, y - mh, x - 0.5, y - mh])
-    .fill({ color: 0x2a241d, alpha: 0.9 });
-  g.circle(x, y - 0.5, 1.1).fill({ color, alpha: 0.95 });
+    .fill({ color: 0x2a241d, alpha: 0.9 * fade });
+  g.circle(x, y - 0.5, 1.1).fill({ color, alpha: 0.95 * fade });
 }
 
 // Incremental civ index — kept in sync as tile ownership changes via noteTileChange.
