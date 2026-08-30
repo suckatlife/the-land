@@ -7892,14 +7892,35 @@ function updateCamera(): void {
     camX = Math.sin((t / CAMERA.periodX) * Math.PI * 2) * CAMERA.ampX;
     camY = Math.sin((t / CAMERA.periodY) * Math.PI * 2 + 1.3) * CAMERA.ampY;
   }
-  world.x = (-WORLD_CAPTURE.x0 - camX) * captureScale;
-  world.y = (-WORLD_CAPTURE.y0 - camY) * captureScale;
+  // Snap the world to whole render-texture texels.
+  //
+  // Without this the pan is the wrong kind of visible. The mesh samples the RT
+  // at FIXED uvs while the content slides underneath, and `magFilter` is
+  // `nearest` — so as the world crosses a texel boundary, each screen column
+  // flips to the next texel at a slightly different moment. The result is a
+  // wave of single-pixel columns travelling across the map, which reads as the
+  // image crawling rather than the camera moving. The fractional RT resolution
+  // (0.72 / 0.58 / 0.46) guarantees a world pixel never lands on a texel on its
+  // own.
+  //
+  // Rounding to the device texel makes every column flip on the SAME frame. The
+  // motion becomes a series of exact one-pixel steps, which is what a pixel-art
+  // camera is supposed to look like — the alternative, sub-pixel blending, means
+  // linear magnification and a permanently soft world, and this project chose
+  // `nearest` on purpose.
+  const texel = worldRT.source.resolution;
+  const snap = (v: number) => Math.round(v * texel) / texel;
+  world.x = snap((-WORLD_CAPTURE.x0 - camX) * captureScale);
+  world.y = snap((-WORLD_CAPTURE.y0 - camY) * captureScale);
   // The haze belongs to the HORIZON, not to the land. It is a child of `world`,
   // so without this counter-offset it pans with the ground and slides around
   // like a stain. Same rule as the apron above: layers fixed to the capture
   // rect stay fixed while the camera moves.
-  depthHazeSprite.x = WORLD_CAPTURE.x0 + camX;
-  depthHazeSprite.y = WORLD_CAPTURE.y0 + camY;
+  // Counter-offset by the SNAPPED camera, not the raw one, or the haze drifts
+  // sub-pixel against the ground it sits behind and reintroduces the crawl on
+  // its own layer.
+  depthHazeSprite.x = WORLD_CAPTURE.x0 + (-WORLD_CAPTURE.x0 - world.x / captureScale);
+  depthHazeSprite.y = WORLD_CAPTURE.y0 + (-WORLD_CAPTURE.y0 - world.y / captureScale);
 }
 
 (window as any).__camera = {
