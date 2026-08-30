@@ -15,7 +15,7 @@
   },
   "dependencies": {
     "@vercel/analytics": "^2.0.1",
-    "pixi.js": "^8.18.1",
+    "pixi.js": "^8.20.1",
     "simplex-noise": "^4.0.3"
   }
 }
