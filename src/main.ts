@@ -1143,6 +1143,35 @@ atmos.attach({ biomeLayer });
 const WORLD_CAPTURE = { x0: -1600, y0: -110, w: 3200, h: 1720 };
 const captureScale = ATMOS.composition.worldScale;
 
+// --- the camera -------------------------------------------------------------
+// Phase 1b of docs/plans/camera.md: a slow drift, pan only, no event
+// awareness. Zoom is deliberately absent — the plan establishes that neither
+// scaling path is known-safe yet (scaling `world` before capture bypasses the
+// RT minifier; scaling `worldPlane` shrinks the curved planet against a
+// screen-anchored limb), so this changes only WHICH part of the world lands in
+// the fixed capture rect.
+//
+// Moving the `world` container rather than `worldPlane` is the load-bearing
+// choice: the curvature and its horizon are baked relative to the plane, so
+// panning the plane would slide the globe's limb off-screen and the planet
+// would stop being a planet. Moving the world beneath a fixed horizon is what
+// looking at another part of a planet actually looks like.
+//
+// Amplitude is small on purpose. The map is 3200 wide; this is a drift, not a
+// tour, and it stays well inside the capture rect so the apron overscan below
+// always covers what the pan uncovers.
+const CAMERA = { ampX: 110, ampY: 44, periodX: 197, periodY: 122 };
+/** Pins the camera for inspection. Without it the drift overwrites any
+ *  position set from outside on the very next frame, so a screenshot of "the
+ *  camera at its extreme" silently became a screenshot of wherever it actually
+ *  was — three identical images, taken as three different states. */
+let camOverride: { x: number; y: number } | null = null;
+/** How far the camera can ever be from centre, for anything that must cover
+ *  the ground it uncovers. */
+export const CAMERA_REACH = Math.max(CAMERA.ampX, CAMERA.ampY);
+let camX = 0;
+let camY = 0;
+
 // Size the depth haze to the back DEPTH.reach of the capture (declared above,
 // where the layer stack needs it; the capture rect only exists here).
 depthHazeSprite.x = WORLD_CAPTURE.x0;
@@ -1242,15 +1271,28 @@ app.stage.addChild(satelliteGfx);
 // Rockets & space elevators rise past the horizon (screen-space, unclipped).
 app.stage.addChild(skyStructGfx);
 // The silhouette remap needs the diamond's corners in texture pixels.
-const toTex = (wx: number, wy: number) => ({
+// World point -> texture point, WITHOUT the camera. The plane's curvature
+// anchors are the shape of the globe itself and must not move when the camera
+// does, or the limb would swim.
+const toTexFixed = (wx: number, wy: number) => ({
   x: (wx - WORLD_CAPTURE.x0) * captureScale,
   y: (wy - WORLD_CAPTURE.y0) * captureScale,
 });
+// World point -> texture point, WITH the camera. Everything anchored to the
+// ground goes through here: `tileToSky` and `worldPointToSky` between them have
+// 23 call sites, and space elevators, rocket launches, narration anchors and
+// the field guide's hit-testing all ride on it. Adding the offset here fixes
+// them all at once; omitting it detaches them all at once, silently, as things
+// floating where the land used to be.
+const toTex = (wx: number, wy: number) => ({
+  x: (wx - WORLD_CAPTURE.x0 - camX) * captureScale,
+  y: (wy - WORLD_CAPTURE.y0 - camY) * captureScale,
+});
 atmos.attachPlane(worldPlane, {
-  left: toTex(-1528, 764),
-  apex: toTex(0, -8),
-  right: toTex(1528, 764),
-  front: toTex(0, 1536),
+  left: toTexFixed(-1528, 764),
+  apex: toTexFixed(0, -8),
+  right: toTexFixed(1528, 764),
+  front: toTexFixed(0, 1536),
 });
 atmos.layout(window.innerWidth, window.innerHeight);
 // Where a world tile's base lands on screen over the curved globe — for sky
@@ -1998,7 +2040,14 @@ function drawOceanApron(): Graphics {
   // at the capture margins). The scenery tiles carry the texture and grid.
   const g = new Graphics();
   const { x0, y0, w, h } = WORLD_CAPTURE;
-  g.rect(x0, y0, w, h).fill(OCEAN.deepColor);
+  // Overscanned by the camera's reach. The apron used to be exactly the
+  // capture rect, and the RT clears everything outside it — so the moment the
+  // world panned, one texture edge was left uncovered and sky or stars showed
+  // through INSIDE the planet. Drawing wider costs nothing (one filled rect,
+  // behind everything) and removes the failure entirely rather than bounding
+  // the camera to avoid it.
+  const pad = CAMERA_REACH * 2;
+  g.rect(x0 - pad, y0 - pad, w + pad * 2, h + pad * 2).fill(OCEAN.deepColor);
   return g;
 }
 
@@ -7828,9 +7877,42 @@ app.ticker.add((ticker) => {
 // Capture the world into its RenderTexture every frame. Registered after the
 // main tick callback (so it sees this frame's updates) and not gated by
 // `running`, so manual actions while paused still show.
+/** Where the camera is, from `worldClock` — so it obeys pause and the speed
+ *  control like everything else, and so two viewings of one seed show the same
+ *  motion. Two sines with incommensurate periods: the path wanders and does not
+ *  retrace a loop, and the turning points give the long dwells the plan asks
+ *  for. No randomness, because determinism is a promise this project already
+ *  made and the share button depends on. */
+function updateCamera(): void {
+  const t = worldClock;
+  if (camOverride) {
+    camX = camOverride.x;
+    camY = camOverride.y;
+  } else {
+    camX = Math.sin((t / CAMERA.periodX) * Math.PI * 2) * CAMERA.ampX;
+    camY = Math.sin((t / CAMERA.periodY) * Math.PI * 2 + 1.3) * CAMERA.ampY;
+  }
+  world.x = (-WORLD_CAPTURE.x0 - camX) * captureScale;
+  world.y = (-WORLD_CAPTURE.y0 - camY) * captureScale;
+  // The haze belongs to the HORIZON, not to the land. It is a child of `world`,
+  // so without this counter-offset it pans with the ground and slides around
+  // like a stain. Same rule as the apron above: layers fixed to the capture
+  // rect stay fixed while the camera moves.
+  depthHazeSprite.x = WORLD_CAPTURE.x0 + camX;
+  depthHazeSprite.y = WORLD_CAPTURE.y0 + camY;
+}
+
+(window as any).__camera = {
+  get: () => ({ x: +camX.toFixed(2), y: +camY.toFixed(2), override: camOverride !== null }),
+  set: (x: number, y: number) => { camOverride = { x, y }; },
+  clear: () => { camOverride = null; },
+  reach: CAMERA_REACH,
+};
+
 app.ticker.add(() => {
   measureFps();
   updateFpsLabel();
+  updateCamera();
   if (!(window as any).__skipRT) {
     app.renderer.render({ container: world, target: worldRT, clear: true });
     if (worldNeedsEdgeErase()) {
@@ -8390,6 +8472,28 @@ function worldPointToSky(x: number, y: number) {
 rebuildInspectorProjection();
 window.addEventListener('resize', () => {
   requestAnimationFrame(rebuildInspectorProjection);
+});
+
+// The projection cache holds 9,216 tiles and used to refresh only on resize.
+// With a moving camera the drawing moves and the hit-testing does not, so the
+// field guide would name whatever *used* to be under the pointer. Rebuilding
+// every frame is 9,216 projections in a frame that is already fill-bound, so
+// this rebuilds on DISTANCE instead: at a drift this slow that is a handful of
+// rebuilds a minute, and the cache is never more than a couple of world pixels
+// stale — well inside the inspector's own hit radius.
+const INSPECTOR_REPROJECT_DISTANCE = 2;
+let inspectorProjectionCamX = 0;
+let inspectorProjectionCamY = 0;
+app.ticker.add(() => {
+  if (
+    Math.abs(camX - inspectorProjectionCamX) < INSPECTOR_REPROJECT_DISTANCE &&
+    Math.abs(camY - inspectorProjectionCamY) < INSPECTOR_REPROJECT_DISTANCE
+  ) {
+    return;
+  }
+  inspectorProjectionCamX = camX;
+  inspectorProjectionCamY = camY;
+  rebuildInspectorProjection();
 });
 
 const INSPECTOR_HOVER_DELAY = 320;
