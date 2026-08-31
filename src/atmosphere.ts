@@ -50,12 +50,20 @@ export const ATMOS = {
     // fractions either side of centre. This is the only new number the
     // terminator needs: it says how much later it is at the right limb than
     // the left. 0 reproduces the old flat wash exactly.
-    terminatorSpread: 0.085,
+    terminatorSpread: 0.115,
+
+    // Ceiling on the directional darkening, independent of `glazeCap`.
+    terminatorMax: 0.52,
 
     // How much warm sunset colour a low sun casts onto the world. Additive, so
     // this is the only thing here that can make part of the globe brighter
     // than the flat glaze leaves it.
-    sunCastMax: 0.44,
+    //
+    // Paired with `terminatorMax` below: the two together are the contrast
+    // between the lit and unlit halves, and they want raising and lowering
+    // together or the globe gets bright on one side without getting dark on
+    // the other.
+    sunCastMax: 0.62,
 
     // Hard ceiling on glaze alpha — the legibility floor. Night may not get
     // darker than this no matter what the keyframes say.
@@ -1298,7 +1306,13 @@ export function createAtmosphere(): Atmosphere {
     if (globeCircle && spread > 0) {
       // How dark the unlit side gets, over and above the flat glaze. Bounded so
       // the two together never pass the legibility floor.
-      nightDepth = Math.max(0, Math.min(ATMOS.day.glazeCap - glazeAlpha, spread * 5.2));
+      // Bounded by `terminatorMax`, NOT by `glazeCap`. The cap is a floor on
+      // how dark the whole world may get — a legibility rule about the flat
+      // wash. This is directional: it darkens one side of the globe while the
+      // other is being lit, so borrowing the global ceiling held the night
+      // side to whatever the flat glaze had left over, which at sunset was
+      // about 0.29 and read as haze rather than as night.
+      nightDepth = Math.max(0, Math.min(ATMOS.day.terminatorMax, spread * 6.4));
     }
     terminatorLayer.visible = nightDepth > 0.004;
     sunCastLayer.visible = false; // set below, only when the sphere is known
