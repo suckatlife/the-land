@@ -52,6 +52,11 @@ export const ATMOS = {
     // the left. 0 reproduces the old flat wash exactly.
     terminatorSpread: 0.085,
 
+    // How much warm sunset colour a low sun casts onto the world. Additive, so
+    // this is the only thing here that can make part of the globe brighter
+    // than the flat glaze leaves it.
+    sunCastMax: 0.44,
+
     // Hard ceiling on glaze alpha — the legibility floor. Night may not get
     // darker than this no matter what the keyframes say.
     glazeCap: 0.55,
@@ -437,6 +442,7 @@ export interface Atmosphere {
   skyLayer: Sprite;
   glazeLayer: Graphics;
   terminatorLayer: Graphics;
+  sunCastLayer: Graphics;
   airLayer: Graphics;                        // era airlight (screen), sits over the glaze
   scarLayer: Container;
   cloudShadowLayer: Container;
@@ -540,6 +546,17 @@ export function createAtmosphere(): Atmosphere {
   const terminatorLayer = new Graphics();
   terminatorLayer.blendMode = 'multiply';
   terminatorLayer.alpha = 0;
+
+  // The other half of a low sun: the warm colour it CASTS.
+  //
+  // The terminator only darkens — it is a multiply, and a multiply cannot add
+  // light. So the unlit side went dusky and the sunward side never caught the
+  // sunset at all, which is the difference between a globe with a shadow on it
+  // and a globe with a sunset ON it. This is the same sphere, lit pole, warm,
+  // added rather than multiplied, and it only exists when the sun is low.
+  const sunCastLayer = new Graphics();
+  sunCastLayer.blendMode = 'add';
+  sunCastLayer.alpha = 0;
   // Runtime override for the spread, so an A/B can be measured on one build.
   // Toggling `visible` from outside does not work: `update()` recomputes it
   // from the gradient every frame and turns it straight back on, which is how
@@ -1284,6 +1301,7 @@ export function createAtmosphere(): Atmosphere {
       nightDepth = Math.max(0, Math.min(ATMOS.day.glazeCap - glazeAlpha, spread * 5.2));
     }
     terminatorLayer.visible = nightDepth > 0.004;
+    sunCastLayer.visible = false; // set below, only when the sphere is known
     if (terminatorLayer.visible && globeCircle) {
       const { cx, cy, r } = globeCircle;
       // Sun direction. Azimuth runs 0..1 left to right; altitude 0..1 is the
@@ -1328,6 +1346,32 @@ export function createAtmosphere(): Atmosphere {
         terminatorLayer.circle(ax, ay, br).fill({ color: darkColor, alpha: per });
       }
       terminatorLayer.alpha = 1;
+
+      // --- the warm cast on the sunward side ------------------------------
+      // Strongest when the sun is near the horizon and gone by noon: a high
+      // sun is white and washes nothing. `skyHorizon` is the colour already in
+      // the sky at this moment, so the land catches the same sunset the sky is
+      // showing rather than a second, invented one.
+      const lowSun = Math.pow(1 - Math.min(1, alt / 0.55), 1.4);
+      const castStrength = lowSun * ATMOS.day.sunCastMax;
+      sunCastLayer.visible = castStrength > 0.004;
+      if (sunCastLayer.visible) {
+        const warm = lerpColor(day.skyHorizon, season.cast, season.castAmount * 0.5);
+        sunCastLayer.clear();
+        const px = cx + lx * r * 0.92;
+        const py = cy + ly * r * 0.92;
+        const CAST_BANDS = 20;
+        const castPer = 1 - Math.pow(1 - castStrength, 1 / CAST_BANDS);
+        for (let i = 0; i < CAST_BANDS; i++) {
+          const t = (i + 1) / CAST_BANDS;
+          // Mirror of the terminator: discs on the LIT pole, shrinking as they
+          // stack, so the warmth is strongest where the sun actually strikes
+          // and falls off around the curve.
+          const br = r * (1.35 - 1.05 * t);
+          sunCastLayer.circle(px, py, br).fill({ color: warm, alpha: castPer });
+        }
+        sunCastLayer.alpha = 1;
+      }
     }
 
     // …and the matching lift. Alpha follows the era's air alone, so the clear
@@ -1668,7 +1712,7 @@ export function createAtmosphere(): Atmosphere {
     setDayT: (v: number) => { dayT = ((v % 1) + 1) % 1; },
     setTerminatorSpread: (v: number | null) => { terminatorSpreadOverride = v; },
     getDayT: () => dayT,
-    skyLayer, glazeLayer, terminatorLayer, airLayer, scarLayer, cloudShadowLayer, fogLayer,
+    skyLayer, glazeLayer, terminatorLayer, sunCastLayer, airLayer, scarLayer, cloudShadowLayer, fogLayer,
     attach: (layers: { biomeLayer: Container }) => { attachedBiomeLayer = layers.biomeLayer; },
     attachPlane: (plane, geom) => {
       attachedPlane = plane;
