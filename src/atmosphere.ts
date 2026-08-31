@@ -42,10 +42,10 @@ export const ATMOS = {
       { t: 0.25, skyTop: 0x5b9ad8, skyHorizon: 0xc7e0ee, glaze: 0xffffff, glazeAlpha: 0.00 }, // noon: clear blue
       { t: 0.42, skyTop: 0x77a6d0, skyHorizon: 0xe9cf9a, glaze: 0xf2dcae, glazeAlpha: 0.08 }, // afternoon
       { t: 0.52, skyTop: 0x7c6a9e, skyHorizon: 0xef8a4c, glaze: 0xe49152, glazeAlpha: 0.26 }, // sunset: violet over orange
-      { t: 0.60, skyTop: 0x52506f, skyHorizon: 0xc06450, glaze: 0xb06658, glazeAlpha: 0.44 }, // afterglow: red-purple
-      { t: 0.68, skyTop: 0x303c58, skyHorizon: 0x6a5570, glaze: 0x6f83a8, glazeAlpha: 0.58 }, // nightfall
-      { t: 0.80, skyTop: 0x182338, skyHorizon: 0x33405c, glaze: 0x5b6d92, glazeAlpha: 0.70 }, // deep night
-      { t: 0.92, skyTop: 0x1f2b44, skyHorizon: 0x46506a, glaze: 0x66799c, glazeAlpha: 0.62 }, // small hours
+      { t: 0.60, skyTop: 0x52506f, skyHorizon: 0xc06450, glaze: 0xa05a4e, glazeAlpha: 0.52 }, // afterglow: red-purple
+      { t: 0.68, skyTop: 0x303c58, skyHorizon: 0x6a5570, glaze: 0x5d7098, glazeAlpha: 0.70 }, // nightfall
+      { t: 0.80, skyTop: 0x182338, skyHorizon: 0x33405c, glaze: 0x4a5c80, glazeAlpha: 0.84 }, // deep night
+      { t: 0.92, skyTop: 0x1f2b44, skyHorizon: 0x46506a, glaze: 0x556890, glazeAlpha: 0.76 }, // small hours
     ],
     // Fraction of screen height where the horizon band sits in the sky
     // gradient (the world diamond occupies the area below the upper sky).
@@ -54,10 +54,10 @@ export const ATMOS = {
     // fractions either side of centre. This is the only new number the
     // terminator needs: it says how much later it is at the right limb than
     // the left. 0 reproduces the old flat wash exactly.
-    terminatorSpread: 0.115,
+    terminatorSpread: 0.135,
 
     // Ceiling on the directional darkening, independent of `glazeCap`.
-    terminatorMax: 0.52,
+    terminatorMax: 0.70,
 
     // How much warm sunset colour a low sun casts onto the world. Additive, so
     // this is the only thing here that can make part of the globe brighter
@@ -67,7 +67,7 @@ export const ATMOS = {
     // between the lit and unlit halves, and they want raising and lowering
     // together or the globe gets bright on one side without getting dark on
     // the other.
-    sunCastMax: 0.62,
+    sunCastMax: 0.82,
 
     // Hard ceiling on glaze alpha — the legibility floor. Night may not get
     // darker than this, or the world stops being watchable.
@@ -77,7 +77,7 @@ export const ATMOS = {
     // there was nothing to see. Now the lit half is carried by the cities, so
     // the dark half can actually be dark — and it has to be, or the lights sit
     // on a bright surface and never read as lights.
-    glazeCap: 0.74,
+    glazeCap: 0.88,
   },
 
   // How far the sky leans toward the brewing catastrophe's hue at full dread
