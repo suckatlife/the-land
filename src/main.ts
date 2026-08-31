@@ -1230,6 +1230,9 @@ app.stage.addChild(worldPlane);
 app.stage.addChild(atmos.limbMask);
 app.stage.addChild(atmos.limbBand);
 app.stage.addChild(atmos.glazeLayer);
+// Directly above the flat glaze: the part of the light that varies across the
+// globe. Both multiply, so together they are one light with a bright side.
+app.stage.addChild(atmos.terminatorLayer);
 // The era's airlight sits directly over its glaze: the pair is one atmosphere,
 // pressing down and lifting back up together.
 app.stage.addChild(atmos.airLayer);

@@ -46,6 +46,12 @@ export const ATMOS = {
     // Fraction of screen height where the horizon band sits in the sky
     // gradient (the world diamond occupies the area below the upper sky).
     horizonY: 0.62,
+    // How much of a day-night cycle the visible globe spans, in cycle
+    // fractions either side of centre. This is the only new number the
+    // terminator needs: it says how much later it is at the right limb than
+    // the left. 0 reproduces the old flat wash exactly.
+    terminatorSpread: 0.085,
+
     // Hard ceiling on glaze alpha — the legibility floor. Night may not get
     // darker than this no matter what the keyframes say.
     glazeCap: 0.55,
@@ -430,6 +436,7 @@ function sampleSeason(t: number): SeasonState {
 export interface Atmosphere {
   skyLayer: Sprite;
   glazeLayer: Graphics;
+  terminatorLayer: Sprite;
   airLayer: Graphics;                        // era airlight (screen), sits over the glaze
   scarLayer: Container;
   cloudShadowLayer: Container;
@@ -472,6 +479,11 @@ export interface Atmosphere {
   brightStarPositions(): Array<{ x: number; y: number }>;
   setStormRate(v: number): void;             // temperament multiplier on storm frequency
   horizonColor(): number;                    // the sky's current horizon hue (dread lean included)
+  /** Jump the day-night clock. A 360-second cycle means waiting six minutes to
+   *  see dusk, which makes comparing two times of day a matter of patience
+   *  rather than measurement. */
+  setDayT(v: number): void;
+  getDayT(): number;
   setLightAzimuth(v: number | null): void;   // pin the light's azimuth (null = resume cycle)
   setLightAltitude(v: number | null): void;  // pin the light's altitude
   setStarRotation(v: number): void;          // 0..1 of a full turn
@@ -509,6 +521,25 @@ export function createAtmosphere(): Atmosphere {
   const glazeLayer = new Graphics();
   glazeLayer.blendMode = 'multiply';
   glazeLayer.alpha = 0;
+
+  // The terminator: the part of the day-night light that is NOT the same
+  // everywhere. `glazeLayer` above carries the brightest column's light as a
+  // flat wash; this carries how much darker every other column is than that.
+  //
+  // The sun has had an azimuth all along and nothing on the ground read it, so
+  // the whole globe brightened at once and dawn read as the image fading up
+  // rather than as morning arriving somewhere. Each column here is sampled from
+  // the SAME nine keyframes at its own local time, so the staging that was
+  // already tuned is what sweeps across.
+  const TERMINATOR_STEPS = 64;
+  const terminatorCanvas = document.createElement('canvas');
+  terminatorCanvas.width = TERMINATOR_STEPS;
+  terminatorCanvas.height = 1;
+  const terminatorCtx = terminatorCanvas.getContext('2d')!;
+  const terminatorTexture = Texture.from(terminatorCanvas);
+  const terminatorLayer = new Sprite(terminatorTexture);
+  terminatorLayer.blendMode = 'multiply';
+  terminatorLayer.alpha = 0;
 
   // Airlight: the era's air scattered back as light. Screen blend, so it lifts
   // the darks toward the air's colour instead of pressing everything down.
@@ -1166,6 +1197,8 @@ export function createAtmosphere(): Atmosphere {
     skyLayer.height = height;
     glazeLayer.clear();
     glazeLayer.rect(0, 0, width, height).fill(0xffffff);
+    terminatorLayer.width = width;
+    terminatorLayer.height = height;
     airLayer.clear();
     airLayer.rect(0, 0, width, height).fill(0xffffff);
     starLayer.position.set(width * ATMOS.stars.poleX, height * ATMOS.stars.poleY);
@@ -1207,13 +1240,57 @@ export function createAtmosphere(): Atmosphere {
     }
 
     // Glaze: time-of-day light, cast by season, hazed by the era's air.
-    let glazeColor = lerpColor(day.glaze, season.cast, season.castAmount);
-    glazeColor = lerpColor(glazeColor, eraAirCur.air, eraAirCur.amount);
-    const glazeAlpha = day.glazeAlpha + season.castAmount * 0.5 + eraAirCur.amount * 0.28;
-    glazeLayer.tint = glazeColor;
-    glazeLayer.alpha = Math.min(ATMOS.day.glazeCap, glazeAlpha);
+    // Sample the day curve once per column at that column's own local time.
+    // Longitude is time: the right limb is `terminatorSpread` of a cycle later
+    // than the left. Season cast and era air are added per column too, so a
+    // hazy age hazes the whole globe rather than only its middle.
+    const spread = ATMOS.day.terminatorSpread;
+    const colColor: number[] = [];
+    const colAlpha: number[] = [];
+    let minAlpha = Infinity;
+    let minIdx = 0;
+    for (let i = 0; i < TERMINATOR_STEPS; i++) {
+      const f = i / (TERMINATOR_STEPS - 1);
+      const local = (((dayT + (f - 0.5) * 2 * spread) % 1) + 1) % 1;
+      const d = sampleDay(local);
+      let c = lerpColor(d.glaze, season.cast, season.castAmount);
+      c = lerpColor(c, eraAirCur.air, eraAirCur.amount);
+      const a = Math.min(
+        ATMOS.day.glazeCap,
+        d.glazeAlpha + season.castAmount * 0.5 + eraAirCur.amount * 0.28,
+      );
+      colColor.push(c);
+      colAlpha.push(a);
+      if (a < minAlpha) { minAlpha = a; minIdx = i; }
+    }
+
+    // The flat layer carries the LIGHTEST column. Multiply can only darken, so
+    // the brightest part of the globe has to be the baseline and everything
+    // else is the difference from it — otherwise the lit limb could never be
+    // brighter than the average and dawn would still be a uniform fade.
+    glazeLayer.tint = colColor[minIdx];
+    glazeLayer.alpha = minAlpha;
     // Fullscreen multiply quad — skip it entirely near noon when it's ~clear.
     glazeLayer.visible = glazeLayer.alpha > 0.004;
+
+    // …and the difference, per column, as a 64px gradient stretched wide.
+    let maxExtra = 0;
+    for (let i = 0; i < TERMINATOR_STEPS; i++) {
+      // Alpha composited over the flat layer: how much darker this column is
+      // than the baseline, given the baseline is already applied.
+      const extra = colAlpha[i] <= minAlpha ? 0 : (colAlpha[i] - minAlpha) / (1 - minAlpha);
+      if (extra > maxExtra) maxExtra = extra;
+      const c = colColor[i];
+      terminatorCtx.fillStyle =
+        'rgba(' + ((c >> 16) & 255) + ',' + ((c >> 8) & 255) + ',' + (c & 255) + ',' + extra.toFixed(4) + ')';
+      terminatorCtx.clearRect(i, 0, 1, 1);
+      terminatorCtx.fillRect(i, 0, 1, 1);
+    }
+    terminatorTexture.source.update();
+    terminatorLayer.alpha = 1;
+    // Skip the quad when the globe is evenly lit — around noon and deep night
+    // every column agrees and this is a no-op.
+    terminatorLayer.visible = maxExtra > 0.004;
 
     // …and the matching lift. Alpha follows the era's air alone, so the clear
     // ages never pay for the layer at all.
@@ -1539,7 +1616,9 @@ export function createAtmosphere(): Atmosphere {
   }
 
   return {
-    skyLayer, glazeLayer, airLayer, scarLayer, cloudShadowLayer, fogLayer,
+    setDayT: (v: number) => { dayT = ((v % 1) + 1) % 1; },
+    getDayT: () => dayT,
+    skyLayer, glazeLayer, terminatorLayer, airLayer, scarLayer, cloudShadowLayer, fogLayer,
     attach: (layers: { biomeLayer: Container }) => { attachedBiomeLayer = layers.biomeLayer; },
     attachPlane: (plane, geom) => {
       attachedPlane = plane;
