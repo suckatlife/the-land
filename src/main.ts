@@ -1239,6 +1239,9 @@ app.stage.addChild(atmos.glazeLayer);
 // Directly above the flat glaze: the part of the light that varies across the
 // globe. Both multiply, so together they are one light with a bright side.
 app.stage.addChild(atmos.terminatorLayer);
+// The warm side. Additive, and above the terminator, so a low sun can put
+// colour back on the world that the multiply layers can only take away.
+app.stage.addChild(atmos.sunCastLayer);
 // The era's airlight sits directly over its glaze: the pair is one atmosphere,
 // pressing down and lifting back up together.
 app.stage.addChild(atmos.airLayer);
