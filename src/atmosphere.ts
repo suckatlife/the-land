@@ -63,11 +63,15 @@ export const ATMOS = {
     // this is the only thing here that can make part of the globe brighter
     // than the flat glaze leaves it.
     //
+    // Halved from 0.82 once the cast moved from being centred on the sphere to
+    // being centred on the sun in the sky. The same number covers far more of
+    // the frame from there, and at 0.82 sunrise and sunset went blinding.
+    //
     // Paired with `terminatorMax` below: the two together are the contrast
     // between the lit and unlit halves, and they want raising and lowering
     // together or the globe gets bright on one side without getting dark on
     // the other.
-    sunCastMax: 0.82,
+    sunCastMax: 0.42,
 
     // Hard ceiling on glaze alpha — the legibility floor. Night may not get
     // darker than this, or the world stops being watchable.
@@ -1406,7 +1410,12 @@ export function createAtmosphere(): Atmosphere {
       // rising moon has a low altitude — so this was painting a sunset onto the
       // world at three in the morning and washing the night out completely.
       // The moon does not cast a sunset.
-      const lowSun = curLight.isDay ? Math.pow(1 - Math.min(1, alt / 0.55), 1.4) : 0;
+      // Eased rather than a hard power curve. `^1.4` reached full strength the
+      // instant the sun touched the horizon, which is exactly the moment the
+      // sky is already at its most saturated — the two peaked together and the
+      // frame blew out. Smoothstep ramps in and out either side.
+      const u = curLight.isDay ? 1 - Math.min(1, alt / 0.62) : 0;
+      const lowSun = u * u * (3 - 2 * u);
       const castStrength = lowSun * ATMOS.day.sunCastMax;
       sunCastLayer.visible = castStrength > 0.004;
       if (sunCastLayer.visible) {
