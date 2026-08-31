@@ -1332,7 +1332,20 @@ export function createAtmosphere(): Atmosphere {
     terminatorLayer.visible = nightDepth > 0.004;
     sunCastLayer.visible = false; // set below, only when the sphere is known
     if (terminatorLayer.visible && globeCircle) {
-      const { cx, cy, r } = globeCircle;
+      // Only the radius is still wanted from the sphere — it sets how far the
+      // light reaches. Where it lands now comes from the sun.
+      const { r } = globeCircle;
+      // The sun's own screen position, by the same formula that draws it, so
+      // the light and the thing casting it cannot drift apart.
+      const SW = limbLayout?.width ?? r;
+      const SH = limbLayout?.height ?? r;
+      const sunScreenX = curLight.azimuth * SW;
+      const sunScreenY = SH * (0.22 - 0.16 * curLight.altitude);
+      // How far the light reaches, in SCREEN terms. The discs are centred on
+      // the sun now, so sizing them by the globe's fitted circle radius — which
+      // is thousands of pixels — stepped in visible arcs across the frame. The
+      // diagonal is the distance any point on screen can be from the sun.
+      const reach = Math.hypot(SW, SH);
       // Sun direction. Azimuth runs 0..1 left to right; altitude 0..1 is the
       // arc height, so a rising sun points along the surface and a high one
       // points at the viewer.
@@ -1353,7 +1366,7 @@ export function createAtmosphere(): Atmosphere {
       // projection rather than as a texture: the plainest fill the API has, and
       // the previous attempt lost a whole debugging session to a texture that
       // uploaded blank and a gradient whose colour stops dropped their alpha.
-      const BANDS = 26;
+      const BANDS = 44;
       // Stacked discs centred on the ANTI-solar pole, growing outward. A point
       // deep on the night side falls inside every disc and accumulates the full
       // darkening; a point near the lit pole falls inside none.
@@ -1363,15 +1376,23 @@ export function createAtmosphere(): Atmosphere {
       // uniform wash with a little extra darkness exactly where the sun was.
       // It measured as ~3 luminance units and no left-right difference, which
       // is what "inverted" looks like from the outside.
-      const ax = cx - lx * r * 0.92;
-      const ay = cy - ly * r * 0.92;
+      // Anchored to where the sun is DRAWN, mirrored across the frame.
+      //
+      // These used to be solved on the sphere: `cx + lx * r`, with `r` the
+      // globe's fitted circle radius, which is thousands of pixels. The sun is
+      // drawn somewhere else entirely — `azimuth * w` across the frame, and
+      // `h * (0.22 - 0.16 * altitude)` down from the top — so the two were
+      // never required to agree and did not. The lit side sat low and off to
+      // one side of the actual sun.
+      const ax = SW - sunScreenX;
+      const ay = sunScreenY;
       // Per-disc alpha that accumulates to `nightDepth` over all of them.
       const per = 1 - Math.pow(1 - nightDepth, 1 / BANDS);
       for (let i = 0; i < BANDS; i++) {
         const t = (i + 1) / BANDS;
         // Radius shrinks as the stack deepens, so the falloff is soft at the
         // terminator and solid at the anti-solar pole.
-        const br = r * (1.95 - 1.5 * t);
+        const br = reach * (1.55 - 1.12 * t);
         terminatorLayer.circle(ax, ay, br).fill({ color: darkColor, alpha: per });
       }
       terminatorLayer.alpha = 1;
@@ -1391,16 +1412,17 @@ export function createAtmosphere(): Atmosphere {
       if (sunCastLayer.visible) {
         const warm = lerpColor(day.skyHorizon, season.cast, season.castAmount * 0.5);
         sunCastLayer.clear();
-        const px = cx + lx * r * 0.92;
-        const py = cy + ly * r * 0.92;
-        const CAST_BANDS = 20;
+        // On the sun itself, for the same reason as above.
+        const px = sunScreenX;
+        const py = sunScreenY;
+        const CAST_BANDS = 36;
         const castPer = 1 - Math.pow(1 - castStrength, 1 / CAST_BANDS);
         for (let i = 0; i < CAST_BANDS; i++) {
           const t = (i + 1) / CAST_BANDS;
           // Mirror of the terminator: discs on the LIT pole, shrinking as they
           // stack, so the warmth is strongest where the sun actually strikes
           // and falls off around the curve.
-          const br = r * (1.35 - 1.05 * t);
+          const br = reach * (1.15 - 0.92 * t);
           sunCastLayer.circle(px, py, br).fill({ color: warm, alpha: castPer });
         }
         sunCastLayer.alpha = 1;
