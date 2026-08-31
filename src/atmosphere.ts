@@ -1316,6 +1316,15 @@ export function createAtmosphere(): Atmosphere {
     // the layer costs nothing; low sun throws a soft terminator that wraps with
     // the curvature.
     const spread = terminatorSpreadOverride ?? ATMOS.day.terminatorSpread;
+    // How low the sun is, 0 overhead and 1 on the horizon. BOTH the shadowed
+    // side and the warm side scale by this, and the terminator did not — it
+    // was computed from `spread` alone, so it ran at full strength at midday.
+    // With the sun overhead its anti-solar anchor sits at the middle of the
+    // frame, which put a full-strength dusk-coloured wash across the centre of
+    // the world at noon. A sun directly above lights the whole visible face;
+    // there is no terminator to draw.
+    const lowU = curLight.isDay ? 1 - Math.min(1, curLight.altitude / 0.62) : 0;
+    const lowSunFactor = lowU * lowU * (3 - 2 * lowU);
     let nightDepth = 0;
     if (globeCircle && spread > 0) {
       // How dark the unlit side gets, over and above the flat glaze. Bounded so
@@ -1330,7 +1339,7 @@ export function createAtmosphere(): Atmosphere {
       // darkening it directionally by where the MOON happens to be would carve
       // a second, wrong terminator across a world that is already dark.
       nightDepth = curLight.isDay
-        ? Math.max(0, Math.min(ATMOS.day.terminatorMax, spread * 6.4))
+        ? Math.max(0, Math.min(ATMOS.day.terminatorMax, spread * 6.4) * lowSunFactor)
         : 0;
     }
     terminatorLayer.visible = nightDepth > 0.004;
@@ -1410,12 +1419,9 @@ export function createAtmosphere(): Atmosphere {
       // rising moon has a low altitude — so this was painting a sunset onto the
       // world at three in the morning and washing the night out completely.
       // The moon does not cast a sunset.
-      // Eased rather than a hard power curve. `^1.4` reached full strength the
-      // instant the sun touched the horizon, which is exactly the moment the
-      // sky is already at its most saturated — the two peaked together and the
-      // frame blew out. Smoothstep ramps in and out either side.
-      const u = curLight.isDay ? 1 - Math.min(1, alt / 0.62) : 0;
-      const lowSun = u * u * (3 - 2 * u);
+      // Same eased factor the shadowed side uses, so the two halves of one
+      // light can never disagree about how low the sun is.
+      const lowSun = lowSunFactor;
       const castStrength = lowSun * ATMOS.day.sunCastMax;
       sunCastLayer.visible = castStrength > 0.004;
       if (sunCastLayer.visible) {
