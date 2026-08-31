@@ -882,10 +882,51 @@ const QUALITY = {
   low:    { mainRes: 1,    rt: 0.46, slots: 2, extraFloors: 0, label: 'low'  },
 } as const;
 type QualityLevel = keyof typeof QUALITY;
+/** The tier to start on when the viewer has never chosen one.
+ *
+ *  This used to be `'high'` for everybody, with no device detection at all —
+ *  the stored value is only ever written by the `gfx:` button, so a phone that
+ *  had never had that button pressed rendered at the heaviest settings
+ *  forever. That is four building slots and five extra floors per tile against
+ *  two and zero: up to 28 sprites on a tile instead of 4, on a grid of 9,216.
+ *  Measured on desktop, a mature world reaches 7,261 building sprites and ~760MB
+ *  of heap; iOS Safari kills a tab well below that, which is the crash in #68.
+ *
+ *  Deliberately conservative: `deviceMemory` is absent on Safari, so this leans
+ *  on viewport and pointer type, which are reliable everywhere. Getting this
+ *  wrong downward costs some floors on a device that could have drawn them;
+ *  getting it wrong upward costs the whole page.
+ */
+function pickDefaultQuality(): QualityLevel {
+  try {
+    const short = Math.min(window.innerWidth, window.innerHeight);
+    const long = Math.max(window.innerWidth, window.innerHeight);
+    const coarse = window.matchMedia?.('(pointer: coarse)').matches ?? false;
+    // `deviceMemory` is CAPPED AT 8 by Chrome, so "8 or less" is every desktop
+    // ever made and an earlier version of this quietly demoted all of them to
+    // medium. Only treat it as a signal at the genuinely small end.
+    const mem = (navigator as unknown as { deviceMemory?: number }).deviceMemory;
+    const cores = navigator.hardwareConcurrency ?? 0;
+    // Phones: a coarse pointer on a small screen, or simply a very narrow one.
+    if (short < 500 || (coarse && long < 1100)) return 'low';
+    if (mem !== undefined && mem <= 2) return 'low';
+    // Tablets and genuinely weak machines.
+    if (coarse) return 'medium';
+    if (mem !== undefined && mem <= 4) return 'medium';
+    if (cores > 0 && cores <= 2) return 'medium';
+    return 'high';
+  } catch {
+    // Any of the above missing is itself a signal that this is not a
+    // well-equipped browser. Erring low costs floors, not the page.
+    return 'medium';
+  }
+}
+
+const _storedQuality = localStorage.getItem('theLand:quality') as QualityLevel | null;
+// An explicit choice always wins, and always survives — the picker only ever
+// decides for someone who has not pressed the button.
 let qualityLevel: QualityLevel =
-  (localStorage.getItem('theLand:quality') as QualityLevel) in QUALITY
-    ? (localStorage.getItem('theLand:quality') as QualityLevel)
-    : 'high';
+  _storedQuality !== null && _storedQuality in QUALITY ? _storedQuality : pickDefaultQuality();
 
 // Perf A/B overrides (?mres= / ?rt=) so resolution levers can be measured on
 // clean loads without rebuilding.
