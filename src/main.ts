@@ -1880,7 +1880,19 @@ function endingCheckpoints(): boolean {
     // there is nothing left to accelerate through, so the speed control returns
     // to 1x for the aftermath. Consistent with skip, which already stops here.
     if (timeScale !== 1) setTimeScale(1);
-    showWorldRecord();
+    // The end card is deliberately not shown. It named the world, printed an
+    // epitaph and a dateline, and offered a link — and it arrived over the top
+    // of the one moment the piece is actually about, which is the world ending
+    // and the next one beginning. Lawrence, watching it run: not necessary,
+    // and distracting.
+    //
+    // Nothing is lost from the share path: the `share` control in the HUD
+    // builds the same record URL through `recordUrl()` and is available at any
+    // time rather than only in the seconds before a reset.
+    //
+    // `showWorldRecord` is kept rather than deleted — it is the only thing that
+    // knows how to compose a record, `/r/` links still render one, and the
+    // ending sequence may want it back behind a control one day.
   }
   if (simWorld.tick >= currentWorldFate.endTick) {
     beginWorldEnding();
@@ -7272,6 +7284,9 @@ function recordUrl(rec: Record<string, unknown>): string {
 // them. Shown as act 4 opens, so it is read over the world it describes rather
 // than over the next one.
 let worldRecordEl: HTMLElement | null = null;
+// Not shown automatically any more — see the ending sequence. Kept reachable so
+// the composer stays exercised and can be looked at deliberately: `__record()`.
+
 function showWorldRecord() {
   if (worldRecordEl) return;   // once per world
   const o = resolveWorldEnding(
@@ -7373,6 +7388,7 @@ function showWorldRecord() {
   worldRecordEl = el;
   requestAnimationFrame(() => el.classList.add('is-visible'));
 }
+(window as any).__record = showWorldRecord;
 function clearWorldRecord() {
   worldRecordEl?.remove();
   worldRecordEl = null;
