@@ -436,7 +436,7 @@ function sampleSeason(t: number): SeasonState {
 export interface Atmosphere {
   skyLayer: Sprite;
   glazeLayer: Graphics;
-  terminatorLayer: Sprite;
+  terminatorLayer: Graphics;
   airLayer: Graphics;                        // era airlight (screen), sits over the glaze
   scarLayer: Container;
   cloudShadowLayer: Container;
@@ -483,6 +483,8 @@ export interface Atmosphere {
    *  see dusk, which makes comparing two times of day a matter of patience
    *  rather than measurement. */
   setDayT(v: number): void;
+  /** Override the terminator spread (null = use the configured value). */
+  setTerminatorSpread(v: number | null): void;
   getDayT(): number;
   setLightAzimuth(v: number | null): void;   // pin the light's azimuth (null = resume cycle)
   setLightAltitude(v: number | null): void;  // pin the light's altitude
@@ -531,15 +533,18 @@ export function createAtmosphere(): Atmosphere {
   // rather than as morning arriving somewhere. Each column here is sampled from
   // the SAME nine keyframes at its own local time, so the staging that was
   // already tuned is what sweeps across.
-  const TERMINATOR_STEPS = 64;
-  const terminatorCanvas = document.createElement('canvas');
-  terminatorCanvas.width = TERMINATOR_STEPS;
-  terminatorCanvas.height = 1;
-  const terminatorCtx = terminatorCanvas.getContext('2d')!;
-  const terminatorTexture = Texture.from(terminatorCanvas);
-  const terminatorLayer = new Sprite(terminatorTexture);
+  const TERMINATOR_STEPS = 40;
+  const terminatorLayer = new Graphics();
   terminatorLayer.blendMode = 'multiply';
   terminatorLayer.alpha = 0;
+  let terminatorDrawnAt = -1;
+  // Runtime override for the spread, so an A/B can be measured on one build.
+  // Toggling `visible` from outside does not work: `update()` recomputes it
+  // from the gradient every frame and turns it straight back on, which is how
+  // an earlier comparison sampled the same state twice and read as "no effect".
+  let terminatorSpreadOverride: number | null = null;
+  let terminatorW = 0;
+  let terminatorH = 0;
 
   // Airlight: the era's air scattered back as light. Screen blend, so it lifts
   // the darks toward the air's colour instead of pressing everything down.
@@ -1197,8 +1202,9 @@ export function createAtmosphere(): Atmosphere {
     skyLayer.height = height;
     glazeLayer.clear();
     glazeLayer.rect(0, 0, width, height).fill(0xffffff);
-    terminatorLayer.width = width;
-    terminatorLayer.height = height;
+    terminatorW = width;
+    terminatorH = height;
+    terminatorDrawnAt = -1; // force a redraw at the new size
     airLayer.clear();
     airLayer.rect(0, 0, width, height).fill(0xffffff);
     starLayer.position.set(width * ATMOS.stars.poleX, height * ATMOS.stars.poleY);
@@ -1244,7 +1250,7 @@ export function createAtmosphere(): Atmosphere {
     // Longitude is time: the right limb is `terminatorSpread` of a cycle later
     // than the left. Season cast and era air are added per column too, so a
     // hazy age hazes the whole globe rather than only its middle.
-    const spread = ATMOS.day.terminatorSpread;
+    const spread = terminatorSpreadOverride ?? ATMOS.day.terminatorSpread;
     const colColor: number[] = [];
     const colAlpha: number[] = [];
     let minAlpha = Infinity;
@@ -1273,24 +1279,50 @@ export function createAtmosphere(): Atmosphere {
     // Fullscreen multiply quad — skip it entirely near noon when it's ~clear.
     glazeLayer.visible = glazeLayer.alpha > 0.004;
 
-    // …and the difference, per column, as a 64px gradient stretched wide.
+    // …and the difference, per column, as a gradient across the screen.
+    //
+    // Drawn as a Graphics gradient rather than uploaded as a canvas texture.
+    // The first attempt used a 64x1 canvas and `source.update()`, and the GPU
+    // kept the initial blank upload — the layer was correctly sized, visible
+    // and set to multiply, and multiplied by nothing. It cost 1-2 luminance
+    // units on the land while the numbers said 0.435, which is the worst kind
+    // of wrong: a measurement of the source data that agrees with you and a
+    // render that does not.
     let maxExtra = 0;
     for (let i = 0; i < TERMINATOR_STEPS; i++) {
-      // Alpha composited over the flat layer: how much darker this column is
-      // than the baseline, given the baseline is already applied.
       const extra = colAlpha[i] <= minAlpha ? 0 : (colAlpha[i] - minAlpha) / (1 - minAlpha);
       if (extra > maxExtra) maxExtra = extra;
-      const c = colColor[i];
-      terminatorCtx.fillStyle =
-        'rgba(' + ((c >> 16) & 255) + ',' + ((c >> 8) & 255) + ',' + (c & 255) + ',' + extra.toFixed(4) + ')';
-      terminatorCtx.clearRect(i, 0, 1, 1);
-      terminatorCtx.fillRect(i, 0, 1, 1);
     }
-    terminatorTexture.source.update();
+    // Container alpha 1: the per-bar alphas carry the whole effect. This is
+    // initialised to 0 at construction and an earlier rewrite dropped the line
+    // that set it, so the layer was fully transparent while every number about
+    // it looked right.
     terminatorLayer.alpha = 1;
-    // Skip the quad when the globe is evenly lit — around noon and deep night
-    // every column agrees and this is a no-op.
-    terminatorLayer.visible = maxExtra > 0.004;
+    terminatorLayer.visible = maxExtra > 0.004 && terminatorW > 0;
+    // Redraw on a coarse clock. The day cycle is 360s, so a few hundred
+    // redraws across it is far finer than the eye needs and far cheaper than
+    // rebuilding a gradient every frame.
+    if (terminatorLayer.visible && Math.abs(dayT - terminatorDrawnAt) > 0.0015) {
+      terminatorDrawnAt = dayT;
+      // Overlapping bars with a per-fill alpha, not a gradient.
+      //
+      // `FillGradient` colour stops did not carry alpha through — the layer
+      // rendered, but every stop came out at zero contribution, so the land
+      // brightened uniformly (from the new lighter baseline) with no
+      // left-to-right difference at all. Bars use only `fill({ color, alpha })`,
+      // which is the plainest thing the API has.
+      terminatorLayer.clear();
+      const bw = terminatorW / TERMINATOR_STEPS;
+      for (let i = 0; i < TERMINATOR_STEPS; i++) {
+        const extra = colAlpha[i] <= minAlpha ? 0 : (colAlpha[i] - minAlpha) / (1 - minAlpha);
+        if (extra <= 0.002) continue;
+        // Half a bar of overlap on each side so the seams blend rather than
+        // banding; multiply of two low alphas is close enough to linear here.
+        terminatorLayer
+          .rect(i * bw - bw * 0.5, 0, bw * 2, terminatorH)
+          .fill({ color: colColor[i], alpha: extra });
+      }
+    }
 
     // …and the matching lift. Alpha follows the era's air alone, so the clear
     // ages never pay for the layer at all.
@@ -1617,6 +1649,7 @@ export function createAtmosphere(): Atmosphere {
 
   return {
     setDayT: (v: number) => { dayT = ((v % 1) + 1) % 1; },
+    setTerminatorSpread: (v: number | null) => { terminatorSpreadOverride = v; terminatorDrawnAt = -1; },
     getDayT: () => dayT,
     skyLayer, glazeLayer, terminatorLayer, airLayer, scarLayer, cloudShadowLayer, fogLayer,
     attach: (layers: { biomeLayer: Container }) => { attachedBiomeLayer = layers.biomeLayer; },
