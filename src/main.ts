@@ -1130,6 +1130,12 @@ world.addChild(airTrailGfx);
 // Planes and rockets fly in the air, above everything on the ground.
 world.addChild(airGfx);
 world.addChild(cityMarkersContainer);
+// City lights, on the night side only. Lives inside `world`, so it rides the
+// globe's curvature like the land it sits on — the sky clouds cannot do this,
+// which is why they read as a flat band scrolling past.
+const nightLightsGfx = new Graphics();
+nightLightsGfx.blendMode = 'add';
+world.addChild(nightLightsGfx);
 // Mist banks veil everything but the text.
 world.addChild(atmos.fogLayer);
 world.addChild(labelLayer);
@@ -7831,9 +7837,40 @@ app.ticker.add((ticker) => {
 // Capture the world into its RenderTexture every frame. Registered after the
 // main tick callback (so it sees this frame's updates) and not gated by
 // `running`, so manual actions while paused still show.
+/** Warm points where cities are, brightening as their part of the world turns
+ *  away from the sun.
+ *
+ *  Keyed to `nightFactorAt` rather than to the clock, so the lights come on
+ *  across the map the way the terminator sweeps rather than all at once — and
+ *  so the lit half stays dark while the far half glows. Additive, because a
+ *  light is emitted rather than reflected, and the whole point is that they
+ *  survive the night glaze pressing down on everything else. */
+function drawNightLights(): void {
+  nightLightsGfx.clear();
+  for (const civ of simWorld.civs.values()) {
+    if (civ.phase === 'dead') continue;
+    for (let i = 0; i < civ.cities.length; i++) {
+      const city = civ.cities[i];
+      const p = tileToSky(city.row, city.col);
+      const night = atmos.nightFactorAt(p.x, p.y);
+      // Nothing at all in daylight: a city glowing at noon reads as a bug.
+      if (night < 0.35) continue;
+      const t = Math.min(1, (night - 0.35) / 0.5);
+      const prom = i === 0 ? 1 : Math.max(0.35, city.prominence);
+      const { x, y } = gridToScreen(city.col, city.row);
+      const a = t * (0.42 + 0.38 * prom);
+      // A small hot core inside a wider halo — one flat dot reads as a pixel
+      // fault rather than as a light.
+      nightLightsGfx.circle(x, y, 2.4 + 3.2 * prom).fill({ color: 0xffb75e, alpha: a * 0.22 });
+      nightLightsGfx.circle(x, y, 0.9 + 1.5 * prom).fill({ color: 0xfff0c0, alpha: a });
+    }
+  }
+}
+
 app.ticker.add(() => {
   measureFps();
   updateFpsLabel();
+  drawNightLights();
   if (!(window as any).__skipRT) {
     app.renderer.render({ container: world, target: worldRT, clear: true });
     if (worldNeedsEdgeErase()) {

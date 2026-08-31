@@ -485,6 +485,10 @@ export interface Atmosphere {
   setDayT(v: number): void;
   /** Override the terminator spread (null = use the configured value). */
   setTerminatorSpread(v: number | null): void;
+  /** 0 in full sun, 1 on the unlit side, for a point in screen space. Cities
+   *  light up by this, so the lights follow the terminator rather than a clock
+   *  — the lit half of the world stays dark and the far half glows. */
+  nightFactorAt(x: number, y: number): number;
   getDayT(): number;
   setLightAzimuth(v: number | null): void;   // pin the light's azimuth (null = resume cycle)
   setLightAltitude(v: number | null): void;  // pin the light's altitude
@@ -533,18 +537,14 @@ export function createAtmosphere(): Atmosphere {
   // rather than as morning arriving somewhere. Each column here is sampled from
   // the SAME nine keyframes at its own local time, so the staging that was
   // already tuned is what sweeps across.
-  const TERMINATOR_STEPS = 40;
   const terminatorLayer = new Graphics();
   terminatorLayer.blendMode = 'multiply';
   terminatorLayer.alpha = 0;
-  let terminatorDrawnAt = -1;
   // Runtime override for the spread, so an A/B can be measured on one build.
   // Toggling `visible` from outside does not work: `update()` recomputes it
   // from the gradient every frame and turns it straight back on, which is how
   // an earlier comparison sampled the same state twice and read as "no effect".
   let terminatorSpreadOverride: number | null = null;
-  let terminatorW = 0;
-  let terminatorH = 0;
 
   // Airlight: the era's air scattered back as light. Screen blend, so it lifts
   // the darks toward the air's colour instead of pressing everything down.
@@ -601,6 +601,11 @@ export function createAtmosphere(): Atmosphere {
   limbBandGfx.filters = [new BlurFilter({ strength: 9 })];
   limbBand.addChild(limbBandGfx);
   let limbLayout: { width: number; height: number; apexX: number; apexY: number } | null = null;
+  let globeCircle: { cx: number; cy: number; r: number } | null = null;
+  // The sun as a unit vector in screen space, kept so anything on the ground
+  // can ask how lit a place is. Cities need it to know when to switch their
+  // lights on.
+  let sunVec = { x: 0, y: -1, z: 0 };
 
   function layoutLimb(args?: { width: number; height: number; apexX: number; apexY: number }) {
     if (args) limbLayout = args;
@@ -621,6 +626,10 @@ export function createAtmosphere(): Atmosphere {
     const halfW = width / 2 + 80; // overshoot the frame so the arc exits cleanly
     const R = (halfW * halfW + sag * sag) / (2 * sag);
     const cy = apexY + R;
+    // The globe as a circle in screen space. The terminator needs the actual
+    // sphere — a left-to-right gradient across the frame is a wipe, not a lit
+    // ball, which is exactly how the first version read.
+    globeCircle = { cx: apexX, cy, r: R };
     // Mask: the circle's upper region plus everything below its center line.
     limbMaskG.circle(apexX, cy, R).fill(0xffffff);
     limbMaskG.rect(-200, cy, width + 400, height + 400).fill(0xffffff);
@@ -1202,9 +1211,6 @@ export function createAtmosphere(): Atmosphere {
     skyLayer.height = height;
     glazeLayer.clear();
     glazeLayer.rect(0, 0, width, height).fill(0xffffff);
-    terminatorW = width;
-    terminatorH = height;
-    terminatorDrawnAt = -1; // force a redraw at the new size
     airLayer.clear();
     airLayer.rect(0, 0, width, height).fill(0xffffff);
     starLayer.position.set(width * ATMOS.stars.poleX, height * ATMOS.stars.poleY);
@@ -1246,82 +1252,82 @@ export function createAtmosphere(): Atmosphere {
     }
 
     // Glaze: time-of-day light, cast by season, hazed by the era's air.
-    // Sample the day curve once per column at that column's own local time.
-    // Longitude is time: the right limb is `terminatorSpread` of a cycle later
-    // than the left. Season cast and era air are added per column too, so a
-    // hazy age hazes the whole globe rather than only its middle.
-    const spread = terminatorSpreadOverride ?? ATMOS.day.terminatorSpread;
-    const colColor: number[] = [];
-    const colAlpha: number[] = [];
-    let minAlpha = Infinity;
-    let minIdx = 0;
-    for (let i = 0; i < TERMINATOR_STEPS; i++) {
-      const f = i / (TERMINATOR_STEPS - 1);
-      const local = (((dayT + (f - 0.5) * 2 * spread) % 1) + 1) % 1;
-      const d = sampleDay(local);
-      let c = lerpColor(d.glaze, season.cast, season.castAmount);
-      c = lerpColor(c, eraAirCur.air, eraAirCur.amount);
-      const a = Math.min(
-        ATMOS.day.glazeCap,
-        d.glazeAlpha + season.castAmount * 0.5 + eraAirCur.amount * 0.28,
-      );
-      colColor.push(c);
-      colAlpha.push(a);
-      if (a < minAlpha) { minAlpha = a; minIdx = i; }
-    }
-
-    // The flat layer carries the LIGHTEST column. Multiply can only darken, so
-    // the brightest part of the globe has to be the baseline and everything
-    // else is the difference from it — otherwise the lit limb could never be
-    // brighter than the average and dawn would still be a uniform fade.
-    glazeLayer.tint = colColor[minIdx];
-    glazeLayer.alpha = minAlpha;
-    // Fullscreen multiply quad — skip it entirely near noon when it's ~clear.
+    // Glaze: time-of-day light, cast by season, hazed by the era's air. Flat,
+    // as it always was — the spherical layer below adds the direction.
+    let glazeColor = lerpColor(day.glaze, season.cast, season.castAmount);
+    glazeColor = lerpColor(glazeColor, eraAirCur.air, eraAirCur.amount);
+    const glazeAlpha = Math.min(
+      ATMOS.day.glazeCap,
+      day.glazeAlpha + season.castAmount * 0.5 + eraAirCur.amount * 0.28,
+    );
+    glazeLayer.tint = glazeColor;
+    glazeLayer.alpha = glazeAlpha;
     glazeLayer.visible = glazeLayer.alpha > 0.004;
 
-    // …and the difference, per column, as a gradient across the screen.
+    // --- the terminator, as a lit sphere ------------------------------------
     //
-    // Drawn as a Graphics gradient rather than uploaded as a canvas texture.
-    // The first attempt used a 64x1 canvas and `source.update()`, and the GPU
-    // kept the initial blank upload — the layer was correctly sized, visible
-    // and set to multiply, and multiplied by nothing. It cost 1-2 luminance
-    // units on the land while the numbers said 0.435, which is the worst kind
-    // of wrong: a measurement of the source data that agrees with you and a
-    // render that does not.
-    let maxExtra = 0;
-    for (let i = 0; i < TERMINATOR_STEPS; i++) {
-      const extra = colAlpha[i] <= minAlpha ? 0 : (colAlpha[i] - minAlpha) / (1 - minAlpha);
-      if (extra > maxExtra) maxExtra = extra;
+    // Lambert shading on the real globe, not a gradient across the frame. Each
+    // texel of a small canvas is turned into a point on the sphere, given a
+    // surface normal, and dotted with the sun's direction. That is what makes
+    // it read as a ball with a light on one side rather than as a wipe passing
+    // across — the difference Lawrence spotted immediately.
+    //
+    // The sun already has `azimuth` and `altitude`; this is the first thing on
+    // the ground to use them. High sun lights the whole visible face evenly and
+    // the layer costs nothing; low sun throws a soft terminator that wraps with
+    // the curvature.
+    const spread = terminatorSpreadOverride ?? ATMOS.day.terminatorSpread;
+    let nightDepth = 0;
+    if (globeCircle && spread > 0) {
+      // How dark the unlit side gets, over and above the flat glaze. Bounded so
+      // the two together never pass the legibility floor.
+      nightDepth = Math.max(0, Math.min(ATMOS.day.glazeCap - glazeAlpha, spread * 5.2));
     }
-    // Container alpha 1: the per-bar alphas carry the whole effect. This is
-    // initialised to 0 at construction and an earlier rewrite dropped the line
-    // that set it, so the layer was fully transparent while every number about
-    // it looked right.
-    terminatorLayer.alpha = 1;
-    terminatorLayer.visible = maxExtra > 0.004 && terminatorW > 0;
-    // Redraw on a coarse clock. The day cycle is 360s, so a few hundred
-    // redraws across it is far finer than the eye needs and far cheaper than
-    // rebuilding a gradient every frame.
-    if (terminatorLayer.visible && Math.abs(dayT - terminatorDrawnAt) > 0.0015) {
-      terminatorDrawnAt = dayT;
-      // Overlapping bars with a per-fill alpha, not a gradient.
-      //
-      // `FillGradient` colour stops did not carry alpha through — the layer
-      // rendered, but every stop came out at zero contribution, so the land
-      // brightened uniformly (from the new lighter baseline) with no
-      // left-to-right difference at all. Bars use only `fill({ color, alpha })`,
-      // which is the plainest thing the API has.
+    terminatorLayer.visible = nightDepth > 0.004;
+    if (terminatorLayer.visible && globeCircle) {
+      const { cx, cy, r } = globeCircle;
+      // Sun direction. Azimuth runs 0..1 left to right; altitude 0..1 is the
+      // arc height, so a rising sun points along the surface and a high one
+      // points at the viewer.
+      const az = (curLight.azimuth - 0.5) * 2;
+      const alt = curLight.altitude;
+      let lx = az;
+      let ly = -alt * 0.9;
+      let lz = Math.sqrt(Math.max(0.02, 1 - lx * lx - ly * ly));
+      const ll = Math.hypot(lx, ly, lz);
+      lx /= ll; ly /= ll; lz /= ll;
+      sunVec = { x: lx, y: ly, z: lz };
+      const dark = sampleDay((((dayT + spread) % 1) + 1) % 1);
+      let darkColor = lerpColor(dark.glaze, season.cast, season.castAmount);
+      darkColor = lerpColor(darkColor, eraAirCur.air, eraAirCur.amount);
+
       terminatorLayer.clear();
-      const bw = terminatorW / TERMINATOR_STEPS;
-      for (let i = 0; i < TERMINATOR_STEPS; i++) {
-        const extra = colAlpha[i] <= minAlpha ? 0 : (colAlpha[i] - minAlpha) / (1 - minAlpha);
-        if (extra <= 0.002) continue;
-        // Half a bar of overlap on each side so the seams blend rather than
-        // banding; multiply of two low alphas is close enough to linear here.
-        terminatorLayer
-          .rect(i * bw - bw * 0.5, 0, bw * 2, terminatorH)
-          .fill({ color: colColor[i], alpha: extra });
+      // Concentric bands of constant N·L. Drawn as rings on the sphere's
+      // projection rather than as a texture: the plainest fill the API has, and
+      // the previous attempt lost a whole debugging session to a texture that
+      // uploaded blank and a gradient whose colour stops dropped their alpha.
+      const BANDS = 26;
+      // Stacked discs centred on the ANTI-solar pole, growing outward. A point
+      // deep on the night side falls inside every disc and accumulates the full
+      // darkening; a point near the lit pole falls inside none.
+      //
+      // The first attempt centred them on the LIT pole with alpha growing with
+      // radius, so the largest and darkest disc covered the entire globe — a
+      // uniform wash with a little extra darkness exactly where the sun was.
+      // It measured as ~3 luminance units and no left-right difference, which
+      // is what "inverted" looks like from the outside.
+      const ax = cx - lx * r * 0.92;
+      const ay = cy - ly * r * 0.92;
+      // Per-disc alpha that accumulates to `nightDepth` over all of them.
+      const per = 1 - Math.pow(1 - nightDepth, 1 / BANDS);
+      for (let i = 0; i < BANDS; i++) {
+        const t = (i + 1) / BANDS;
+        // Radius shrinks as the stack deepens, so the falloff is soft at the
+        // terminator and solid at the anti-solar pole.
+        const br = r * (1.95 - 1.5 * t);
+        terminatorLayer.circle(ax, ay, br).fill({ color: darkColor, alpha: per });
       }
+      terminatorLayer.alpha = 1;
     }
 
     // …and the matching lift. Alpha follows the era's air alone, so the clear
@@ -1648,8 +1654,19 @@ export function createAtmosphere(): Atmosphere {
   }
 
   return {
+    nightFactorAt: (x: number, y: number) => {
+      if (!globeCircle) return curLight.nightness;
+      const { cx, cy, r } = globeCircle;
+      const dx = (x - cx) / r;
+      const dy = (y - cy) / r;
+      const d2 = dx * dx + dy * dy;
+      if (d2 >= 1) return curLight.nightness;
+      const nz = Math.sqrt(1 - d2);
+      const nd = dx * sunVec.x + dy * sunVec.y + nz * sunVec.z;
+      return Math.max(0, Math.min(1, 1 - nd));
+    },
     setDayT: (v: number) => { dayT = ((v % 1) + 1) % 1; },
-    setTerminatorSpread: (v: number | null) => { terminatorSpreadOverride = v; terminatorDrawnAt = -1; },
+    setTerminatorSpread: (v: number | null) => { terminatorSpreadOverride = v; },
     getDayT: () => dayT,
     skyLayer, glazeLayer, terminatorLayer, airLayer, scarLayer, cloudShadowLayer, fogLayer,
     attach: (layers: { biomeLayer: Container }) => { attachedBiomeLayer = layers.biomeLayer; },
