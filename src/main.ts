@@ -7922,15 +7922,18 @@ function drawNightLights(): void {
       const p = tileToSky(city.row, city.col);
       const night = atmos.nightFactorAt(p.x, p.y);
       // Nothing at all in daylight: a city glowing at noon reads as a bug.
-      if (night < 0.35) continue;
-      const t = Math.min(1, (night - 0.35) / 0.5);
+      if (night < 0.3) continue;
+      const t = Math.min(1, (night - 0.3) / 0.4);
       const prom = i === 0 ? 1 : Math.max(0.35, city.prominence);
       const { x, y } = gridToScreen(city.col, city.row);
-      const a = t * (0.42 + 0.38 * prom);
-      // A small hot core inside a wider halo — one flat dot reads as a pixel
-      // fault rather than as a light.
-      nightLightsGfx.circle(x, y, 2.4 + 3.2 * prom).fill({ color: 0xffb75e, alpha: a * 0.22 });
-      nightLightsGfx.circle(x, y, 0.9 + 1.5 * prom).fill({ color: 0xfff0c0, alpha: a });
+      const a = t * (0.78 + 0.5 * prom);
+      // Three rings, not two. `glazeCap` keeps the night land legible rather
+      // than black, so a light has to beat a surface that is still fairly
+      // bright — the first pass used a 2px halo at a fifth alpha and simply
+      // disappeared into the ground it was meant to sit on.
+      nightLightsGfx.circle(x, y, 5.5 + 7 * prom).fill({ color: 0xff9a3c, alpha: a * 0.13 });
+      nightLightsGfx.circle(x, y, 2.6 + 3.4 * prom).fill({ color: 0xffb75e, alpha: a * 0.42 });
+      nightLightsGfx.circle(x, y, 1.1 + 1.7 * prom).fill({ color: 0xfff4d2, alpha: Math.min(1, a * 1.35) });
     }
   }
 }

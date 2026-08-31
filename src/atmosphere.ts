@@ -33,15 +33,19 @@ export const ATMOS = {
     // Add/move/remove keyframes freely; they are interpolated in t-order
     // with smoothstep easing between neighbours.
     keyframes: [
+      // Night deepened, and the glaze colours cooled with it. These predate the
+      // city lights: with nothing emitting light after dark the land itself had
+      // to stay readable, so night stopped at half a wash and read as dusk. The
+      // cities carry legibility now, so night can be night.
       { t: 0.00, skyTop: 0x6a6f9a, skyHorizon: 0xf0a36a, glaze: 0xf0b878, glazeAlpha: 0.18 }, // sunrise: lilac over peach
       { t: 0.08, skyTop: 0x7ba6d4, skyHorizon: 0xf6cf9c, glaze: 0xf8e4c2, glazeAlpha: 0.07 }, // early morning
       { t: 0.25, skyTop: 0x5b9ad8, skyHorizon: 0xc7e0ee, glaze: 0xffffff, glazeAlpha: 0.00 }, // noon: clear blue
       { t: 0.42, skyTop: 0x77a6d0, skyHorizon: 0xe9cf9a, glaze: 0xf2dcae, glazeAlpha: 0.08 }, // afternoon
       { t: 0.52, skyTop: 0x7c6a9e, skyHorizon: 0xef8a4c, glaze: 0xe49152, glazeAlpha: 0.26 }, // sunset: violet over orange
-      { t: 0.60, skyTop: 0x52506f, skyHorizon: 0xc06450, glaze: 0xb06658, glazeAlpha: 0.36 }, // afterglow: red-purple
-      { t: 0.68, skyTop: 0x303c58, skyHorizon: 0x6a5570, glaze: 0x8195b8, glazeAlpha: 0.44 }, // nightfall
-      { t: 0.80, skyTop: 0x182338, skyHorizon: 0x33405c, glaze: 0x6f82a4, glazeAlpha: 0.50 }, // deep night
-      { t: 0.92, skyTop: 0x1f2b44, skyHorizon: 0x46506a, glaze: 0x7b8dab, glazeAlpha: 0.45 }, // small hours
+      { t: 0.60, skyTop: 0x52506f, skyHorizon: 0xc06450, glaze: 0xb06658, glazeAlpha: 0.44 }, // afterglow: red-purple
+      { t: 0.68, skyTop: 0x303c58, skyHorizon: 0x6a5570, glaze: 0x6f83a8, glazeAlpha: 0.58 }, // nightfall
+      { t: 0.80, skyTop: 0x182338, skyHorizon: 0x33405c, glaze: 0x5b6d92, glazeAlpha: 0.70 }, // deep night
+      { t: 0.92, skyTop: 0x1f2b44, skyHorizon: 0x46506a, glaze: 0x66799c, glazeAlpha: 0.62 }, // small hours
     ],
     // Fraction of screen height where the horizon band sits in the sky
     // gradient (the world diamond occupies the area below the upper sky).
@@ -66,8 +70,14 @@ export const ATMOS = {
     sunCastMax: 0.62,
 
     // Hard ceiling on glaze alpha — the legibility floor. Night may not get
-    // darker than this no matter what the keyframes say.
-    glazeCap: 0.55,
+    // darker than this, or the world stops being watchable.
+    //
+    // Raised from 0.55 deliberately. That value predates the city lights: with
+    // nothing emitting light at night, the land itself had to stay readable or
+    // there was nothing to see. Now the lit half is carried by the cities, so
+    // the dark half can actually be dark — and it has to be, or the lights sit
+    // on a bright surface and never read as lights.
+    glazeCap: 0.74,
   },
 
   // How far the sky leans toward the brewing catastrophe's hue at full dread
@@ -1312,7 +1322,12 @@ export function createAtmosphere(): Atmosphere {
       // other is being lit, so borrowing the global ceiling held the night
       // side to whatever the flat glaze had left over, which at sunset was
       // about 0.29 and read as haze rather than as night.
-      nightDepth = Math.max(0, Math.min(ATMOS.day.terminatorMax, spread * 6.4));
+      // Same reason: after sunset the whole visible face is night, and
+      // darkening it directionally by where the MOON happens to be would carve
+      // a second, wrong terminator across a world that is already dark.
+      nightDepth = curLight.isDay
+        ? Math.max(0, Math.min(ATMOS.day.terminatorMax, spread * 6.4))
+        : 0;
     }
     terminatorLayer.visible = nightDepth > 0.004;
     sunCastLayer.visible = false; // set below, only when the sphere is known
@@ -1366,7 +1381,11 @@ export function createAtmosphere(): Atmosphere {
       // sun is white and washes nothing. `skyHorizon` is the colour already in
       // the sky at this moment, so the land catches the same sunset the sky is
       // showing rather than a second, invented one.
-      const lowSun = Math.pow(1 - Math.min(1, alt / 0.55), 1.4);
+      // Daylight only. `curLight` hands over to the MOON after sunset, and a
+      // rising moon has a low altitude — so this was painting a sunset onto the
+      // world at three in the morning and washing the night out completely.
+      // The moon does not cast a sunset.
+      const lowSun = curLight.isDay ? Math.pow(1 - Math.min(1, alt / 0.55), 1.4) : 0;
       const castStrength = lowSun * ATMOS.day.sunCastMax;
       sunCastLayer.visible = castStrength > 0.004;
       if (sunCastLayer.visible) {
@@ -1720,8 +1739,13 @@ export function createAtmosphere(): Atmosphere {
       const d2 = dx * dx + dy * dy;
       if (d2 >= 1) return curLight.nightness;
       const nz = Math.sqrt(1 - d2);
+      // After sunset there is no lit side to be on: the sun is down for the
+      // whole visible face, so every city should be lit regardless of where the
+      // moon is. Keying this to `curLight` alone put the lights out on the
+      // moonlit half.
+      if (!curLight.isDay) return 1;
       const nd = dx * sunVec.x + dy * sunVec.y + nz * sunVec.z;
-      return Math.max(0, Math.min(1, 1 - nd));
+      return Math.max(curLight.nightness, Math.max(0, Math.min(1, 1 - nd)));
     },
     setDayT: (v: number) => { dayT = ((v % 1) + 1) % 1; },
     setTerminatorSpread: (v: number | null) => { terminatorSpreadOverride = v; },
