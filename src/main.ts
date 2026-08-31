@@ -4211,10 +4211,29 @@ const FIRE_BURN = 5;            // seconds a tile burns
 const FIRE_CAP = 140;          // max tiles alight at once
 const FIRE_IGNITE_MEAN = 55;   // avg seconds between fresh wildfires
 const FIRE_DIRS = [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, 1], [-1, 1], [1, -1]];
+// Wonders that put water or brine on the surface. Their tiles can still carry
+// a grass or forest biome underneath — the wonder is drawn over the top rather
+// than rewriting the map — so `flammable` said yes and wildfires burned across
+// crater lakes and lagoons.
+const WET_WONDERS: ReadonlySet<NaturalWonderKind> = new Set<NaturalWonderKind>([
+  'crater_lake',
+  'karst_spires',
+  'salt_flat',
+  'atoll',
+]);
+function inWetWonder(r: number, c: number): boolean {
+  for (const wn of naturalWonders) {
+    if (!WET_WONDERS.has(wn.kind)) continue;
+    const rad = WONDER_RADIUS[wn.kind];
+    if (Math.abs(r - wn.row) <= rad && Math.abs(c - wn.col) <= rad) return true;
+  }
+  return false;
+}
 function flammable(r: number, c: number): boolean {
   if (r < 0 || r >= GRID_SIZE || c < 0 || c >= GRID_SIZE) return false;
   const st = simWorld.tiles[r][c].state;
   if (st !== 'wild' && st !== 'ruin') return false; // only the wilds burn, not towns/farms
+  if (inWetWonder(r, c)) return false;              // …and not across open water
   const b = biomeMap[r][c];
   return b === 'forest' || b === 'grass' || b === 'fertile';
 }
@@ -4232,6 +4251,10 @@ function updateFires(dt: number, nowSec: number, night: number) {
     }
   }
   fireGfx.clear();
+  // Which tiles are alight, for the coreness below. Built once per frame
+  // rather than scanned per flame.
+  const burning = new Set<number>();
+  for (const f of fires) burning.add(f.row * GRID_SIZE + f.col);
   for (let i = fires.length - 1; i >= 0; i--) {
     const f = fires[i];
     f.t += dt;
@@ -4250,16 +4273,42 @@ function updateFires(dt: number, nowSec: number, night: number) {
       fires.splice(i, 1); continue;
     }
     // Flames, embers and a glow that reads strongly at night.
+    //
+    // Scattered across the tile rather than stacked on its centre point. A
+    // fire used to be one flame at `gridToScreen`, which made a spreading
+    // blaze read as a row of identical pips on a grid. Forests already solve
+    // this: `patchCoreness` gives more and larger trees at a wood's core and
+    // lone saplings at its fringe. The same shape applies here, keyed to how
+    // much of the fire's OWN neighbourhood is alight — dense in the middle of
+    // the blaze, guttering at its edge, which is also how a fire front looks.
     const { x, y } = gridToScreen(f.col, f.row);
     const env = Math.sin(Math.PI * Math.min(1, f.t / FIRE_BURN * 1.25)); // grow then die down
-    const flick = 0.7 + 0.3 * Math.sin(nowSec * 12 + f.row * 3 + f.col * 5);
-    const size = (2.5 + env * 3.5) * flick;
-    fireGfx.circle(x, y - 2, size * 2.6).fill({ color: 0xff5a14, alpha: (0.05 + 0.16 * night) * env }); // glow
-    for (let k = 0; k < 3; k++) {
-      const ox = (k - 1) * 2.3 * flick, fy = -(size + Math.sin(nowSec * 10 + k + f.col) * 1.4);
-      fireGfx.poly([x + ox, y + fy, x + ox - 1.5, y, x + ox + 1.5, y]).fill({ color: k === 1 ? 0xffd24a : 0xff7a22, alpha: 0.8 * env });
+    let lit = 0;
+    for (const [dr, dc] of FIRE_DIRS) if (burning.has((f.row + dr) * GRID_SIZE + (f.col + dc))) lit++;
+    const core = lit / FIRE_DIRS.length;
+    const n = 2 + Math.round(core * 4);          // 2 at the front … 6 deep in it
+    const sizeBias = 0.62 + core * 0.5;          // small and sparse at the edge
+    // One broad glow for the whole tile, sized with the blaze.
+    fireGfx.circle(x, y - 2, (5 + env * 9) * (0.7 + core * 0.6))
+      .fill({ color: 0xff5a14, alpha: (0.04 + 0.14 * night) * env });
+    for (let k = 0; k < n; k++) {
+      // Iso-squashed scatter, same 22x9 footprint the trees use, so a burning
+      // wood occupies the ground the wood did.
+      const ox = (tileRand(f.row, f.col, k * 7 + 11) - 0.5) * 20;
+      const oy = (tileRand(f.row, f.col, k * 7 + 12) - 0.5) * 8;
+      const flick = 0.7 + 0.3 * Math.sin(nowSec * 12 + f.row * 3 + f.col * 5 + k * 1.7);
+      const size = (1.6 + env * 3.1) * flick * sizeBias * (0.7 + tileRand(f.row, f.col, k * 7 + 13) * 0.6);
+      const bx = x + ox, by = y + oy;
+      const fy = -(size + Math.sin(nowSec * 10 + k + f.col) * 1.2);
+      fireGfx.poly([bx, by + fy, bx - size * 0.55, by, bx + size * 0.55, by])
+        .fill({ color: k % 3 === 1 ? 0xffd24a : 0xff7a22, alpha: 0.78 * env });
+      // A bright core only on the bigger flames — every flame having one reads
+      // as glitter rather than as fire.
+      if (size > 2.4) {
+        fireGfx.poly([bx, by - (size + 1.2), bx - size * 0.3, by, bx + size * 0.3, by])
+          .fill({ color: 0xffe879, alpha: 0.66 * env });
+      }
     }
-    fireGfx.poly([x, y - (size + 1.5), x - 1.8, y, x + 1.8, y]).fill({ color: 0xffe879, alpha: 0.7 * env }); // bright core
   }
 }
 
