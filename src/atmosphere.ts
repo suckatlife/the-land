@@ -33,6 +33,14 @@ export const ATMOS = {
     // Add/move/remove keyframes freely; they are interpolated in t-order
     // with smoothstep easing between neighbours.
     keyframes: [
+      // Afterglow stays WARM (a dusty rose, hue ~340) rather than turning
+      // violet. Sunset is hue ~21, so the hop to afterglow is about 40 degrees
+      // instead of 100, and the long crossing to nightfall's blue happens one
+      // keyframe later — by which point the glaze is at 0.80 and the scene is
+      // dark enough that draining colour reads as dusk rather than as a grey
+      // wash. The measured failure was the land sitting at saturation 3 and
+      // mid luminance: colourless but still bright, which looks like a fault.
+      //
       // The dusk COLOURS are deliberately kept on one side of the colour
       // wheel. Afterglow used to be a red-brown (hue ~10) and nightfall is a
       // blue (~217) — nearly opposite — so every blend between them had to
@@ -66,7 +74,7 @@ export const ATMOS = {
       { t: 0.25, skyTop: 0x5b9ad8, skyHorizon: 0xc7e0ee, glaze: 0xffffff, glazeAlpha: 0.00 }, // noon: clear blue
       { t: 0.42, skyTop: 0x77a6d0, skyHorizon: 0xe9cf9a, glaze: 0xf2dcae, glazeAlpha: 0.08 }, // afternoon
       { t: 0.52, skyTop: 0x7c6a9e, skyHorizon: 0xef8a4c, glaze: 0xc98a68, glazeAlpha: 0.26 }, // sunset: violet over orange
-      { t: 0.60, skyTop: 0x52506f, skyHorizon: 0xc06450, glaze: 0x6a5a72, glazeAlpha: 0.80 }, // afterglow: red-purple
+      { t: 0.60, skyTop: 0x52506f, skyHorizon: 0xc06450, glaze: 0x8a6270, glazeAlpha: 0.80 }, // afterglow: red-purple
       { t: 0.68, skyTop: 0x303c58, skyHorizon: 0x6a5570, glaze: 0x4e6288, glazeAlpha: 0.87 }, // nightfall
       { t: 0.80, skyTop: 0x182338, skyHorizon: 0x33405c, glaze: 0x3e5274, glazeAlpha: 0.93 }, // deep night
       { t: 0.92, skyTop: 0x1f2b44, skyHorizon: 0x46506a, glaze: 0x445980, glazeAlpha: 0.90 }, // small hours
@@ -392,6 +400,11 @@ function makeCloudTexture(rand: () => number): Texture {
 
 // Drift bounds in world coordinates — the diamond plus a margin so clouds
 // enter and leave gracefully.
+/** What the unlit side of the globe leans toward. A shadow is cooler than the
+ *  light that casts it, because open sky fills it — the same reason the cloud
+ *  shadows use a cool grey-blue rather than black. */
+const SHADOW_COOL = 0x4a5668;
+
 const DRIFT = { minX: -1850, maxX: 1850, minY: -250, maxY: 1800 };
 
 interface Drifter {
@@ -1396,9 +1409,20 @@ export function createAtmosphere(): Atmosphere {
       const ll = Math.hypot(lx, ly, lz);
       lx /= ll; ly /= ll; lz /= ll;
       sunVec = { x: lx, y: ly, z: lz };
-      const dark = sampleDay((((dayT + spread) % 1) + 1) % 1);
-      let darkColor = lerpColor(dark.glaze, season.cast, season.castAmount);
-      darkColor = lerpColor(darkColor, eraAirCur.air, eraAirCur.amount);
+      // The shadowed side is the SAME moment with less light in it — not a
+      // different time of day.
+      //
+      // This used to be `sampleDay(dayT + spread)`, which at sunset sampled
+      // nightfall and painted its blue across the world while the sky was
+      // still orange. Multiplied over green land that produces the purples,
+      // olives and greys that made the sunset lurch between unrelated colours
+      // — three independent hues (sky, shadow-from-another-hour, warm cast)
+      // fighting over the same pixels.
+      //
+      // Now it is the current glaze, leaned slightly cool. A shadow is cooler
+      // than the light that casts it because the sky fills it, and that is one
+      // small shift rather than a second palette.
+      const darkColor = lerpColor(glazeColor, SHADOW_COOL, 0.35);
 
       terminatorLayer.clear();
       // Concentric bands of constant N·L. Drawn as rings on the sphere's
