@@ -8311,12 +8311,30 @@ if (debugMode) {
 };
 
 // Registered after every other ticker, so this is the last write each frame.
+//
+// The restore half matters as much as the hide half. Most of these layers have
+// their visibility recomputed by `atmos.update()` every frame, so un-hiding
+// them needs no help -- the next tick puts them back. But some are set once at
+// construction and never reassigned (`skyLayer` is the obvious one), and for
+// those a hide is permanent unless something writes `true` back. So track what
+// this panel actually forced off and restore exactly that, once.
+//
+// Restoring to `true` rather than to a remembered value is deliberate: the
+// value captured at hide-time is stale by restore-time, and any layer whose
+// visibility is genuinely dynamic will correct itself on the very next frame.
+const forcedOffLayers = new Set<string>();
 app.ticker.add(() => {
-  if (hiddenLayers.size === 0) return;
+  if (hiddenLayers.size === 0 && forcedOffLayers.size === 0) return;
   for (const [name, get] of DEBUG_LAYERS) {
-    if (!hiddenLayers.has(name)) continue;
     const layer = get();
-    if (layer) layer.visible = false;
+    if (!layer) continue;
+    if (hiddenLayers.has(name)) {
+      layer.visible = false;
+      forcedOffLayers.add(name);
+    } else if (forcedOffLayers.has(name)) {
+      layer.visible = true;
+      forcedOffLayers.delete(name);
+    }
   }
 });
 const hudToggle = document.getElementById('hud-toggle')!;
