@@ -517,7 +517,6 @@ function sampleSeason(t: number): SeasonState {
 export interface Atmosphere {
   skyLayer: Sprite;
   glazeLayer: Graphics;
-  glazeLayerB: Graphics;
   terminatorLayer: Graphics;
   sunCastLayer: Graphics;
   airLayer: Graphics;                        // era airlight (screen), sits over the glaze
@@ -618,9 +617,6 @@ export function createAtmosphere(): Atmosphere {
   glazeLayer.alpha = 0;
   // The outgoing keyframe's wash. Two multiplies at partial strength, rather
   // than one multiply of a blended colour — see DayState.
-  const glazeLayerB = new Graphics();
-  glazeLayerB.blendMode = 'multiply';
-  glazeLayerB.alpha = 0;
 
   // The terminator: the part of the day-night light that is NOT the same
   // everywhere. `glazeLayer` above carries the brightest column's light as a
@@ -1329,8 +1325,6 @@ export function createAtmosphere(): Atmosphere {
     skyLayer.height = height;
     glazeLayer.clear();
     glazeLayer.rect(0, 0, width, height).fill(0xffffff);
-    glazeLayerB.clear();
-    glazeLayerB.rect(0, 0, width, height).fill(0xffffff);
     airLayer.clear();
     airLayer.rect(0, 0, width, height).fill(0xffffff);
     starLayer.position.set(width * ATMOS.stars.poleX, height * ATMOS.stars.poleY);
@@ -1403,19 +1397,30 @@ export function createAtmosphere(): Atmosphere {
     };
     const w0 = washOf(day.k0);
     const w1 = washOf(day.k1);
-    // The outgoing wash fades out as the incoming one fades in. At u=0 and u=1
-    // this is exactly the old single wash; in between it is both at partial
-    // strength, which desaturates and darkens rather than sliding through an
-    // invented hue.
-    glazeLayer.tint = w0.c;
-    glazeLayer.alpha = w0.a * (1 - day.u);
-    glazeLayer.visible = glazeLayer.alpha > 0.004;
-    glazeLayerB.tint = w1.c;
-    glazeLayerB.alpha = w1.a * day.u;
-    glazeLayerB.visible = glazeLayerB.alpha > 0.004;
-    // Anything downstream that wants one number for "how dark is it" reads the
-    // combined effect of the two multiplies, not either one alone.
+    // ONE wash, interpolated. Two multiply layers cross-faded against each
+    // other -- which is what stood here -- do not compose linearly, and the
+    // error is not small:
+    //
+    //   correct:   M(lerp(c0,c1,u), lerp(a0,a1,u))
+    //   two-layer: M(c0, a0*(1-u)) x M(c1, a1*u)
+    //
+    // The two agree only at u=0 and u=1. In between, the product of two
+    // partial multiplies is LIGHTER than one full multiply, and the gap grows
+    // with alpha. At dusk (glazeAlpha 0.26) it is invisible, which is why an
+    // earlier measurement cleared this code. At night (glazeAlpha 0.93) it
+    // more than doubled the brightness: measured luminance ran 77 at the 0.68
+    // keyframe up to 142 mid-span, back down to 62 at 0.80, up to 136, down to
+    // 70 at 0.92 -- the world visibly brightening and crashing three times in
+    // one night, which is exactly what Lawrence reported watching.
+    //
+    // The crossfade was introduced to stop the wash sliding through invented
+    // hues between keyframes. That reason is gone: the glaze keyframes are all
+    // near-neutral low-saturation greys now, and interpolating between two
+    // desaturated colours cannot manufacture a hue that is not in either one.
     const glazeColor = lerpColor(w0.c, w1.c, day.u);
+    glazeLayer.tint = glazeColor;
+    glazeLayer.alpha = w0.a + (w1.a - w0.a) * day.u;
+    glazeLayer.visible = glazeLayer.alpha > 0.004;
 
     // --- the terminator, as a lit sphere ------------------------------------
     //
@@ -1934,7 +1939,7 @@ export function createAtmosphere(): Atmosphere {
     dayRate: () => dayRate,
     setTerminatorSpread: (v: number | null) => { terminatorSpreadOverride = v; },
     getDayT: () => dayT,
-    skyLayer, glazeLayer, glazeLayerB, terminatorLayer, sunCastLayer, airLayer, scarLayer, cloudShadowLayer, fogLayer,
+    skyLayer, glazeLayer, terminatorLayer, sunCastLayer, airLayer, scarLayer, cloudShadowLayer, fogLayer,
     attach: (layers: { biomeLayer: Container }) => { attachedBiomeLayer = layers.biomeLayer; },
     attachPlane: (plane, geom) => {
       attachedPlane = plane;
