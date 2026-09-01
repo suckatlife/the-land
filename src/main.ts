@@ -8182,6 +8182,143 @@ buildBadge.addEventListener("click", async () => {
   location.reload();
 });
 document.body.appendChild(buildBadge);
+
+// --- debug: per-layer lighting toggles -----------------------------------
+//
+// Every layer that puts light or colour on the frame, switchable while the
+// world runs, so a suspect can be isolated across a live sunrise or sunset
+// rather than inferred from the source.
+//
+// The override is applied on its own ticker rather than by setting `.visible`
+// when the box is clicked. `atmos.update()` recomputes visibility for most of
+// these EVERY frame, so a one-shot assignment is silently reverted on the next
+// tick -- that exact trap produced a false "this layer has no effect" reading
+// earlier in this work. This ticker is registered after every other, so it is
+// the last writer each frame and therefore the one that wins.
+//
+// Blend mode is in the label because it explains what a layer can do: multiply
+// can only darken, add and screen can only lighten. Half of chasing a colour
+// bug is knowing which of those you are looking at.
+type DebugLayer = { visible: boolean } | null | undefined;
+const DEBUG_LAYERS: Array<[string, () => DebugLayer]> = [
+  ['sky', () => (atmos as any).skyLayer],
+  ['stars', () => (atmos as any).starLayer],
+  ['celestial', () => (atmos as any).celestialLayer],
+  ['skyClouds', () => (atmos as any).skyCloudLayer],
+  ['aurora', () => (atmos as any).auroraLayer],
+  ['comet', () => (atmos as any).cometLayer],
+  ['limbBand', () => (atmos as any).limbBand],
+  ['depthHaze in world', () => depthHazeSprite],
+  ['glazeA multiply', () => (atmos as any).glazeLayer],
+  ['glazeB multiply', () => (atmos as any).glazeLayerB],
+  ['terminator multiply', () => (atmos as any).terminatorLayer],
+  ['sunCast ADD', () => (atmos as any).sunCastLayer],
+  ['air SCREEN', () => (atmos as any).airLayer],
+  ['cloudShadow multiply', () => (atmos as any).cloudShadowLayer],
+  ['fog', () => (atmos as any).fogLayer],
+  ['glitter', () => (atmos as any).glitterLayer],
+  ['landLight', () => (atmos as any).landLightLayer],
+  ['shimmer', () => (atmos as any).shimmerLayer],
+  ['rainbow', () => (atmos as any).rainbowLayer],
+  ['storm', () => (atmos as any).stormLayer],
+  ['nightLights ADD', () => nightLightsGfx],
+  ['cityLights ADD', () => cityLightsGfx],
+  ['festival ADD', () => festivalGfx],
+  ['pollution multiply', () => pollutionGfx],
+  ['smog', () => smogGfx],
+  ['dreadTint multiply', () => dreadTint],
+  ['dreadLift SCREEN', () => dreadLift],
+  ['dreadVignette', () => dreadVignette],
+];
+
+const HIDDEN_LAYERS_KEY = 'land.hiddenLayers';
+const hiddenLayers = new Set<string>((() => {
+  // Survives a reload on purpose: a sunset is six minutes long and reproducing
+  // one costs more than the panel does.
+  try {
+    const raw = localStorage.getItem(HIDDEN_LAYERS_KEY);
+    return raw ? (JSON.parse(raw) as string[]) : [];
+  } catch {
+    return [];
+  }
+})());
+
+function saveHiddenLayers() {
+  try {
+    localStorage.setItem(HIDDEN_LAYERS_KEY, JSON.stringify([...hiddenLayers]));
+  } catch {
+    // Private browsing. The toggles still work for this session.
+  }
+}
+
+if (debugMode) {
+  const panel = document.createElement('div');
+  panel.style.cssText = `
+    position: fixed; z-index: 26; left: 12px; top: 72px;
+    max-height: 70vh; overflow-y: auto; padding: 8px 10px;
+    background: rgba(16, 18, 24, 0.86); border-radius: 4px;
+    color: rgba(238, 231, 211, 0.92);
+    font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    user-select: none;
+  `;
+  const head = document.createElement('div');
+  head.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:6px';
+  head.innerHTML = '<strong style="letter-spacing:0.06em">lighting layers</strong>';
+  const allOn = document.createElement('button');
+  allOn.textContent = 'all on';
+  allOn.style.cssText = 'cursor:pointer;font:inherit';
+  head.appendChild(allOn);
+  panel.appendChild(head);
+
+  const boxes: Array<[string, HTMLInputElement]> = [];
+  for (const [name] of DEBUG_LAYERS) {
+    const row = document.createElement('label');
+    row.style.cssText = 'display:flex;gap:6px;align-items:center;cursor:pointer';
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.checked = !hiddenLayers.has(name);
+    box.addEventListener('change', () => {
+      if (box.checked) hiddenLayers.delete(name);
+      else hiddenLayers.add(name);
+      saveHiddenLayers();
+    });
+    row.appendChild(box);
+    row.appendChild(document.createTextNode(name));
+    panel.appendChild(row);
+    boxes.push([name, box]);
+  }
+  allOn.addEventListener('click', () => {
+    hiddenLayers.clear();
+    saveHiddenLayers();
+    boxes.forEach(([, b]) => { b.checked = true; });
+  });
+  document.body.appendChild(panel);
+}
+
+// Scriptable from the console and from headless probes, so a suspect layer can
+// be bisected automatically instead of by hand across a six-minute sunset.
+(window as any).__lighting = {
+  list: () => DEBUG_LAYERS.map(([n]) => n),
+  hidden: () => [...hiddenLayers],
+  hide: (...names: string[]) => { names.forEach((n) => hiddenLayers.add(n)); saveHiddenLayers(); },
+  show: (...names: string[]) => { names.forEach((n) => hiddenLayers.delete(n)); saveHiddenLayers(); },
+  only: (...names: string[]) => {
+    hiddenLayers.clear();
+    DEBUG_LAYERS.forEach(([n]) => { if (!names.includes(n)) hiddenLayers.add(n); });
+    saveHiddenLayers();
+  },
+  reset: () => { hiddenLayers.clear(); saveHiddenLayers(); },
+};
+
+// Registered after every other ticker, so this is the last write each frame.
+app.ticker.add(() => {
+  if (hiddenLayers.size === 0) return;
+  for (const [name, get] of DEBUG_LAYERS) {
+    if (!hiddenLayers.has(name)) continue;
+    const layer = get();
+    if (layer) layer.visible = false;
+  }
+});
 const hudToggle = document.getElementById('hud-toggle')!;
 const hudBody = document.getElementById('hud-body')!;
 hudToggle.addEventListener('click', () => {
