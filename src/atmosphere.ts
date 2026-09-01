@@ -33,51 +33,29 @@ export const ATMOS = {
     // Add/move/remove keyframes freely; they are interpolated in t-order
     // with smoothstep easing between neighbours.
     keyframes: [
-      // Afterglow stays WARM (a dusty rose, hue ~340) rather than turning
-      // violet. Sunset is hue ~21, so the hop to afterglow is about 40 degrees
-      // instead of 100, and the long crossing to nightfall's blue happens one
-      // keyframe later — by which point the glaze is at 0.80 and the scene is
-      // dark enough that draining colour reads as dusk rather than as a grey
-      // wash. The measured failure was the land sitting at saturation 3 and
-      // mid luminance: colourless but still bright, which looks like a fault.
+      // ONE palette, three colours: blue, pink, indigo. Nothing else appears.
       //
-      // The dusk COLOURS are deliberately kept on one side of the colour
-      // wheel. Afterglow used to be a red-brown (hue ~10) and nightfall is a
-      // blue (~217) — nearly opposite — so every blend between them had to
-      // cross the wheel. Blending in RGB cut through the middle and the world
-      // went grey (measured saturation 2); blending by rotating hue the short
-      // way went through MAGENTA instead, and painted the whole map pink.
-      // Neither path is a colour dusk has. The endpoints now sit close enough
-      // that the transition is a short desaturating slide rather than a
-      // journey.
+      // This table used to carry nine independently chosen hues — peach,
+      // orange, red-brown, violet-grey, olive — and no fix to HOW they were
+      // blended could stop the result wandering, because the palette itself
+      // wandered. Sunsets went purple to green to grey. Lawrence's model is
+      // the one implemented here: blue by day, tinting pink at sunset, dark
+      // blue and indigo at night, pink again at dawn, back to blue.
       //
-      // The evening curve is steep on purpose. The directional terminator
-      // switches off the instant `isDay` ends, and it was carrying up to 0.70
-      // of darkening — so the flat wash has to pick that up in the same
-      // moment or the world gets BRIGHTER at sunset, which it did: mean
-      // luminance rose from 119 to 125 across the handover. From nightfall
-      // onward the glaze alone is the whole light.
+      // Every glaze below sits between pink (hue ~355) and indigo (~228).
+      // That arc passes through violet, which is a colour dusk has. It never
+      // passes near green, which is what made the old table lurch.
       //
-      // Dawn deepened too, and for the mirror reason. Sunrise sat at 0.18 and
-      // early morning at 0.07 while dusk climbs 0.26 -> 0.44 -> 0.58, so the
-      // morning reached full daylight far sooner than the evening left it —
-      // measured, dawn averaged 193 against dusk's 142 for the same settings,
-      // and read as blown out. The evening curve is the one that looks right,
-      // so the morning now matches its shape rather than racing past it.
-      //
-      // Night deepened, and the glaze colours cooled with it. These predate the
-      // city lights: with nothing emitting light after dark the land itself had
-      // to stay readable, so night stopped at half a wash and read as dusk. The
-      // cities carry legibility now, so night can be night.
-      { t: 0.00, skyTop: 0x6a6f9a, skyHorizon: 0xf0a36a, glaze: 0xe0a468, glazeAlpha: 0.34 }, // sunrise: lilac over peach
-      { t: 0.08, skyTop: 0x7ba6d4, skyHorizon: 0xf6cf9c, glaze: 0xf2dcb4, glazeAlpha: 0.19 }, // early morning
-      { t: 0.25, skyTop: 0x5b9ad8, skyHorizon: 0xc7e0ee, glaze: 0xffffff, glazeAlpha: 0.00 }, // noon: clear blue
-      { t: 0.42, skyTop: 0x77a6d0, skyHorizon: 0xe9cf9a, glaze: 0xf2dcae, glazeAlpha: 0.08 }, // afternoon
-      { t: 0.52, skyTop: 0x7c6a9e, skyHorizon: 0xef8a4c, glaze: 0xc98a68, glazeAlpha: 0.26 }, // sunset: violet over orange
-      { t: 0.60, skyTop: 0x52506f, skyHorizon: 0xc06450, glaze: 0x8a6270, glazeAlpha: 0.80 }, // afterglow: red-purple
-      { t: 0.68, skyTop: 0x303c58, skyHorizon: 0x6a5570, glaze: 0x4e6288, glazeAlpha: 0.87 }, // nightfall
-      { t: 0.80, skyTop: 0x182338, skyHorizon: 0x33405c, glaze: 0x3e5274, glazeAlpha: 0.93 }, // deep night
-      { t: 0.92, skyTop: 0x1f2b44, skyHorizon: 0x46506a, glaze: 0x445980, glazeAlpha: 0.90 }, // small hours
+      // t, sky top, sky horizon, glaze tint, glaze strength.
+      { t: 0.00, skyTop: 0x5c6aa2, skyHorizon: 0xe8a2ae, glaze: 0xdc9aa6, glazeAlpha: 0.34 }, // dawn: pink at the horizon
+      { t: 0.08, skyTop: 0x6f9fd4, skyHorizon: 0xdfc2cc, glaze: 0xefcbd0, glazeAlpha: 0.19 }, // early morning: pink thinning
+      { t: 0.25, skyTop: 0x5b9ad8, skyHorizon: 0xc7e0ee, glaze: 0xffffff, glazeAlpha: 0.00 }, // noon: blue, no cast
+      { t: 0.42, skyTop: 0x6b9dd4, skyHorizon: 0xd6dfe8, glaze: 0xf6dde2, glazeAlpha: 0.08 }, // afternoon: the first pink
+      { t: 0.52, skyTop: 0x7b7aac, skyHorizon: 0xe8a2ae, glaze: 0xdc9aa6, glazeAlpha: 0.26 }, // sunset: full pink
+      { t: 0.60, skyTop: 0x565a8e, skyHorizon: 0xb27a92, glaze: 0x9a6e8e, glazeAlpha: 0.80 }, // afterglow: pink toward violet
+      { t: 0.68, skyTop: 0x333c68, skyHorizon: 0x6a5f88, glaze: 0x6a5f8e, glazeAlpha: 0.87 }, // nightfall: violet toward indigo
+      { t: 0.80, skyTop: 0x161d3a, skyHorizon: 0x2c3760, glaze: 0x46538c, glazeAlpha: 0.93 }, // night: indigo
+      { t: 0.92, skyTop: 0x1d2748, skyHorizon: 0x3a4670, glaze: 0x50508e, glazeAlpha: 0.90 }, // small hours: indigo warming
     ],
     // Fraction of screen height where the horizon band sits in the sky
     // gradient (the world diamond occupies the area below the upper sky).
