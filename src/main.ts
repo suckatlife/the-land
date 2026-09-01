@@ -4993,9 +4993,40 @@ function drawSkyElevator(g: Graphics, x: number, baseY: number, color: number, n
   for (const sf of [0.2, 0.42, 0.64, 0.84]) {
     const sy = baseY - H * sf;
     g.rect(x - 4.5, sy - 1.8, 9, 3.6).fill({ color: lerpColor(color, 0xe8eef4, 0.6), alpha: 0.85 * (1 - sf * 0.6) });
+    // Lit windows in each way-station at night: somebody is up there.
+    if (ng > 0.05) {
+      for (let wI = 0; wI < 4; wI++) {
+        g.rect(x - 3.4 + wI * 2.1, sy - 0.7, 1.1, 1.4)
+          .fill({ color: 0xffe9b8, alpha: ng * 0.75 * (1 - sf * 0.5) });
+      }
+    }
   }
   const climb = (nowSec * 0.05) % 1;
-  g.circle(x, baseY - H * climb, 1.8).fill({ color: 0xfff0a0, alpha: 0.85 * (1 - climb * 0.5) }); // climber
+  // The climber, and its lamp: at night the car is the brightest thing on the
+  // tether and the only part of it that moves.
+  const climbY = baseY - H * climb;
+  if (ng > 0.05) {
+    g.circle(x, climbY, 5.5).fill({ color: 0xffe6a0, alpha: 0.16 * ng });
+    g.circle(x, climbY, 2.6).fill({ color: 0xfff2c4, alpha: 0.34 * ng });
+  }
+  g.circle(x, climbY, 1.8).fill({ color: 0xfff0a0, alpha: 0.85 * (1 - climb * 0.5) });
+
+  // Obstruction lighting. Anything this tall carries lights up its whole
+  // length, and they are what makes a structure read at night rather than
+  // becoming a black gap in the stars. Staggered so they blink in sequence up
+  // the cable instead of together.
+  if (ng > 0.05) {
+    for (let b = 0; b < 11; b++) {
+      const f = 0.06 + b * 0.088;
+      const byy = baseY - H * f;
+      const blink = 0.45 + 0.55 * Math.sin(nowSec * 2.2 - b * 0.8);
+      const a = ng * (0.30 + 0.5 * blink) * (1 - f * 0.45);
+      g.circle(x, byy, 2.6).fill({ color: 0xff6a5a, alpha: a * 0.22 });
+      g.circle(x, byy, 0.85).fill({ color: 0xff9a86, alpha: a });
+    }
+    // The tether itself catches a little of it, so the cable stays visible.
+    g.rect(x - 0.7, baseY - H, 1.4, H).fill({ color: 0x9fc4e8, alpha: 0.10 * ng });
+  }
   g.circle(x, baseY - H * 0.55, 1.5).fill({ color: 0xff8a6a, alpha: (0.3 + 0.4 * Math.sin(nowSec * 3)) * ng * 0.7 }); // beacon
   // Ground anchor wedge at the base.
   g.poly([x - 5, baseY, x + 5, baseY, x + 3, baseY - 9, x - 3, baseY - 9]).fill({ color: lerpColor(color, 0x70808f, 0.4), alpha: 0.95 });
@@ -6417,6 +6448,14 @@ function maybeSpawnPlanes() {
   }
 }
 
+// Where the sky structures are, in screen space. Rockets are a few pixels wide
+// on a 1200px frame, so judging their art means cropping to them, and that
+// means knowing where they are rather than hunting for the brightest pixel.
+(window as any).__sky = () => ({
+  rockets: rockets.map((r) => ({ x: r.x, y0: r.y0, t: +r.t.toFixed(2), smoke: r.smoke.length })),
+  megas: debugMegas.map((d) => ({ kind: d.kind, row: d.row, col: d.col })),
+});
+
 function maybeSpawnRockets(dt: number) {
   if (rockets.length >= 3 || Math.random() > dt / 26) return;
   const posts = [...simWorld.civs.values()].filter((c) => c.phase !== 'dead' && ERA_RANK[c.era] >= 4 && c.cities.length);
@@ -6646,29 +6685,95 @@ function updateAir(dt: number, night: number) {
     const ry = rk.y0 - rise;
     const aloft = rk.t < 5.5; // still in flight (vs. just the lingering contrail)
     // Shed a smoke puff at the exhaust each tick while climbing.
-    if (aloft) rk.smoke.push({ x: rk.x + (Math.random() - 0.5) * 1.5, y: ry + 7, t: 0, r: 2 });
+    if (aloft) rk.smoke.push({ x: rk.x + (Math.random() - 0.5) * 1.2, y: ry + 10, t: 0, r: 2.2 });
     // The contrail: puffs age, expand and drift, fading from grey to nothing.
     for (let s = rk.smoke.length - 1; s >= 0; s--) {
       const p = rk.smoke[s];
       p.t += dt;
       if (p.t > 2.6) { rk.smoke.splice(s, 1); continue; }
       const pa = Math.max(0, 1 - p.t / 2.6);
-      p.r += dt * 6;
-      skyStructGfx.circle(p.x, p.y - p.t * 4, p.r)
-        .fill({ color: 0xe8eef2, alpha: pa * 0.5 });
+      p.r += dt * 7;
+      // Drift as it ages: a real trail is sheared sideways by wind rather than
+      // standing as a straight column, and the older (lower) puffs have grown
+      // biggest, so the pillar is broad at the bottom and thins with height.
+      const drift = p.t * p.t * 2.2;
+      skyStructGfx.circle(p.x + drift, p.y - p.t * 3.2, p.r)
+        .fill({ color: 0xe8eef2, alpha: pa * 0.42 });
+      skyStructGfx.circle(p.x + drift * 0.7, p.y - p.t * 3.2 + p.r * 0.3, p.r * 0.7)
+        .fill({ color: 0xfbfdff, alpha: pa * 0.3 });
     }
     if (!aloft) continue; // rocket itself is gone; just let the trail dissipate
-    // Bright exhaust flame beneath the rocket.
-    for (let f = 0; f < 7; f++) {
-      skyStructGfx.circle(rk.x + (Math.random() - 0.5) * 2.5, ry + 6 + f * 3.5, 3.6 - f * 0.4)
-        .fill({ color: f < 2 ? 0xfff0c0 : 0xff7a30, alpha: (1 - f / 7) * 0.8 });
+
+    // --- the vehicle ------------------------------------------------------
+    // Launch vehicles are LONG. A Falcon 9 is 70m tall and 3.7m across, close
+    // to 19:1; the shape this replaced was 3.2 x 9, about 2.8:1, which reads as
+    // a capsule or a bullet rather than a rocket. Exaggerating slenderness is
+    // most of what makes the silhouette recognisable at a few pixels wide.
+    const BW = 1.15;              // half-width of the body
+    const BH = 17;                // body length
+    const by = ry + 5;            // the nozzle plane; everything builds off it
+    // First stage, with the interstage band that breaks up a plain white bar.
+    skyStructGfx.rect(rk.x - BW, by - BH, BW * 2, BH).fill({ color: 0xf1f4f8 });
+    skyStructGfx.rect(rk.x - BW, by - BH * 0.60, BW * 2, 1.5).fill({ color: 0x3a424e });
+    // The engine skirt flares slightly, which is where the plume comes from.
+    skyStructGfx.poly([rk.x - BW, by - 2.4, rk.x + BW, by - 2.4, rk.x + BW * 1.45, by, rk.x - BW * 1.45, by])
+      .fill({ color: 0x99a3b0 });
+    // A cone, not a blob: narrow and about three body-widths long.
+    skyStructGfx.poly([rk.x - BW, by - BH, rk.x + BW, by - BH, rk.x, by - BH - 4.4])
+      .fill({ color: 0xe7ecf2 });
+
+    // --- the plume --------------------------------------------------------
+    // A rocket plume is not a cone of orange dots. It leaves the nozzle
+    // over-expanded, gets squeezed back by the atmosphere, and forms a chain of
+    // standing shock waves -- SHOCK DIAMONDS -- bright where the gas is
+    // compressed and heated, dark where it expands again. The first sits about
+    // one nozzle diameter below the nozzle and the rest follow at roughly the
+    // same spacing.
+    const NOZ = BW * 1.45;
+    for (let f = 0; f < 11; f++) {
+      const t = f / 11;
+      const yy = by + 1 + t * 23;
+      const wid = NOZ * (1.45 - t * 0.85);
+      skyStructGfx.ellipse(rk.x, yy, wid, 2.6)
+        .fill({
+          color: t < 0.22 ? 0xfff8e2 : t < 0.6 ? 0xffb257 : 0xff7a30,
+          alpha: (1 - t) * 0.72,
+        });
     }
-    // Rocket body: a little white capsule with a nose cone.
-    skyStructGfx.roundRect(rk.x - 1.6, ry - 4, 3.2, 9, 1.4).fill({ color: 0xf4f6f8 });
-    skyStructGfx.poly([rk.x - 1.6, ry - 4, rk.x + 1.6, ry - 4, rk.x, ry - 8]).fill({ color: 0xd84a3a });
-    // Launch glow at the base early in the climb.
-    if (rk.t < 1.2) {
-      skyStructGfx.circle(rk.x, rk.y0, 14 * (1 - rk.t / 1.2)).fill({ color: 0xffd070, alpha: 0.25 * (1 - rk.t / 1.2) });
+    for (let d = 0; d < 3; d++) {
+      const yy = by + NOZ * 2.3 * (d + 1);
+      const sc = 1 - d * 0.26;
+      skyStructGfx.poly([
+        rk.x, yy - 1.7 * sc,
+        rk.x + NOZ * 0.8 * sc, yy,
+        rk.x, yy + 1.7 * sc,
+        rk.x - NOZ * 0.8 * sc, yy,
+      ]).fill({ color: 0xfffdf4, alpha: 0.8 * sc });
+    }
+
+    // --- the pad ----------------------------------------------------------
+    // The launch cloud goes SIDEWAYS. Exhaust is turned into flame trenches
+    // and vented laterally, and something like 450,000 gallons of deluge water
+    // flashes to steam in about a minute, so what you see at the pad is a wide
+    // low billow spreading both ways -- not a column of puffs rising from a
+    // point, which is what stood here.
+    if (rk.t < 2.6) {
+      const punch = Math.min(1, rk.t / 0.3);
+      const decay = Math.max(0, 1 - Math.max(0, rk.t - 0.3) / 2.3);
+      const reach = 8 + rk.t * 30;
+      for (let side = -1; side <= 1; side += 2) {
+        for (let k = 0; k < 5; k++) {
+          const px = rk.x + side * (5 + k * reach * 0.24);
+          const py = rk.y0 - 1 - k * 1.5 + Math.sin(k * 1.7 + rk.x) * 1.3;
+          skyStructGfx.ellipse(px, py, 7 + k * 3.2, 3.2 + k * 1.3)
+            .fill({ color: 0xf3f6f7, alpha: 0.46 * punch * decay * (1 - k / 6) });
+        }
+      }
+      // The flash in the trench itself, brief and warm.
+      if (rk.t < 1.0) {
+        skyStructGfx.ellipse(rk.x, rk.y0, 15 * (1 - rk.t), 5 * (1 - rk.t))
+          .fill({ color: 0xffd070, alpha: 0.3 * (1 - rk.t) });
+      }
     }
   }
 }
