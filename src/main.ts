@@ -1192,6 +1192,7 @@ world.addChild(smokeLayer);
 world.addChild(smogGfx);
 // Cloud shadows fall on land and buildings; markers and labels stay above.
 world.addChild(atmos.cloudShadowLayer);
+world.addChild(atmos.cloudBodyLayer);
 // City lights pierce the night (and sit above cloud shadow).
 emissiveWorld.addChild(cityLightsGfx);
 // Festival glow joins the lights; storms ride above everything groundborne.
@@ -8313,6 +8314,7 @@ const DEBUG_LAYERS: Array<[string, () => DebugLayer]> = [
   ['emissive lights ADD', () => lightPlane],
   ['air SCREEN', () => (atmos as any).airLayer],
   ['cloudShadow multiply', () => (atmos as any).cloudShadowLayer],
+  ['cloudBody', () => (atmos as any).cloudBodyLayer],
   ['fog', () => (atmos as any).fogLayer],
   ['glitter', () => (atmos as any).glitterLayer],
   ['landLight', () => (atmos as any).landLightLayer],
