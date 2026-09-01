@@ -1064,6 +1064,20 @@ const farmGrowGfx = new Graphics();  // fields currently growing in, animated pe
 const seaTrailGfx = new Graphics();  // worn sea lanes (boats); brighten with reuse
 const landTrailGfx = new Graphics(); // worn land routes (caravans/trains)
 const airTrailGfx = new Graphics();  // flight corridors (planes)
+// The same three networks again, as light. Sea lanes, roads and flight
+// corridors are drawn above as worn marks ON the ground; these are what those
+// routes look like when the sun is off them -- lit shipping, lit roads, lit
+// corridors. They go through the emissive pass, so the night glaze never dims
+// them, and they carry the whole network's alpha rather than each segment's, so
+// the fade in and out of night costs nothing per frame.
+const routeLightsGfx = new Graphics();
+routeLightsGfx.blendMode = 'add';
+routeLightsGfx.alpha = 0;
+// The traffic itself: boats, caravans and aircraft as moving points of light.
+// Redrawn every frame because they move; the routes above are not.
+const vehicleLightsGfx = new Graphics();
+vehicleLightsGfx.blendMode = 'add';
+vehicleLightsGfx.alpha = 0;
 const causewayGfx = new Graphics();  // strait-spanning causeway islands + rail (modern+)
 const cableGfx = new Graphics();     // undersea power/data cables between cities
 const lighthouseGfx = new Graphics(); // coastal lighthouses + sweeping beams at night
@@ -1235,6 +1249,8 @@ world.addChild(cityMarkersContainer);
 // which is why they read as a flat band scrolling past.
 const nightLightsGfx = new Graphics();
 nightLightsGfx.blendMode = 'add';
+emissiveWorld.addChild(routeLightsGfx);
+emissiveWorld.addChild(vehicleLightsGfx);
 emissiveWorld.addChild(nightLightsGfx);
 // Mist banks veil everything but the text.
 world.addChild(atmos.fogLayer);
@@ -5891,6 +5907,57 @@ function redrawTrails() {
   drawTrail(seaTrailGfx, seaTrail, 0xeafdff, 0.12, 0.70, 1.1, 3.8);
   drawTrail(landTrailGfx, landTrail, 0x46371f, 0.12, 0.55, 1.0, 3.0);
   drawTrail(airTrailGfx, airTrail, 0xeaf0fa, 0.07, 0.40, 0.7, 2.2);
+  redrawRouteLights();
+}
+
+/** The three networks as light. Only worn routes glow -- a path walked once
+ *  stays dark -- so what lights up at dusk is the web the world actually uses,
+ *  which is the point: the connections are the thing that reads as alive. */
+function redrawRouteLights(): void {
+  routeLightsGfx.clear();
+  const glow = (trail: Trail, color: number, minHeat: number, peakA: number, w: number) => {
+    for (const [ek, heat] of trail) {
+      const t = Math.min(1, heat / TRAIL_CAP);
+      if (t < minHeat) continue;      // faint routes stay dark
+      const ka = (ek / TRAIL_N) | 0, kb = ek % TRAIL_N;
+      const pa = gridToScreen(ka % GRID_SIZE, (ka / GRID_SIZE) | 0);
+      const pb = gridToScreen(kb % GRID_SIZE, (kb / GRID_SIZE) | 0);
+      const f = (t - minHeat) / (1 - minHeat);
+      // Two strokes: a wide soft halo and a fine core, which is what makes a
+      // line read as lit rather than merely coloured.
+      routeLightsGfx.moveTo(pa.x, pa.y).lineTo(pb.x, pb.y)
+        .stroke({ color, alpha: peakA * f * 0.35, width: w * 2.6, cap: 'round' });
+      routeLightsGfx.moveTo(pa.x, pa.y).lineTo(pb.x, pb.y)
+        .stroke({ color, alpha: peakA * f, width: w, cap: 'round' });
+    }
+  };
+  // Sodium-warm roads, cold decks at sea, colder still in the air: the three
+  // networks stay tellable apart at a glance in the dark.
+  glow(landTrail, 0xffc07a, 0.30, 0.75, 0.9);
+  glow(seaTrail,  0x9fd8ff, 0.34, 0.62, 0.9);
+  glow(airTrail,  0xd8e6ff, 0.30, 0.50, 0.7);
+}
+
+/** Traffic in the dark: each vessel a small point of light on its route. */
+function drawVehicleLights(): void {
+  vehicleLightsGfx.clear();
+  const dot = (x: number, y: number, color: number, r: number, a: number) => {
+    vehicleLightsGfx.circle(x, y, r * 2.4).fill({ color, alpha: a * 0.28 });
+    vehicleLightsGfx.circle(x, y, r).fill({ color, alpha: a });
+  };
+  for (const b of boats) {
+    const p = b.pts[b.idx];
+    if (p) dot(p.x, p.y, 0xfff0cf, 0.85, 0.85 * Math.min(1, b.fade));
+  }
+  for (const c of caravans) {
+    const p = c.pts[c.idx];
+    // A train is lit along its length; a caravan is one lamp.
+    if (p) dot(p.x, p.y, c.kind === 'caravan' ? 0xffd9a0 : 0xfff4de, c.kind === 'caravan' ? 0.7 : 1.0, 0.8);
+  }
+  for (const pl of planes) {
+    // Aircraft carry a cold strobe rather than a warm lamp.
+    dot(pl.x, pl.y, 0xdfefff, 0.75, 0.9);
+  }
 }
 // A "skip 5k" fast-forwards past all the real-time travel that would have worn
 // the routes in, so seed the trails from each civ's city network (older, larger
@@ -8228,6 +8295,16 @@ app.ticker.add(() => {
   measureFps();
   updateFpsLabel();
   drawNightLights();
+  {
+    // One alpha for the whole network rather than per segment. The world
+    // darkens as a single body now that the terminator is gone, so there is no
+    // lit hemisphere to exclude, and this costs nothing per frame.
+    const n = atmos.light().nightness;
+    const lit = Math.max(0, Math.min(1, (n - 0.25) / 0.45));
+    routeLightsGfx.alpha = lit;
+    vehicleLightsGfx.alpha = lit;
+    if (lit > 0.01) drawVehicleLights();
+  }
   if (!(window as any).__skipRT) {
     app.renderer.render({ container: world, target: worldRT, clear: true });
     if (worldNeedsEdgeErase()) {
@@ -8475,6 +8552,8 @@ const DEBUG_LAYERS: Array<[string, () => DebugLayer]> = [
   ['storm', () => (atmos as any).stormLayer],
   ['lightning ADD', () => (atmos as any).lightningLayer],
   ['nightLights ADD', () => nightLightsGfx],
+  ['routeLights ADD', () => routeLightsGfx],
+  ['vehicleLights ADD', () => vehicleLightsGfx],
   ['cityLights ADD', () => cityLightsGfx],
   ['festival ADD', () => festivalGfx],
   ['pollution multiply', () => pollutionGfx],
