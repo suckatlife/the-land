@@ -33,51 +33,42 @@ export const ATMOS = {
     // Add/move/remove keyframes freely; they are interpolated in t-order
     // with smoothstep easing between neighbours.
     keyframes: [
-      // Afterglow stays WARM (a dusty rose, hue ~340) rather than turning
-      // violet. Sunset is hue ~21, so the hop to afterglow is about 40 degrees
-      // instead of 100, and the long crossing to nightfall's blue happens one
-      // keyframe later — by which point the glaze is at 0.80 and the scene is
-      // dark enough that draining colour reads as dusk rather than as a grey
-      // wash. The measured failure was the land sitting at saturation 3 and
-      // mid luminance: colourless but still bright, which looks like a fault.
+      // ONE palette, three colours: blue, pink, indigo.
       //
-      // The dusk COLOURS are deliberately kept on one side of the colour
-      // wheel. Afterglow used to be a red-brown (hue ~10) and nightfall is a
-      // blue (~217) — nearly opposite — so every blend between them had to
-      // cross the wheel. Blending in RGB cut through the middle and the world
-      // went grey (measured saturation 2); blending by rotating hue the short
-      // way went through MAGENTA instead, and painted the whole map pink.
-      // Neither path is a colour dusk has. The endpoints now sit close enough
-      // that the transition is a short desaturating slide rather than a
-      // journey.
+      // And two rules about WHERE they go, which matter as much as the colours:
       //
-      // The evening curve is steep on purpose. The directional terminator
-      // switches off the instant `isDay` ends, and it was carrying up to 0.70
-      // of darkening — so the flat wash has to pick that up in the same
-      // moment or the world gets BRIGHTER at sunset, which it did: mean
-      // luminance rose from 119 to 125 across the handover. From nightfall
-      // onward the glaze alone is the whole light.
+      // 1. **`skyTop` never leaves the blue-indigo family.** It runs 209 to 240
+      //    degrees all day and all night, and is the same hue at noon as at
+      //    midnight — only darker. A real sky does not rotate as a whole at
+      //    sunset; the top stays blue and the HORIZON turns. The old table let
+      //    skyTop go violet (0x7b7aac) at dusk, which turned the entire frame
+      //    at once and is what read as a drastic shift.
       //
-      // Dawn deepened too, and for the mirror reason. Sunrise sat at 0.18 and
-      // early morning at 0.07 while dusk climbs 0.26 -> 0.44 -> 0.58, so the
-      // morning reached full daylight far sooner than the evening left it —
-      // measured, dawn averaged 193 against dusk's 142 for the same settings,
-      // and read as blown out. The evening curve is the one that looks right,
-      // so the morning now matches its shape rather than racing past it.
+      // 2. **The pink lives in `skyHorizon`, and NOT in `glaze`.** The glaze
+      //    covers every pixel of the world, so any hue in it paints the land
+      //    that colour — a pink glaze at 0.26 turned the whole map pink at
+      //    dusk even though the sky was correct. The dawn and dusk glazes are
+      //    now near-neutral warm greys (saturation under 0.1): they DARKEN and
+      //    warm the land without recolouring it. Only deep night carries a
+      //    real hue, and there it reads as darkness rather than as tint. The
+      //    horizon band is a small part of the frame and can take a saturated
+      //    colour; the glaze covers everything, so its dusk tint is a warm grey
+      //    (saturation ~0.15) rather than a pink. The land keeps its own colour
+      //    and is merely lit warmly, instead of being painted pink.
       //
-      // Night deepened, and the glaze colours cooled with it. These predate the
-      // city lights: with nothing emitting light after dark the land itself had
-      // to stay readable, so night stopped at half a wash and read as dusk. The
-      // cities carry legibility now, so night can be night.
-      { t: 0.00, skyTop: 0x6a6f9a, skyHorizon: 0xf0a36a, glaze: 0xe0a468, glazeAlpha: 0.34 }, // sunrise: lilac over peach
-      { t: 0.08, skyTop: 0x7ba6d4, skyHorizon: 0xf6cf9c, glaze: 0xf2dcb4, glazeAlpha: 0.19 }, // early morning
-      { t: 0.25, skyTop: 0x5b9ad8, skyHorizon: 0xc7e0ee, glaze: 0xffffff, glazeAlpha: 0.00 }, // noon: clear blue
-      { t: 0.42, skyTop: 0x77a6d0, skyHorizon: 0xe9cf9a, glaze: 0xf2dcae, glazeAlpha: 0.08 }, // afternoon
-      { t: 0.52, skyTop: 0x7c6a9e, skyHorizon: 0xef8a4c, glaze: 0xc98a68, glazeAlpha: 0.26 }, // sunset: violet over orange
-      { t: 0.60, skyTop: 0x52506f, skyHorizon: 0xc06450, glaze: 0x8a6270, glazeAlpha: 0.80 }, // afterglow: red-purple
-      { t: 0.68, skyTop: 0x303c58, skyHorizon: 0x6a5570, glaze: 0x4e6288, glazeAlpha: 0.87 }, // nightfall
-      { t: 0.80, skyTop: 0x182338, skyHorizon: 0x33405c, glaze: 0x3e5274, glazeAlpha: 0.93 }, // deep night
-      { t: 0.92, skyTop: 0x1f2b44, skyHorizon: 0x46506a, glaze: 0x445980, glazeAlpha: 0.90 }, // small hours
+      // Getting from blue to pink cannot be done by rotating hue without
+      // passing through greens and purples. It is not done by rotating hue.
+      //
+      // t, sky top, sky horizon, glaze tint, glaze strength.
+      { t: 0.00, skyTop: 0x4f6bb0, skyHorizon: 0xe8a2ae, glaze: 0xe6d6d2, glazeAlpha: 0.34 }, // dawn: pink at the horizon only
+      { t: 0.08, skyTop: 0x6294d0, skyHorizon: 0xdcc0c8, glaze: 0xf4e8e4, glazeAlpha: 0.19 }, // early morning
+      { t: 0.25, skyTop: 0x5b9ad8, skyHorizon: 0xc7e0ee, glaze: 0xffffff, glazeAlpha: 0.00 }, // noon: blue, no cast
+      { t: 0.42, skyTop: 0x5f96d2, skyHorizon: 0xd4dfe8, glaze: 0xfbf3f0, glazeAlpha: 0.08 }, // afternoon
+      { t: 0.52, skyTop: 0x5a7cba, skyHorizon: 0xe8a2ae, glaze: 0xecdcd6, glazeAlpha: 0.26 }, // sunset: horizon pink, top still blue
+      { t: 0.60, skyTop: 0x46589c, skyHorizon: 0xb8869c, glaze: 0x9c8a94, glazeAlpha: 0.80 }, // afterglow
+      { t: 0.68, skyTop: 0x2f3d74, skyHorizon: 0x6a5f88, glaze: 0x74688e, glazeAlpha: 0.87 }, // nightfall
+      { t: 0.80, skyTop: 0x161d3a, skyHorizon: 0x2c3760, glaze: 0x46538c, glazeAlpha: 0.93 }, // night: indigo
+      { t: 0.92, skyTop: 0x1d2748, skyHorizon: 0x3a4670, glaze: 0x50568e, glazeAlpha: 0.90 }, // small hours
     ],
     // Fraction of screen height where the horizon band sits in the sky
     // gradient (the world diamond occupies the area below the upper sky).
@@ -318,7 +309,22 @@ function smoothstep(u: number): number {
   return u * u * (3 - 2 * u);
 }
 
-interface DayState { skyTop: number; skyHorizon: number; glaze: number; glazeAlpha: number }
+interface DayKey { t: number; skyTop: number; skyHorizon: number; glaze: number; glazeAlpha: number }
+/** The day's light as a CROSSFADE between two keyframes rather than a blend of
+ *  them.
+ *
+ *  Blending produced the colour faults: `lerpColor` mixes in RGB, and RGB
+ *  between a warm and a cool colour runs through muddy grey-green. Night blue
+ *  to dawn orange interpolates literally through green, which is the green
+ *  that appeared at sunrise on both land and sky, and the same crossing left
+ *  the land at saturation 4 mid-dusk. Every warm-to-cool transition has to
+ *  cross, twice a day, on two layers — no arrangement of keyframes avoids it.
+ *
+ *  So nothing is blended any more. Both keyframes are kept, and each is drawn
+ *  at its own strength: the outgoing one fades out while the incoming one
+ *  fades in. A midpoint is LESS OF BOTH rather than a colour halfway between,
+ *  and a colour that is never computed can never be wrong. */
+interface DayState { k0: DayKey; k1: DayKey; u: number; skyTop: number; skyHorizon: number; glaze: number; glazeAlpha: number }
 
 
 
@@ -339,6 +345,10 @@ function sampleDay(t: number): DayState {
   }
   const u = smoothstep(span > 0 ? local / span : 0);
   return {
+    k0, k1, u,
+    // Kept for the few readers that genuinely want one representative colour
+    // (the warm cast picks a single tint). Nothing that covers the whole frame
+    // uses these any more.
     skyTop: lerpColor(k0.skyTop, k1.skyTop, u),
     skyHorizon: lerpColor(k0.skyHorizon, k1.skyHorizon, u),
     glaze: lerpColor(k0.glaze, k1.glaze, u),
@@ -404,6 +414,11 @@ function makeCloudTexture(rand: () => number): Texture {
  *  light that casts it, because open sky fills it — the same reason the cloud
  *  shadows use a cool grey-blue rather than black. */
 const SHADOW_COOL = 0x4a5668;
+
+/** The colour a low sun puts ON THE GROUND. Warm and pale — the light, not the
+ *  sky. Deliberately independent of `skyHorizon`, which carries the saturated
+ *  sunset pink meant for the sky alone. */
+const SUN_WARM = 0xffd9b8;
 
 const DRIFT = { minX: -1850, maxX: 1850, minY: -250, maxY: 1800 };
 
@@ -502,6 +517,7 @@ function sampleSeason(t: number): SeasonState {
 export interface Atmosphere {
   skyLayer: Sprite;
   glazeLayer: Graphics;
+  glazeLayerB: Graphics;
   terminatorLayer: Graphics;
   sunCastLayer: Graphics;
   airLayer: Graphics;                        // era airlight (screen), sits over the glaze
@@ -594,6 +610,11 @@ export function createAtmosphere(): Atmosphere {
   const glazeLayer = new Graphics();
   glazeLayer.blendMode = 'multiply';
   glazeLayer.alpha = 0;
+  // The outgoing keyframe's wash. Two multiplies at partial strength, rather
+  // than one multiply of a blended colour — see DayState.
+  const glazeLayerB = new Graphics();
+  glazeLayerB.blendMode = 'multiply';
+  glazeLayerB.alpha = 0;
 
   // The terminator: the part of the day-night light that is NOT the same
   // everywhere. `glazeLayer` above carries the brightest column's light as a
@@ -1267,20 +1288,33 @@ export function createAtmosphere(): Atmosphere {
   let dayT = ATMOS.day.startT;
   let seasonT = ATMOS.season.startT;
   let eraAirCur = { air: 0xffffff, amount: 0, fogMult: 1 };
-  let lastSkyTop = -1;
-  let lastSkyHorizon = -1;
+  let lastSkyKey = -1;
+  let lastSkyU = -1;
+  let lastSkyDread = -1;
+  let curHorizon = 0x9fb2c4;
   let nowMs = 0; // scar clock — advances with update() so pause freezes fades
   const scars: Scar[] = [];
 
-  function redrawSky(top: number, horizon: number) {
+  function paintSkyGradient(top: number, horizon: number, alpha: number) {
     const grad = skyCtx.createLinearGradient(0, 0, 0, skyCanvas.height);
     grad.addColorStop(0, hexCss(top));
     grad.addColorStop(ATMOS.day.horizonY, hexCss(horizon));
     // Below the horizon the sky continues as a slightly lifted ground-haze of
     // the horizon color, so the world doesn't sit on a hard band.
     grad.addColorStop(1, hexCss(lerpColor(horizon, 0xffffff, 0.18)));
+    skyCtx.globalAlpha = alpha;
     skyCtx.fillStyle = grad;
     skyCtx.fillRect(0, 0, 2, skyCanvas.height);
+    skyCtx.globalAlpha = 1;
+  }
+  /** The sky is a CROSSFADE of two gradients, not a gradient of two blended
+   *  colours. Blending night blue toward dawn orange in RGB passes through
+   *  green, and the sky showed it as plainly as the land did. Painting the
+   *  outgoing gradient and then the incoming one over it at `u` never computes
+   *  a colour between them. */
+  function redrawSky(k0: DayKey, k1: DayKey, u: number, lean: (c: number, m: number) => number) {
+    paintSkyGradient(lean(k0.skyTop, 0.5), lean(k0.skyHorizon, 0.6), 1);
+    if (u > 0.001) paintSkyGradient(lean(k1.skyTop, 0.5), lean(k1.skyHorizon, 0.6), u);
     skyTexture.source.update();
   }
 
@@ -1289,6 +1323,8 @@ export function createAtmosphere(): Atmosphere {
     skyLayer.height = height;
     glazeLayer.clear();
     glazeLayer.rect(0, 0, width, height).fill(0xffffff);
+    glazeLayerB.clear();
+    glazeLayerB.rect(0, 0, width, height).fill(0xffffff);
     airLayer.clear();
     airLayer.rect(0, 0, width, height).fill(0xffffff);
     starLayer.position.set(width * ATMOS.stars.poleX, height * ATMOS.stars.poleY);
@@ -1309,38 +1345,63 @@ export function createAtmosphere(): Atmosphere {
     eraAirCur.amount += (mood.amount - eraAirCur.amount) * eraK;
     eraAirCur.fogMult += (mood.fogMult - eraAirCur.fogMult) * eraK;
 
-    // Sky: day palette, leaned by season cast, then by the brewing hue.
-    let top = lerpColor(day.skyTop, season.cast, season.castAmount * 0.5);
-    let horizon = lerpColor(day.skyHorizon, season.cast, season.castAmount * 0.6);
-    if (dreadSkyColor != null && dread > 0.01) {
-      const lean = dread * ATMOS.dreadSkyBlend;
-      top = lerpColor(top, dreadSkyColor, lean);
-      horizon = lerpColor(horizon, dreadSkyColor, lean * 0.7);
-    }
+    // Sky: day palette, leaned by season cast, then by the brewing hue. Both
+    // leans are applied to each keyframe SEPARATELY inside the crossfade, so
+    // the two gradients stay two gradients — leaning a blended colour would put
+    // the blend back.
+    const dreadLean = dreadSkyColor != null && dread > 0.01 ? dread * ATMOS.dreadSkyBlend : 0;
+    const skyLean = (c: number, m: number) => {
+      let out = lerpColor(c, season.cast, season.castAmount * m);
+      if (dreadLean > 0 && dreadSkyColor != null) {
+        out = lerpColor(out, dreadSkyColor, dreadLean * (m > 0.55 ? 0.7 : 1));
+      }
+      return out;
+    };
     // Only regenerate the gradient when it moved a perceptible amount.
-    if (Math.abs((top & 0xff) - (lastSkyTop & 0xff)) > 1
-      || Math.abs(((top >> 8) & 0xff) - ((lastSkyTop >> 8) & 0xff)) > 1
-      || Math.abs(((top >> 16) & 0xff) - ((lastSkyTop >> 16) & 0xff)) > 1
-      || Math.abs((horizon & 0xff) - (lastSkyHorizon & 0xff)) > 1
-      || Math.abs(((horizon >> 8) & 0xff) - ((lastSkyHorizon >> 8) & 0xff)) > 1
-      || Math.abs(((horizon >> 16) & 0xff) - ((lastSkyHorizon >> 16) & 0xff)) > 1) {
-      lastSkyTop = top;
-      lastSkyHorizon = horizon;
-      redrawSky(top, horizon);
+    // Redraw on a small move in `u`, not on a colour delta: the sky is now a
+    // crossfade, so what changes between frames is the mix, not a blended
+    // colour to compare.
+    const skyKeyId = ATMOS.day.keyframes.indexOf(day.k0);
+    if (skyKeyId !== lastSkyKey || Math.abs(day.u - lastSkyU) > 0.004
+        || Math.abs(dreadLean - lastSkyDread) > 0.01) {
+      lastSkyKey = skyKeyId;
+      lastSkyU = day.u;
+      lastSkyDread = dreadLean;
+      redrawSky(day.k0, day.k1, day.u, skyLean);
+    }
+    // One representative horizon colour, for the two things that need a single
+    // tint rather than a wash: the limb haze band and whatever melts into the
+    // horizon. A blend is fine here — these are thin edge elements, not the
+    // full frame, so a muddy midpoint has nowhere to show.
+    {
+      curHorizon = lerpColor(skyLean(day.k0.skyHorizon, 0.6), skyLean(day.k1.skyHorizon, 0.6), day.u);
     }
 
-    // Glaze: time-of-day light, cast by season, hazed by the era's air.
-    // Glaze: time-of-day light, cast by season, hazed by the era's air. Flat,
-    // as it always was — the spherical layer below adds the direction.
-    let glazeColor = lerpColor(day.glaze, season.cast, season.castAmount);
-    glazeColor = lerpColor(glazeColor, eraAirCur.air, eraAirCur.amount);
-    const glazeAlpha = Math.min(
-      ATMOS.day.glazeCap,
-      day.glazeAlpha + season.castAmount * 0.5 + eraAirCur.amount * 0.28,
-    );
-    glazeLayer.tint = glazeColor;
-    glazeLayer.alpha = glazeAlpha;
+    // One keyframe's wash, cast by season and hazed by the era's air.
+    const washOf = (k: DayKey) => {
+      let c = lerpColor(k.glaze, season.cast, season.castAmount);
+      c = lerpColor(c, eraAirCur.air, eraAirCur.amount);
+      const a = Math.min(
+        ATMOS.day.glazeCap,
+        k.glazeAlpha + season.castAmount * 0.5 + eraAirCur.amount * 0.28,
+      );
+      return { c, a };
+    };
+    const w0 = washOf(day.k0);
+    const w1 = washOf(day.k1);
+    // The outgoing wash fades out as the incoming one fades in. At u=0 and u=1
+    // this is exactly the old single wash; in between it is both at partial
+    // strength, which desaturates and darkens rather than sliding through an
+    // invented hue.
+    glazeLayer.tint = w0.c;
+    glazeLayer.alpha = w0.a * (1 - day.u);
     glazeLayer.visible = glazeLayer.alpha > 0.004;
+    glazeLayerB.tint = w1.c;
+    glazeLayerB.alpha = w1.a * day.u;
+    glazeLayerB.visible = glazeLayerB.alpha > 0.004;
+    // Anything downstream that wants one number for "how dark is it" reads the
+    // combined effect of the two multiplies, not either one alone.
+    const glazeColor = lerpColor(w0.c, w1.c, day.u);
 
     // --- the terminator, as a lit sphere ------------------------------------
     //
@@ -1482,7 +1543,20 @@ export function createAtmosphere(): Atmosphere {
       const castStrength = lowSun * ATMOS.day.sunCastMax;
       sunCastLayer.visible = castStrength > 0.004;
       if (sunCastLayer.visible) {
-        const warm = lerpColor(day.skyHorizon, season.cast, season.castAmount * 0.5);
+        // NOT `skyHorizon`. That is where the sunset pink lives, and this
+        // layer is ADDITIVE over the whole frame — so reading it painted the
+        // land with the sky's colour, which is the thing the palette work was
+        // trying to stop. Moving the pink into the horizon simply routed it
+        // back through here.
+        //
+        // A low sun's light on the ground is warm and pale, not the saturated
+        // colour of the sky it is lighting. This is that: a warm off-white,
+        // leaned only slightly toward the horizon's hue.
+        const warm = lerpColor(
+          lerpColor(SUN_WARM, day.skyHorizon, 0.25),
+          season.cast,
+          season.castAmount * 0.5,
+        );
         sunCastLayer.clear();
         // On the sun itself, for the same reason as above.
         const px = sunScreenX;
@@ -1509,7 +1583,7 @@ export function createAtmosphere(): Atmosphere {
 
     // The limb haze follows the sky's horizon color (including the dread
     // lean) and fades in with the curvature knob.
-    limbBandGfx.tint = horizon;
+    limbBandGfx.tint = curHorizon;
     limbBandGfx.alpha = ATMOS.curve.limbHazeAlpha * curCurvature;
 
     // --- Celestial light ---------------------------------------------------
@@ -1844,7 +1918,7 @@ export function createAtmosphere(): Atmosphere {
     setDayT: (v: number) => { dayT = ((v % 1) + 1) % 1; },
     setTerminatorSpread: (v: number | null) => { terminatorSpreadOverride = v; },
     getDayT: () => dayT,
-    skyLayer, glazeLayer, terminatorLayer, sunCastLayer, airLayer, scarLayer, cloudShadowLayer, fogLayer,
+    skyLayer, glazeLayer, glazeLayerB, terminatorLayer, sunCastLayer, airLayer, scarLayer, cloudShadowLayer, fogLayer,
     attach: (layers: { biomeLayer: Container }) => { attachedBiomeLayer = layers.biomeLayer; },
     attachPlane: (plane, geom) => {
       attachedPlane = plane;
@@ -1904,7 +1978,11 @@ export function createAtmosphere(): Atmosphere {
     setStormRate: (v: number) => { stormRateMult = Math.max(0, v); },
     // The sky's current horizon color, dread lean included. Anything that has
     // to melt into the horizon (the depth haze in main.ts) tints to this.
-    horizonColor: () => lastSkyHorizon,
+    // Desaturated on the way out. The one consumer is the depth haze, which
+    // sits INSIDE the world and covers the back of the map — handing it the
+    // saturated horizon painted the far half of the LAND pink at dusk. Haze
+    // reads as distance, and distance is pale.
+    horizonColor: () => lerpColor(curHorizon, 0xb9c2cc, 0.55),
     setLightAzimuth: (v: number | null) => { lightAzOverride = v == null ? null : Math.max(0, Math.min(1, v)); },
     setLightAltitude: (v: number | null) => { lightAltOverride = v == null ? null : Math.max(0, Math.min(1, v)); },
     setStarRotation: (v: number) => { starRotation = v * Math.PI * 2; },
