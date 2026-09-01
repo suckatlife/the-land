@@ -1088,6 +1088,16 @@ const expeditionLayer = new Container();
 const cityMarkersContainer = new Container();
 const labelLayer = new Container();
 const world = new Container();
+// The lights get their own parent so the emissive pass can draw them without
+// hiding anything. The first version rendered the WHOLE world a second time
+// with every non-light child hidden for the duration, which drew the scene
+// twice per frame AND toggled `visible` on `biomeLayer`, `sceneryLandGfx`,
+// `iceGfx`, `farmGfx` and `simLayer` -- all `cacheAsTexture` containers, and
+// this file already warns that toggling that re-allocates a RenderTexture. It
+// switched on at `glaze > 0.20`, first true around dayT 0.5, so a world ran
+// well for half a day and then fell over. Its transform is set with the
+// world's, below.
+const emissiveWorld = new Container();
 world.addChild(biomeLayer);
 // Biome changes (breathing land, forming islands) crossfade in here, over the
 // cached base, until they finish and are folded into the cache.
@@ -1152,16 +1162,16 @@ world.addChild(nomadGfx);
 world.addChild(seaTrailGfx);
 world.addChild(boatsGfx);
 // Lighthouses stand on the headlands, their beams sweeping the night sea.
-world.addChild(lighthouseGfx);
+emissiveWorld.addChild(lighthouseGfx);
 // Wildfires glow over the burning land.
-world.addChild(fireGfx);
+emissiveWorld.addChild(fireGfx);
 // Volcanic lava creeps over the land and cools into fresh rock.
 world.addChild(lavaGfx);
-world.addChild(lavaGlowGfx);
+emissiveWorld.addChild(lavaGlowGfx);
 // A plague's miasma dims the districts it touches (above the buildings).
 world.addChild(plagueGfx);
 // A faith's golden light kindles over the districts it reaches.
-world.addChild(faithGfx);
+emissiveWorld.addChild(faithGfx);
 // River floods sheet a film of water over the drowned lowlands.
 world.addChild(floodGfx);
 // Drought parches the land brown and cracked.
@@ -1171,11 +1181,11 @@ world.addChild(energyGfx);
 // Natural wonders' standing forms (volcano cone + plume, monolith, spires)
 // tower over the land like the megastructures, above the buildings around them.
 world.addChild(natWonderGfx);
-world.addChild(natWonderGlowGfx);
+emissiveWorld.addChild(natWonderGlowGfx);
 // Megastructures tower over their cities.
 world.addChild(megaGfx);
 // Directional land light sits under the cloud shadows (clouds block sun).
-world.addChild(atmos.landLightLayer);
+emissiveWorld.addChild(atmos.landLightLayer);
 // City smoke rises beneath the clouds.
 world.addChild(smokeLayer);
 // End-of-cycle smog pools over the cities.
@@ -1183,9 +1193,9 @@ world.addChild(smogGfx);
 // Cloud shadows fall on land and buildings; markers and labels stay above.
 world.addChild(atmos.cloudShadowLayer);
 // City lights pierce the night (and sit above cloud shadow).
-world.addChild(cityLightsGfx);
+emissiveWorld.addChild(cityLightsGfx);
 // Festival glow joins the lights; storms ride above everything groundborne.
-world.addChild(festivalGfx);
+emissiveWorld.addChild(festivalGfx);
 // Atmospheric perspective: air between the viewer and the far latitudes. It
 // lies over everything groundborne (terrain, buildings, wonders, night lights)
 // so distance costs detail AND contrast, not just detail — the far half of the
@@ -1195,7 +1205,7 @@ world.addChild(festivalGfx);
 // where its alpha would be ~0 anyway.
 world.addChild(depthHazeSprite);
 world.addChild(atmos.stormLayer);
-world.addChild(atmos.lightningLayer);
+emissiveWorld.addChild(atmos.lightningLayer);
 // Bird flocks cross at dawn and dusk.
 world.addChild(atmos.birdLayer);
 // Smaller flocks skim the canopy, forest to forest, above the surface life.
@@ -1210,7 +1220,7 @@ world.addChild(cityMarkersContainer);
 // which is why they read as a flat band scrolling past.
 const nightLightsGfx = new Graphics();
 nightLightsGfx.blendMode = 'add';
-world.addChild(nightLightsGfx);
+emissiveWorld.addChild(nightLightsGfx);
 // Mist banks veil everything but the text.
 world.addChild(atmos.fogLayer);
 world.addChild(labelLayer);
@@ -1250,6 +1260,10 @@ worldRT.source.style.update();
 world.scale.set(captureScale);
 world.x = -WORLD_CAPTURE.x0 * captureScale;
 world.y = -WORLD_CAPTURE.y0 * captureScale;
+// Identical, so the lights land exactly where the world put them.
+emissiveWorld.scale.set(captureScale);
+emissiveWorld.x = world.x;
+emissiveWorld.y = world.y;
 // Dense enough that the curved silhouette reads as a curve, not a polyline.
 const worldPlane = new MeshPlane({ texture: worldRT, verticesX: 110, verticesY: 36 });
 
@@ -1268,11 +1282,6 @@ const worldPlane = new MeshPlane({ texture: worldRT, verticesX: 110, verticesY: 
 // additively above the glaze where nothing darkens them. The base pass still
 // draws them, so what this adds reads as glow around a light rather than a
 // light pasted onto the dark.
-const EMISSIVE_LAYERS: Container[] = [
-  nightLightsGfx, cityLightsGfx, festivalGfx, fireGfx, lavaGlowGfx,
-  faithGfx, natWonderGlowGfx, atmos.landLightLayer, lighthouseGfx,
-  atmos.lightningLayer,
-];
 const lightRT = RenderTexture.create({
   width: worldRT.width,
   height: worldRT.height,
@@ -1290,22 +1299,12 @@ const lightPlane = new MeshPlane({ texture: lightRT, verticesX: 110, verticesY: 
 lightPlane.geometry = worldPlane.geometry;
 lightPlane.blendMode = 'add';
 lightPlane.eventMode = 'none';
-lightPlane.visible = false;
+lightPlane.visible = true;
 
-/** Draw only the light-emitting layers into `lightRT`. Everything else in the
- *  world is hidden for the duration and put back immediately: cheaper and far
- *  less fragile than reparenting the light layers, which would change their
- *  order relative to the terrain in the base pass. */
+/** Draw the light-emitting layers into `lightRT`. They have their own parent,
+ *  so this touches nothing else and hides nothing. */
 function renderEmissive(): void {
-  const hidden: Container[] = [];
-  for (const child of world.children) {
-    if (child.visible && !EMISSIVE_LAYERS.includes(child as Container)) {
-      child.visible = false;
-      hidden.push(child as Container);
-    }
-  }
-  app.renderer.render({ container: world, target: lightRT, clear: true });
-  for (const c of hidden) c.visible = true;
+  app.renderer.render({ container: emissiveWorld, target: lightRT, clear: true });
 }
 
 // When a viewport is wider than the projected map, erase the render texture's
@@ -8081,15 +8080,12 @@ app.ticker.add(() => {
     if (worldNeedsEdgeErase()) {
       app.renderer.render({ container: worldEdgeEraser, target: worldRT, clear: false });
     }
-    // Only worth drawing once something is actually darkening the world; by
-    // day the glaze is near zero and the pass would cost a render for nothing.
-    const glazeNow = (atmos as any).glazeLayer.alpha as number;
-    lightPlane.visible = glazeNow > 0.20;
-    if (lightPlane.visible) {
-      lightPlane.position.copyFrom(worldPlane.position);
-      lightPlane.scale.copyFrom(worldPlane.scale);
-      renderEmissive();
-    }
+    // Always, now that the pass is ten small containers rather than the whole
+    // world. Wildfires and lava emit in daylight too, and the previous gate at
+    // `glaze > 0.20` is exactly what made this switch on midway through a day.
+    lightPlane.position.copyFrom(worldPlane.position);
+    lightPlane.scale.copyFrom(worldPlane.scale);
+    renderEmissive();
   }
 });
 
