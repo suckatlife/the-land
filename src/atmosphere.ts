@@ -88,7 +88,20 @@ export const ATMOS = {
     // was a 70% multiply of desaturated blue-grey over most of the visible
     // face at low sun -- which is why Lawrence saw everything go grey and
     // washed out at exactly sunrise and sunset.
-    terminatorMax: 0.42,
+    // OFF. Zero, deliberately, rather than deleted.
+    //
+    // The idea was a lit sphere: Lambert shading with a soft terminator that
+    // wraps with the curvature. What it actually produced was a large multiply
+    // of desaturated blue-grey across the visible face at low sun -- grey and
+    // washed out at exactly sunrise and sunset, which is when anyone is
+    // looking. Fading it at the horizon (see `horizonFade`) fixed the hard
+    // switch but not the wash; the wash is what the layer IS.
+    //
+    // The implementation below is left intact and correct. If the sphere
+    // shading is worth another attempt it wants to come back as something that
+    // shapes light across the globe rather than as a grey multiply over it,
+    // and this number is where to start.
+    terminatorMax: 0,
 
     // How much warm sunset colour a low sun casts onto the world. Additive, so
     // this is the only thing here that can make part of the globe brighter
