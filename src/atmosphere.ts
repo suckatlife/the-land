@@ -168,6 +168,12 @@ export const ATMOS = {
     shadowAlpha: 0.11,      // cloud shadow strength in calm (multiply)
     shadowAlphaDread: 0.24, // cloud shadow strength at full dread
     shadowTint: 0x4a5668,   // cool grey-blue shadow color
+    // The cloud ITSELF, over its shadow. Deliberately modest: CLAUDE.md's calm
+    // test says a change that makes the world louder or busier is probably the
+    // wrong change, and seven bright clouds crossing the map would be busy.
+    // These read as presence, not as weather.
+    cloudBodyAlpha: 0.44,
+    cloudCrownAlpha: 0.30,
     fogAlpha: 0.09,         // mist bank strength (normal blend, pale wash)
     fogTint: 0xf4f1e8,      // warm paper-white mist
   },
@@ -547,6 +553,8 @@ export interface Atmosphere {
   airLayer: Graphics;                        // era airlight (screen), sits over the glaze
   scarLayer: Container;
   cloudShadowLayer: Container;
+  /** The clouds themselves, over their shadows. */
+  cloudBodyLayer: Container;
   fogLayer: Container;
   // biomeLayer is tinted seasonally; attach it once after scene construction.
   attach(layers: { biomeLayer: Container }): void;
@@ -691,6 +699,11 @@ export function createAtmosphere(): Atmosphere {
   // Weather: cloud shadows (multiply, over land+buildings) and mist banks
   // (pale wash, under labels). All drift along a shared, slowly-wandering wind.
   const cloudShadowLayer = new Container();
+  // The clouds that cast those shadows. Until now the shadow was the whole
+  // implementation: a multiply patch slid across the land with nothing above it
+  // -- from a viewpoint in orbit you would see the cloud TOP first and the
+  // shadow second, and only the second was drawn.
+  const cloudBodyLayer = new Container();
   const fogLayer = new Container();
   const weatherRand = mulberry32(0x9e3779b9);
   const cloudTextures = [makeCloudTexture(weatherRand), makeCloudTexture(weatherRand), makeCloudTexture(weatherRand)];
@@ -717,6 +730,26 @@ export function createAtmosphere(): Atmosphere {
   for (const d of cloudShadows) {
     d.sp.tint = ATMOS.weather.shadowTint;
     d.sp.blendMode = 'multiply';
+  }
+  // One body and one crown per shadow, sharing its texture and its mirroring so
+  // the cloud and the shadow it throws are recognisably the same shape. Bodies
+  // as a full pass, then crowns as a full pass, so no cloud's crown is covered
+  // by a neighbour's body.
+  const cloudBodies: Sprite[] = [];
+  const cloudCrowns: Sprite[] = [];
+  for (const d of cloudShadows) {
+    const b = new Sprite(d.sp.texture);
+    b.anchor.set(0.5);
+    b.alpha = 0;
+    cloudBodyLayer.addChild(b);
+    cloudBodies.push(b);
+  }
+  for (const d of cloudShadows) {
+    const c = new Sprite(d.sp.texture);
+    c.anchor.set(0.5);
+    c.alpha = 0;
+    cloudBodyLayer.addChild(c);
+    cloudCrowns.push(c);
   }
   for (const d of fogBanks) {
     d.sp.tint = ATMOS.weather.fogTint;
@@ -1839,6 +1872,37 @@ export function createAtmosphere(): Atmosphere {
       d.sp.alpha = alpha * d.baseAlpha * envelope;
     };
     for (const d of cloudShadows) advance(d, shadowStrength, false);
+    // Put a cloud above every shadow. The shadow keeps the position the drift
+    // logic gave it -- untouched, so the wrap-around maths stays exactly as it
+    // was -- and the cloud is placed back up-sun from it by however far a sun
+    // at this height would throw it.
+    {
+      const L = curLight;
+      const lit = L.isDay ? Math.max(0, Math.min(1, L.altitude / 0.5)) : 0;
+      const lowness = L.isDay ? 1 - Math.min(1, L.altitude / 0.62) : 1;
+      const dx = (0.5 - L.azimuth) * 2;
+      const offX = dx * (10 + 22 * lowness);
+      const offY = 8 + 14 * lowness;
+      const W = ATMOS.weather;
+      for (let i = 0; i < cloudShadows.length; i++) {
+        const d = cloudShadows[i];
+        const body = cloudBodies[i];
+        const crown = cloudCrowns[i];
+        const bx = d.sp.x - offX;
+        const by = d.sp.y - offY;
+        body.position.set(bx, by);
+        body.scale.copyFrom(d.sp.scale);
+        // Fair weather, not a thunderhead: pale, and paler still in full sun.
+        body.tint = lerpColor(0x8e99ad, 0xdfe6f0, lit);
+        body.alpha = W.cloudBodyAlpha * d.baseAlpha * (0.35 + 0.65 * lit);
+        crown.position.set(bx + dx * 12, by - 10 - 8 * lowness);
+        crown.scale.set(d.sp.scale.x * 0.62, d.sp.scale.y * 0.42);
+        crown.tint = lerpColor(0xc2ccda, L.color, 0.3 + 0.5 * lit);
+        // Daylight only. At night there is nothing above to catch the light,
+        // and a bright cloud in the dark reads as a hole in the world.
+        crown.alpha = W.cloudCrownAlpha * d.baseAlpha * lit;
+      }
+    }
     for (const d of fogBanks) advance(d, fogStrength, true);
     lastWind = { x: wx, y: wy };
     updateStorm(dt, wx, wy, curLight);
@@ -2065,7 +2129,7 @@ export function createAtmosphere(): Atmosphere {
     dayRate: () => dayRate,
     setTerminatorSpread: (v: number | null) => { terminatorSpreadOverride = v; },
     getDayT: () => dayT,
-    skyLayer, glazeLayer, terminatorLayer, sunCastLayer, airLayer, scarLayer, cloudShadowLayer, fogLayer,
+    skyLayer, glazeLayer, terminatorLayer, sunCastLayer, airLayer, scarLayer, cloudShadowLayer, cloudBodyLayer, fogLayer,
     attach: (layers: { biomeLayer: Container }) => { attachedBiomeLayer = layers.biomeLayer; },
     attachPlane: (plane, geom) => {
       attachedPlane = plane;
