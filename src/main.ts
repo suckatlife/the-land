@@ -5246,8 +5246,20 @@ interface Battle {
   aColor: number; dColor: number; attackerId: number; defenderId: number;
   siege: boolean; seed: number;
   era: number;                                       // attacker's ERA_RANK — sets the war style
+  // How much this engagement matters, 0 (border skirmish) .. 1 (war between
+  // two large powers). Read from what the sim already knows -- how big the
+  // combatants are, and whether a city is under siege -- and used for BOTH the
+  // scale of the clash and how many marks it is drawn with. Without it every
+  // engagement read at identical weight, so a raid and a war that decides an
+  // age looked the same.
+  weight: number;
 }
 const battles: Battle[] = [];
+/** Half the distance between two forces, in world px, indexed by ERA_RANK.
+ *  neolithic and classical fight hand to hand; the medieval field opens
+ *  slightly; artillery stands off; aircraft and missiles need not be in sight
+ *  of one another at all. */
+const ERA_REACH = [7, 7, 9, 16, 24, 30];
 const BATTLE_LIFE = 9;   // seconds a front stays hot after the last clash
 function nearestCity(civ: { cities: Array<{ row: number; col: number }> } | undefined, row: number, col: number) {
   if (!civ || !civ.cities.length) return null;
@@ -5275,14 +5287,35 @@ function noteBattle(ev: { row: number; col: number; attackerId: number; defender
     const r = ev.row + dr, c = ev.col + dc;
     if (r >= 0 && r < GRID_SIZE && c >= 0 && c < GRID_SIZE && simWorld.tiles[r][c].state === 'built' && simWorld.tiles[r][c].civId === ev.defenderId) { siege = true; break; }
   }
+  // How far apart two forces stand, by age. This is the part of an era that
+  // is actually legible from orbit: infantry has to close to arm's length,
+  // artillery does not, and a missile crew never sees the people it kills.
+  // Everything else about a war's look is detail on top of this.
+  const eraRank = atk ? ERA_RANK[atk.era] : 1;
+  const reach = ERA_REACH[eraRank] ?? 7;
   battles.push({
     row: ev.row, col: ev.col, cx, cy, born: worldClock, lastHit: worldClock,
-    ax: cx + vx * 7, ay: cy + vy * 7, dx: cx - vx * 7, dy: cy - vy * 7,
+    ax: cx + vx * reach, ay: cy + vy * reach, dx: cx - vx * reach, dy: cy - vy * reach,
     mx: cs.x, my: cs.y, aColor: atk?.color ?? 0xcc5544, dColor: def?.color ?? 0x4466cc,
     attackerId: ev.attackerId, defenderId: ev.defenderId,
-    siege, seed: (ev.row * 13 + ev.col * 7) % 100, era: atk ? ERA_RANK[atk.era] : 1,
+    siege, seed: (ev.row * 13 + ev.col * 7) % 100, era: eraRank,
+    weight: battleWeight(atk, def, siege),
   });
 }
+/** How much of the world is at stake here, 0..1. Cities are the sim's own
+ *  measure of a civ's size, so a frontier raid between two three-city
+ *  neighbours weighs near nothing and a siege between two large powers weighs
+ *  nearly everything. */
+function battleWeight(
+  atk: { cities: unknown[] } | undefined,
+  def: { cities: unknown[] } | undefined,
+  siege: boolean,
+): number {
+  const size = (atk?.cities.length ?? 1) + (def?.cities.length ?? 1);
+  const bigness = Math.min(1, Math.max(0, (size - 2) / 12));
+  return Math.min(1, bigness * 0.78 + (siege ? 0.34 : 0));
+}
+
 function drawTrooper(g: Graphics, x: number, y: number, color: number) {
   g.rect(x - 0.8, y - 3, 1.6, 3).fill({ color: 0x322f29, alpha: 0.92 });       // body
   g.circle(x, y - 3.4, 0.7).fill({ color: 0x4b463f, alpha: 0.92 });            // head
@@ -5364,7 +5397,20 @@ let WAR_SCALE = 1.7;
 (window as any).__war = {
   get scale() { return WAR_SCALE; },
   set scale(v: number) { WAR_SCALE = v; },
-  list: () => battles.map((b) => ({ row: b.row, col: b.col, siege: b.siege, era: b.era, ...tileToSky(b.row, b.col) })),
+  list: () => battles.map((b) => ({
+    row: b.row, col: b.col, siege: b.siege, era: b.era,
+    weight: +b.weight.toFixed(3),
+    scale: +(WAR_SCALE * (0.62 + 0.62 * b.weight)).toFixed(3),
+    ...tileToSky(b.row, b.col),
+  })),
+  /** Force the war style on every live battle: 0-2 melee, 3 mech, 4 air,
+   *  5 energy. Each era's warfare otherwise only appears once a civilization
+   *  has actually reached that age, which makes looking at one a matter of
+   *  waiting for a world to develop rather than choosing. */
+  forceEra: (rank: number) => { for (const b of battles) b.era = rank; },
+  /** Force the weight on every live battle, to see the two ends of the scale
+   *  side by side without hunting for a matching pair of civs. */
+  forceWeight: (w: number) => { for (const b of battles) b.weight = Math.max(0, Math.min(1, w)); },
 };
 function updateWarfare(nowSec: number) {
   for (let i = battles.length - 1; i >= 0; i--) {
@@ -5376,7 +5422,11 @@ function updateWarfare(nowSec: number) {
     if (!g) { g = new Graphics(); warPool[i] = g; warLayer.addChild(g); }
     g.clear(); g.visible = true;
     // Pivot+position at the front centre so scaling grows the clash around itself.
-    g.pivot.set(b.cx, b.cy); g.position.set(b.cx, b.cy); g.scale.set(WAR_SCALE);
+    g.pivot.set(b.cx, b.cy); g.position.set(b.cx, b.cy);
+    // Restraint at the small end rather than spectacle at the large: a border
+    // skirmish draws at 0.62 of the old fixed size and a decisive war at 1.24,
+    // so the change is mostly that small things got small.
+    g.scale.set(WAR_SCALE * (0.62 + 0.62 * b.weight));
     drawOneBattle(g, b, nowSec);
   }
   for (let i = battles.length; i < warPool.length; i++) warPool[i].visible = false;
@@ -5388,7 +5438,10 @@ function drawOneBattle(warGfx: Graphics, b: Battle, nowSec: number) {
     if (env < 0.02) return;
     // Heading from the attacker cluster toward the defender.
     let hx = b.dx - b.ax, hy = b.dy - b.ay; const hl = Math.hypot(hx, hy) || 1; hx /= hl; hy /= hl;
-    const style = b.era >= 5 ? 'energy' : b.era >= 3 ? 'mech' : 'melee';
+    // The modern age used to borrow the industrial one's tanks, so a war in
+    // 1940 looked like a war in 1870. It gets the air now: the fighting leaves
+    // the ground entirely, which is the actual change that era made.
+    const style = b.era >= 5 ? 'energy' : b.era === 4 ? 'air' : b.era >= 3 ? 'mech' : 'melee';
 
     if (style === 'energy') {
       // --- Future war: hover-gunships, energy beams, a defender shield dome ---
@@ -5397,7 +5450,8 @@ function drawOneBattle(warGfx: Graphics, b: Battle, nowSec: number) {
         for (const rr of [10, 7]) warGfx.moveTo(b.dx - rr, b.dy + 2).arc(b.dx, b.dy + 2, rr, Math.PI, 0).stroke({ color: 0x7fe8ff, alpha: (0.12 + 0.18 * hit) * env, width: 1.2 });
       }
       const aGlow = lerpColor(b.aColor, 0x9ffcff, 0.6), dGlow = lerpColor(b.dColor, 0xff9af0, 0.55);
-      for (let k = 0; k < 3; k++) {
+      const ships = 1 + Math.round(b.weight * 2);
+      for (let k = 0; k < ships; k++) {
         drawGunship(warGfx, b.ax + ((k % 2) - 0.5) * 4, b.ay + (k - 1) * 3.2, hx, hy, aGlow, nowSec, k);
         drawGunship(warGfx, b.dx + ((k % 2) - 0.5) * 4, b.dy + (k - 1) * 3.2, -hx, -hy, dGlow, nowSec, k + 5);
       }
@@ -5415,6 +5469,72 @@ function drawOneBattle(warGfx: Graphics, b: Battle, nowSec: number) {
       }
       // Rarely, a Giant Death Robot strides in on the attacker's side.
       if (b.seed % 4 === 0) drawDeathRobot(warGfx, b.ax - hx * 6, b.ay + 2, hx, nowSec, b.aColor, env);
+    } else if (style === 'air') {
+      // --- Modern war: air raids and missiles ---------------------------------
+      //
+      // Deliberately the QUIETEST of the four. #59 argues that a late-age war
+      // should read as colder and sparser than a bronze-age melee -- fewer,
+      // sharper marks rather than more of them -- and missiles are the most
+      // obviously loud thing that could be added to this world. So: no ground
+      // units at all, a cold steel palette, and nothing on screen for most of a
+      // second at a time. What sells it is the emptiness between the marks.
+      const COLD = 0xdfe7f2;
+      const raids = 1 + Math.round(b.weight * 2);
+      for (let k = 0; k < raids; k++) {
+        // Aircraft run the length of the front and wrap, so there is a plane in
+        // frame roughly half the time rather than continuously.
+        const f = ((nowSec * 0.45 + k * 0.37 + b.seed * 0.01) % 1.6) / 1;
+        if (f > 1) continue;
+        const spanX = (b.dx - b.ax) * 2.2, spanY = (b.dy - b.ay) * 2.2;
+        const px = b.ax - spanX * 0.4 + spanX * f;
+        const py = b.ay - spanY * 0.4 + spanY * f - 9 - k * 3;
+        // Contrail: a short fading line behind, not a full-length streak.
+        warGfx.moveTo(px - hx * 9, py - hy * 9).lineTo(px, py)
+          .stroke({ color: COLD, alpha: 0.13 * env, width: 0.9, cap: 'round' });
+        // The aircraft itself: a dart, two strokes, no fill detail at this size.
+        warGfx.poly([
+          px + hx * 2.2, py + hy * 2.2,
+          px - hx * 1.6 + -hy * 1.5, py - hy * 1.6 + hx * 1.5,
+          px - hx * 1.6 - -hy * 1.5, py - hy * 1.6 - hx * 1.5,
+        ]).fill({ color: 0x2f3742, alpha: 0.8 * env });
+        warGfx.moveTo(px - hx * 0.6 - -hy * 2.6, py - hy * 0.6 - hx * 2.6)
+          .lineTo(px - hx * 0.6 + -hy * 2.6, py - hy * 0.6 + hx * 2.6)
+          .stroke({ color: 0x2f3742, alpha: 0.7 * env, width: 0.9 });
+      }
+      // Missiles: a flat, fast arc and a cold flash where it lands. One at a
+      // time in a skirmish, two in a war.
+      const salvo = 1 + Math.round(b.weight);
+      for (let k = 0; k < salvo; k++) {
+        const cycle = (nowSec * 0.7 + k * 0.5 + b.seed * 0.013) % 1.4;
+        if (cycle > 1) continue;
+        const f = cycle;
+        const fromA = k % 2 === 0;
+        const x0 = fromA ? b.ax : b.dx, y0 = fromA ? b.ay : b.dy;
+        const x1 = fromA ? b.dx : b.ax, y1 = fromA ? b.dy : b.ay;
+        const tx = x0 + (x1 - x0) * f;
+        const ty = y0 + (y1 - y0) * f - Math.sin(Math.PI * f) * 11;
+        warGfx.circle(tx, ty, 0.55).fill({ color: COLD, alpha: 0.9 * env });
+        // A trail of three fading points rather than a solid line: reads as
+        // speed without drawing a bright streak across the map.
+        for (let t = 1; t <= 3; t++) {
+          const ff = Math.max(0, f - t * 0.05);
+          const bx = x0 + (x1 - x0) * ff;
+          const by = y0 + (y1 - y0) * ff - Math.sin(Math.PI * ff) * 11;
+          warGfx.circle(bx, by, 0.35).fill({ color: COLD, alpha: (0.3 - t * 0.08) * env });
+        }
+        if (f > 0.93) {
+          warGfx.circle(x1, y1, 2.6 + b.weight * 2).stroke({ color: COLD, alpha: 0.5 * env, width: 0.8 });
+        }
+      }
+      if (b.siege) {
+        // Flak over the besieged city: sparse cold puffs, no tracer curtain.
+        for (let k = 0; k < 3; k++) {
+          const on = Math.sin(nowSec * 3.1 + k * 2.3 + b.seed) > 0.75;
+          if (!on) continue;
+          warGfx.circle(b.dx + (k - 1) * 5, b.dy - 8 - (k % 2) * 3, 1.1)
+            .fill({ color: 0x9fb0c4, alpha: 0.35 * env });
+        }
+      }
     } else if (style === 'mech') {
       // --- Industrial war: tanks and artillery, tracers, drifting smoke ---
       for (let k = 0; k < 3; k++) { // smoke from the shelling
@@ -5422,7 +5542,8 @@ function drawOneBattle(warGfx: Graphics, b: Battle, nowSec: number) {
         warGfx.ellipse(sx, sy, 5 - k * 0.8, 3 - k * 0.5).fill({ color: 0x6b6358, alpha: 0.16 * env * (1 - k / 3) });
       }
       const aFire = Math.sin(nowSec * 5 + b.seed) > 0.45, dFire = Math.sin(nowSec * 5 + b.seed + 2.5) > 0.45;
-      for (let k = 0; k < 3; k++) {
+      const armour = 1 + Math.round(b.weight * 2);
+      for (let k = 0; k < armour; k++) {
         drawTank(warGfx, b.ax + ((k % 2) - 0.5) * 4.5, b.ay + (k - 1) * 3.4, hx, hy, b.aColor, aFire && k === 1);
         drawTank(warGfx, b.dx + ((k % 2) - 0.5) * 4.5, b.dy + (k - 1) * 3.4, -hx, -hy, b.dColor, dFire && k === 1);
       }
@@ -5449,7 +5570,8 @@ function drawOneBattle(warGfx: Graphics, b: Battle, nowSec: number) {
         const tx = b.ax + (k - 1) * 5, ty = b.ay + 2;
         warGfx.poly([tx, ty - 4, tx - 3, ty, tx + 3, ty]).fill({ color: 0xb8a079, alpha: 0.85 * env });
       }
-      for (let k = 0; k < 7; k++) {
+      const troops = 3 + Math.round(b.weight * 4);
+      for (let k = 0; k < troops; k++) {
         const j = b.seed + k, wig = Math.sin(nowSec * 9 + j) * 1.3;
         drawTrooper(warGfx, b.ax + ((k % 3) - 1) * 3 + wig, b.ay + (((k / 3) | 0) - 0.5) * 3, b.aColor);
         drawTrooper(warGfx, b.dx + ((k % 3) - 1) * 3 - wig, b.dy + (((k / 3) | 0) - 0.5) * 3, b.dColor);
