@@ -8210,7 +8210,6 @@ const DEBUG_LAYERS: Array<[string, () => DebugLayer]> = [
   ['limbBand', () => (atmos as any).limbBand],
   ['depthHaze in world', () => depthHazeSprite],
   ['glazeA multiply', () => (atmos as any).glazeLayer],
-  ['glazeB multiply', () => (atmos as any).glazeLayerB],
   ['terminator multiply', () => (atmos as any).terminatorLayer],
   ['sunCast ADD', () => (atmos as any).sunCastLayer],
   ['air SCREEN', () => (atmos as any).airLayer],
