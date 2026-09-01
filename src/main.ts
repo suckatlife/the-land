@@ -1219,6 +1219,60 @@ world.y = -WORLD_CAPTURE.y0 * captureScale;
 // Dense enough that the curved silhouette reads as a curve, not a polyline.
 const worldPlane = new MeshPlane({ texture: worldRT, verticesX: 110, verticesY: 36 });
 
+// --- the emissive pass ------------------------------------------------------
+//
+// Every light in this world -- city lamps, festival fire, wildfires, lava,
+// shrine glow, lighthouses -- is a child of `world`, and `world` is rendered
+// into `worldRT` and only then multiplied by the night glaze. At full night
+// that multiply is about 0.33 red, 0.37 green, 0.58 blue, so a warm lamp at
+// (255,244,210) comes out at (84,90,122): not merely dim but shifted BLUE,
+// which takes the warmth out of every light in the world at once. Brightening
+// the lights cannot escape it -- the texture clamps at white before the
+// multiply is applied, so white is the ceiling and the ceiling is still dark.
+//
+// So the lights are drawn a SECOND time, into their own texture, composited
+// additively above the glaze where nothing darkens them. The base pass still
+// draws them, so what this adds reads as glow around a light rather than a
+// light pasted onto the dark.
+const EMISSIVE_LAYERS: Container[] = [
+  nightLightsGfx, cityLightsGfx, festivalGfx, fireGfx, lavaGlowGfx,
+  faithGfx, natWonderGlowGfx, atmos.landLightLayer, lighthouseGfx,
+];
+const lightRT = RenderTexture.create({
+  width: worldRT.width,
+  height: worldRT.height,
+  antialias: false,
+  // Half the world's resolution. These are soft glows, so the extra softness
+  // costs nothing visually -- and it holds the second texture to a quarter of
+  // the first's memory, which matters on the phones that were already running
+  // out before the quality tiers landed.
+  resolution: (_rtOverride ?? QUALITY[qualityLevel].rt) * 0.5,
+});
+const lightPlane = new MeshPlane({ texture: lightRT, verticesX: 110, verticesY: 36 });
+// Share the world's geometry object outright, so the lights curve with the
+// globe and stay registered to it for free instead of being kept in step by
+// hand every time the layout changes.
+lightPlane.geometry = worldPlane.geometry;
+lightPlane.blendMode = 'add';
+lightPlane.eventMode = 'none';
+lightPlane.visible = false;
+
+/** Draw only the light-emitting layers into `lightRT`. Everything else in the
+ *  world is hidden for the duration and put back immediately: cheaper and far
+ *  less fragile than reparenting the light layers, which would change their
+ *  order relative to the terrain in the base pass. */
+function renderEmissive(): void {
+  const hidden: Container[] = [];
+  for (const child of world.children) {
+    if (child.visible && !EMISSIVE_LAYERS.includes(child as Container)) {
+      child.visible = false;
+      hidden.push(child as Container);
+    }
+  }
+  app.renderer.render({ container: world, target: lightRT, clear: true });
+  for (const c of hidden) c.visible = true;
+}
+
 // When a viewport is wider than the projected map, erase the render texture's
 // alpha at its side boundaries. The actual live sky then shows through at every
 // height and time of day; sampling one horizon colour creates visible bars.
@@ -1286,6 +1340,10 @@ app.stage.addChild(atmos.sunCastLayer);
 // The era's airlight sits directly over its glaze: the pair is one atmosphere,
 // pressing down and lifting back up together.
 app.stage.addChild(atmos.airLayer);
+// Above every layer that darkens the world, so the lights are never dimmed or
+// tinted by the night glaze. Below the rainbow and the sky structures, which
+// belong in front of them.
+app.stage.addChild(lightPlane);
 // The rainbow arcs over the world, in front of the planet.
 app.stage.addChild(atmos.rainbowLayer);
 // The orbital ring encircles the world once a civ reaches the post era.
@@ -7988,6 +8046,15 @@ app.ticker.add(() => {
     if (worldNeedsEdgeErase()) {
       app.renderer.render({ container: worldEdgeEraser, target: worldRT, clear: false });
     }
+    // Only worth drawing once something is actually darkening the world; by
+    // day the glaze is near zero and the pass would cost a render for nothing.
+    const glazeNow = (atmos as any).glazeLayer.alpha as number;
+    lightPlane.visible = glazeNow > 0.20;
+    if (lightPlane.visible) {
+      lightPlane.position.copyFrom(worldPlane.position);
+      lightPlane.scale.copyFrom(worldPlane.scale);
+      renderEmissive();
+    }
   }
 });
 
@@ -8210,8 +8277,8 @@ const DEBUG_LAYERS: Array<[string, () => DebugLayer]> = [
   ['limbBand', () => (atmos as any).limbBand],
   ['depthHaze in world', () => depthHazeSprite],
   ['glazeA multiply', () => (atmos as any).glazeLayer],
-  ['terminator multiply', () => (atmos as any).terminatorLayer],
   ['sunCast ADD', () => (atmos as any).sunCastLayer],
+  ['emissive lights ADD', () => lightPlane],
   ['air SCREEN', () => (atmos as any).airLayer],
   ['cloudShadow multiply', () => (atmos as any).cloudShadowLayer],
   ['fog', () => (atmos as any).fogLayer],
