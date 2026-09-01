@@ -8270,6 +8270,92 @@ if (debugMode) {
   head.appendChild(allOn);
   panel.appendChild(head);
 
+  // --- scrubbing the light ------------------------------------------------
+  //
+  // A 360-second day means a sunset is gone before you can decide which layer
+  // moved. These run the light backwards, hold it still, or slow it down, so
+  // the same twenty seconds of dusk can be crossed repeatedly with one
+  // checkbox changed each pass.
+  //
+  // Only the light moves. The simulation keeps its own clock, so reversing the
+  // sun does not rewind the civilizations -- cities do not un-build and wars do
+  // not un-happen. That is the whole point: it isolates the lighting.
+  const scrub = document.createElement('div');
+  scrub.style.cssText = 'margin: 2px 0 8px; display: flex; flex-direction: column; gap: 4px';
+
+  const rateRow = document.createElement('div');
+  rateRow.style.cssText = 'display:flex;gap:3px;align-items:center;flex-wrap:wrap';
+  rateRow.appendChild(document.createTextNode('light'));
+  const RATES: Array<[string, number]> = [
+    ['-4x', -4], ['-1x', -1], ['hold', 0], ['1/4x', 0.25], ['1x', 1], ['4x', 4],
+  ];
+  const rateButtons: Array<[number, HTMLButtonElement]> = [];
+  const paintRates = () => {
+    const cur = atmos.dayRate();
+    rateButtons.forEach(([v, b]) => {
+      b.style.fontWeight = v === cur ? 'bold' : 'normal';
+      b.style.color = v === cur ? '#ffe9a8' : '';
+    });
+  };
+  for (const [label, value] of RATES) {
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.style.cssText = 'cursor:pointer;font:inherit;padding:0 4px';
+    b.addEventListener('click', () => { atmos.setDayRate(value); paintRates(); });
+    rateRow.appendChild(b);
+    rateButtons.push([value, b]);
+  }
+  scrub.appendChild(rateRow);
+
+  const stepRow = document.createElement('div');
+  stepRow.style.cssText = 'display:flex;gap:3px;align-items:center';
+  const readout = document.createElement('span');
+  readout.style.cssText = 'min-width:74px;text-align:center';
+  const mkStep = (label: string, delta: number) => {
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.title = `nudge the light clock by ${delta}`;
+    b.style.cssText = 'cursor:pointer;font:inherit;padding:0 4px';
+    // Stepping implies you want to look at the frame you stepped to, so it
+    // also stops the clock -- otherwise the moment drifts out from under you.
+    b.addEventListener('click', () => {
+      atmos.setDayRate(0);
+      atmos.setDayT(atmos.timeOfDay() + delta);
+      paintRates();
+    });
+    return b;
+  };
+  stepRow.appendChild(mkStep('<<', -0.02));
+  stepRow.appendChild(mkStep('<', -0.002));
+  stepRow.appendChild(readout);
+  stepRow.appendChild(mkStep('>', 0.002));
+  stepRow.appendChild(mkStep('>>', 0.02));
+  scrub.appendChild(stepRow);
+
+  const slider = document.createElement('input');
+  slider.type = 'range';
+  slider.min = '0'; slider.max = '1000'; slider.step = '1';
+  slider.style.cssText = 'width:100%;cursor:pointer';
+  let dragging = false;
+  slider.addEventListener('pointerdown', () => { dragging = true; });
+  slider.addEventListener('pointerup', () => { dragging = false; });
+  slider.addEventListener('input', () => {
+    atmos.setDayRate(0);
+    atmos.setDayT(Number(slider.value) / 1000);
+    paintRates();
+  });
+  scrub.appendChild(slider);
+  panel.appendChild(scrub);
+
+  // The readout follows the clock whichever way it is moving; the slider only
+  // follows while it is not being dragged, so it does not fight the pointer.
+  app.ticker.add(() => {
+    const t = atmos.timeOfDay();
+    readout.textContent = `dayT ${t.toFixed(3)}`;
+    if (!dragging) slider.value = String(Math.round(t * 1000));
+  });
+  paintRates();
+
   const boxes: Array<[string, HTMLInputElement]> = [];
   for (const [name] of DEBUG_LAYERS) {
     const row = document.createElement('label');
@@ -8308,6 +8394,10 @@ if (debugMode) {
     saveHiddenLayers();
   },
   reset: () => { hiddenLayers.clear(); saveHiddenLayers(); },
+  rate: (v: number) => atmos.setDayRate(v),
+  at: (t: number) => { atmos.setDayRate(0); atmos.setDayT(t); },
+  step: (d: number) => { atmos.setDayRate(0); atmos.setDayT(atmos.timeOfDay() + d); },
+  dayT: () => atmos.timeOfDay(),
 };
 
 // Registered after every other ticker, so this is the last write each frame.
