@@ -415,6 +415,11 @@ function makeCloudTexture(rand: () => number): Texture {
  *  shadows use a cool grey-blue rather than black. */
 const SHADOW_COOL = 0x4a5668;
 
+/** The colour a low sun puts ON THE GROUND. Warm and pale — the light, not the
+ *  sky. Deliberately independent of `skyHorizon`, which carries the saturated
+ *  sunset pink meant for the sky alone. */
+const SUN_WARM = 0xffd9b8;
+
 const DRIFT = { minX: -1850, maxX: 1850, minY: -250, maxY: 1800 };
 
 interface Drifter {
@@ -1538,7 +1543,20 @@ export function createAtmosphere(): Atmosphere {
       const castStrength = lowSun * ATMOS.day.sunCastMax;
       sunCastLayer.visible = castStrength > 0.004;
       if (sunCastLayer.visible) {
-        const warm = lerpColor(day.skyHorizon, season.cast, season.castAmount * 0.5);
+        // NOT `skyHorizon`. That is where the sunset pink lives, and this
+        // layer is ADDITIVE over the whole frame — so reading it painted the
+        // land with the sky's colour, which is the thing the palette work was
+        // trying to stop. Moving the pink into the horizon simply routed it
+        // back through here.
+        //
+        // A low sun's light on the ground is warm and pale, not the saturated
+        // colour of the sky it is lighting. This is that: a warm off-white,
+        // leaned only slightly toward the horizon's hue.
+        const warm = lerpColor(
+          lerpColor(SUN_WARM, day.skyHorizon, 0.25),
+          season.cast,
+          season.castAmount * 0.5,
+        );
         sunCastLayer.clear();
         // On the sun itself, for the same reason as above.
         const px = sunScreenX;
@@ -1960,7 +1978,11 @@ export function createAtmosphere(): Atmosphere {
     setStormRate: (v: number) => { stormRateMult = Math.max(0, v); },
     // The sky's current horizon color, dread lean included. Anything that has
     // to melt into the horizon (the depth haze in main.ts) tints to this.
-    horizonColor: () => curHorizon,
+    // Desaturated on the way out. The one consumer is the depth haze, which
+    // sits INSIDE the world and covers the back of the map — handing it the
+    // saturated horizon painted the far half of the LAND pink at dusk. Haze
+    // reads as distance, and distance is pale.
+    horizonColor: () => lerpColor(curHorizon, 0xb9c2cc, 0.55),
     setLightAzimuth: (v: number | null) => { lightAzOverride = v == null ? null : Math.max(0, Math.min(1, v)); },
     setLightAltitude: (v: number | null) => { lightAltOverride = v == null ? null : Math.max(0, Math.min(1, v)); },
     setStarRotation: (v: number) => { starRotation = v * Math.PI * 2; },
