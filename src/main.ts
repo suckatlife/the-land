@@ -898,41 +898,59 @@ type QualityLevel = keyof typeof QUALITY;
  *  getting it wrong upward costs the whole page.
  */
 function qualitySignals() {
-  const short = Math.min(window.innerWidth, window.innerHeight);
-  const long = Math.max(window.innerWidth, window.innerHeight);
+  // WINDOW vs SCREEN, and the distinction is the whole bug. `innerWidth` is how
+  // big the browser window is; `screen` is how big the device's display is. A
+  // Steam Machine runs its browser in a gamepad-driven overlay window, so it
+  // reports a coarse pointer AND a small window -- which is indistinguishable
+  // from a phone if you only look at the window. It is not a phone, and its
+  // screen says so.
+  const winShort = Math.min(window.innerWidth, window.innerHeight);
+  const winLong = Math.max(window.innerWidth, window.innerHeight);
+  const screenLong = Math.max(screen?.width ?? 0, screen?.height ?? 0);
   const coarse = window.matchMedia?.('(pointer: coarse)').matches ?? false;
+  // Chromium states outright whether this is a mobile device. Safari does not
+  // implement it, so it is an override when present rather than the only test.
+  const uaMobile = (navigator as unknown as { userAgentData?: { mobile?: boolean } })
+    .userAgentData?.mobile;
   // `deviceMemory` is CAPPED AT 8 by Chrome, so "8 or less" is every desktop
-  // ever made; an earlier version of this quietly demoted all of them. It is
-  // reported here for diagnosis but no longer decides anything on its own.
+  // ever made; an earlier version of this quietly demoted all of them. Both of
+  // these are reported for diagnosis and decide nothing.
   const mem = (navigator as unknown as { deviceMemory?: number }).deviceMemory;
   const cores = navigator.hardwareConcurrency ?? 0;
-  return { short, long, coarse, mem, cores };
+  return { winShort, winLong, screenLong, coarse, uaMobile, mem, cores };
 }
 
 function pickDefaultQuality(): QualityLevel {
   try {
-    const { short, long, coarse } = qualitySignals();
-    // A FINE POINTER MEANS A MOUSE, AND A MOUSE MEANS A REAL MACHINE.
+    const { screenLong, coarse } = qualitySignals();
+
+    // The tiers exist for #68 -- iOS Safari killing the tab at around 760MB --
+    // so the only question worth asking is "is this a phone". Everything else
+    // should be left alone, and two earlier attempts at this both demoted a
+    // Steam Machine because they asked something else instead: first the core
+    // count and reported memory, then the size of the browser WINDOW.
     //
-    // Everything below this line is about small, touch-first devices, and a
-    // desktop should never be caught by any of it. The previous version could
-    // demote a desktop through `deviceMemory` or a low core count, which is how
-    // a Steam Machine -- a games console with a GPU in it -- ended up starting
-    // on the lowest tier.
-    //
-    // The tiers exist for #68, where iOS Safari kills the tab at around 760MB.
-    // Every device that crash applies to reports `pointer: coarse`, so gating
-    // the whole ladder on it keeps the protection exactly where it was aimed.
+    // A gamepad-driven console browser is a coarse pointer in a small window.
+    // So is a phone. The window cannot tell them apart; the display can.
+
+    // `userAgentData.mobile` looked like the direct answer and is NOT used as
+    // one. Chromium reports `false` for some Android tablets, so trusting it to
+    // mean "not mobile" would hand the heaviest tier to exactly the devices the
+    // memory ceiling in #68 is about. It stays a diagnostic.
+
+    // A fine pointer means a mouse, which means a machine with a desk or a
+    // couch in front of it, not a phone.
     if (!coarse) return 'high';
 
-    // Phones: a coarse pointer AND a small screen. Both, not either.
-    if (short < 500 || long < 1100) return 'low';
+    // Coarse pointer on a phone-sized DISPLAY -- not a phone-sized window.
+    if (screenLong > 0 && screenLong < 1100) return 'low';
 
-    // Tablets, and anything else driven by touch on a large display.
+    // Tablets, consoles, touchscreens on big displays: real hardware, but
+    // touch-first, so hold one tier back rather than going to the top.
     return 'medium';
   } catch {
-    // matchMedia missing is odd enough to be worth erring on; medium costs
-    // floors rather than the page.
+    // matchMedia or screen missing is odd enough to be worth erring on, and
+    // medium costs floors rather than the page.
     return 'medium';
   }
 }
