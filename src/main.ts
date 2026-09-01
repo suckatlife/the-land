@@ -449,6 +449,19 @@ function narrateEvent(ev: SimEvent, world: SimWorld): string {
       // Individual tile flips aren't narrated; the war-heat aggregator
       // (below) speaks when a border is genuinely contested.
       return '';
+    case 'strike': {
+      // This one IS narrated, unlike an ordinary tile flip. A district of a
+      // living city is gone; that is a different order of event from a border
+      // moving, and the chronicle should say so once.
+      const def = simWorld.civs.get(ev.defenderId);
+      const city = def?.cities.find((c) => c.row === ev.row && c.col === ev.col);
+      const where = city?.name ?? def?.name ?? 'a city';
+      return pick([
+        `Something crossed the sky, and a quarter of ${where} is not there any more.`,
+        `${where} lost streets it had held for centuries, in an afternoon.`,
+        `The war reached ${where} without an army ever arriving.`,
+      ]);
+    }
     case 'migration': {
       const bucket = dominantEraBucket(world);
       const lines: Record<EraBucket, string[]> = {
@@ -731,6 +744,7 @@ function eventNarrationAnchor(ev: SimEvent): NarrationAnchor | undefined {
     case 'catastrophe':
       return { row: ev.centerRow, col: ev.centerCol };
     case 'conquest':
+    case 'strike':
     case 'island_rising':
     case 'island_born':
     case 'land_bridge':
@@ -5412,6 +5426,11 @@ let WAR_SCALE = 1.7;
    *  side by side without hunting for a matching pair of civs. */
   forceWeight: (w: number) => { for (const b of battles) b.weight = Math.max(0, Math.min(1, w)); },
 };
+// Strikes are rare by design, which makes "did that work?" hard to answer by
+// watching. This counts them so the answer is a number rather than a vigil.
+const strikeLog = { count: 0, tilesLost: 0, conquestsByEra: {} as Record<string, number>, last: null as null | { tick: number; row: number; col: number; tilesLost: number } };
+(window as any).__strikes = () => ({ ...strikeLog });
+
 function updateWarfare(nowSec: number) {
   for (let i = battles.length - 1; i >= 0; i--) {
     if (nowSec - battles[i].lastHit > BATTLE_LIFE) battles.splice(i, 1);
@@ -7770,6 +7789,17 @@ app.ticker.add((ticker) => {
       if (civ) triggerPing(civ.originRow, civ.originCol, civ.color);
     } else if (ev.kind === 'conquest') {
       noteConquest(ev);
+      {
+        const atk = simWorld.civs.get(ev.attackerId);
+        if (atk) strikeLog.conquestsByEra[atk.era] = (strikeLog.conquestsByEra[atk.era] ?? 0) + 1;
+      }
+    } else if (ev.kind === 'strike') {
+      // Sized by what it cost: a wider ring for a heavier strike.
+      triggerPing(ev.row, ev.col, 0xffd2a8);
+      triggerImpact('asteroid', Math.min(1, ev.tilesLost / 6));
+      strikeLog.count++;
+      strikeLog.tilesLost += ev.tilesLost;
+      strikeLog.last = { tick: simWorld.tick, row: ev.row, col: ev.col, tilesLost: ev.tilesLost };
     } else if (ev.kind === 'wonder_built') {
       triggerPing(ev.row, ev.col, 0xfff0d0);
     } else if (ev.kind === 'island_rising' || ev.kind === 'island_born'

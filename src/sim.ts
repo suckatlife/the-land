@@ -26,6 +26,7 @@ export type SimEvent =
   | { kind: 'omen'; stage: 1 | 2 | 3; catastropheType: CatastropheType; severity: number }
   | { kind: 'refuge_founded'; civId: number; parentName: string; row: number; col: number }
   | { kind: 'conquest'; row: number; col: number; attackerId: number; defenderId: number }
+  | { kind: 'strike'; row: number; col: number; attackerId: number; defenderId: number; tilesLost: number }
   | { kind: 'island_rising'; row: number; col: number }
   | { kind: 'island_born'; row: number; col: number }
   | { kind: 'land_bridge'; row: number; col: number }
@@ -166,6 +167,11 @@ export interface Civ {
   // earned once, kept for life). See ARCHETYPE_CIV / CivTrait.
   archetype: CivArchetype;
   trait: CivTrait | null;
+  /** Tick of the last long-range strike this civilization suffered. Strikes are
+   *  rate-limited per victim: without it, a civ under sustained attack is hit
+   *  every few ticks, because the roll happens per conquered TILE and a war
+   *  conquers thousands. */
+  lastStruckTick?: number;
 }
 
 export interface NameMemory {
@@ -228,6 +234,30 @@ export const SIM = {
   decayBase: 0.0125,
   decayEdgeBonus: 1.5,
   conquestBase: 0.04,
+  // How an age fights, rather than how often it can.
+  //
+  // `likelihood` scales the per-tile conquest chance: a late-age war is RARER,
+  // not busier. The world should not fill up with modern wars simply because
+  // modern civs are stronger -- an age with the means to end a city uses them
+  // less often, and the watcher should feel that as long stretches of quiet.
+  //
+  // `strikeChance` and `blast` are the other side of that bargain: when a late
+  // age does fight, a single exchange can take a district off a city. The city
+  // itself is never destroyed and the civilization carries on -- what is left
+  // behind is a ring of ruin around a place that is still inhabited, which is
+  // the more legible consequence and the more uncomfortable one.
+  eraWar: {
+    neolithic:  { likelihood: 1.00, strikeChance: 0,      blast: 0 },
+    classical:  { likelihood: 1.00, strikeChance: 0,      blast: 0 },
+    medieval:   { likelihood: 0.92, strikeChance: 0,      blast: 0 },
+    industrial: { likelihood: 0.70, strikeChance: 0.0008, blast: 1 },
+    modern:     { likelihood: 0.46, strikeChance: 0.0018, blast: 2 },
+    post:       { likelihood: 0.32, strikeChance: 0.0022, blast: 2 },
+  } as Record<Era, { likelihood: number; strikeChance: number; blast: number }>,
+  /** Ticks a civilization is immune after being struck. Two strikes on the same
+   *  city inside a few seconds read as a bombardment, which is the opposite of
+   *  what a rare, heavy event should feel like. */
+  strikeCooldownTicks: 900,
 
   coreRadius: 14,
   peripheryDecayMultiplier: 1.5,
@@ -2316,7 +2346,9 @@ export function step(
                     const ad = nearestCityDist(civ, r, c) / SIM.coreRadius;
                     attackerBonus = 1 + CITY.attackerProximityWeight * Math.max(0, 1 - ad);
                   }
-                  const conquestP = SIM.conquestBase * myStrength * (strengthRatio - 1) * defenderVulnerability * attackerBonus;
+                  const warAge = SIM.eraWar[civ.era];
+                  const conquestP = SIM.conquestBase * myStrength * (strengthRatio - 1)
+                    * defenderVulnerability * attackerBonus * warAge.likelihood;
                   if (rand() < conquestP) {
                     if (rand() < 0.6) {
                       neighborTile.state = 'cleared';
@@ -2330,6 +2362,56 @@ export function step(
                     neighborTile.lastChangedTick = world.tick;
                     changed.push({ row: r, col: c });
                     events.push({ kind: 'conquest', row: r, col: c, attackerId: civ.id, defenderId: otherCiv.id });
+
+                    // A long-range strike on the city behind the line. Only the
+                    // ages that could actually reach it, and only sometimes.
+                    // The roll happens per conquered TILE, and a war conquers
+                    // thousands of them -- a first pass used a per-conquest
+                    // chance of 0.11 and produced 331 strikes in two minutes of
+                    // watching, which is a bombardment rather than a rare and
+                    // heavy event. Hence both a very small chance AND a per-
+                    // victim cooldown; the chance alone still clusters strikes
+                    // onto whichever civ happens to be losing a long war.
+                    const struckRecently = otherCiv.lastStruckTick != null
+                      && world.tick - otherCiv.lastStruckTick < SIM.strikeCooldownTicks;
+                    if (warAge.strikeChance > 0 && !struckRecently && rand() < warAge.strikeChance) {
+                      let target: { row: number; col: number } | null = null;
+                      let bestD = Infinity;
+                      for (const city of otherCiv.cities) {
+                        const d = (city.row - r) ** 2 + (city.col - c) ** 2;
+                        if (d < bestD) { bestD = d; target = city; }
+                      }
+                      if (target) {
+                        const R = warAge.blast;
+                        let lost = 0;
+                        for (let dr = -R; dr <= R; dr++) {
+                          for (let dc = -R; dc <= R; dc++) {
+                            // NEVER the city's own tile. The point is that the
+                            // civilization survives this and has to live in what
+                            // is left, not that it is erased.
+                            if (dr === 0 && dc === 0) continue;
+                            const rr = target.row + dr, cc = target.col + dc;
+                            if (rr < 0 || rr >= world.height || cc < 0 || cc >= world.width) continue;
+                            const t = world.tiles[rr][cc];
+                            if (t.state !== 'built' || t.civId !== otherCiv.id) continue;
+                            if (rand() >= 0.55) continue;
+                            t.state = 'ruin';
+                            t.civId = null;
+                            t.ruinEra = otherCiv.era;
+                            t.lastChangedTick = world.tick;
+                            changed.push({ row: rr, col: cc });
+                            lost++;
+                          }
+                        }
+                        if (lost > 0) {
+                          otherCiv.lastStruckTick = world.tick;
+                          events.push({
+                            kind: 'strike', row: target.row, col: target.col,
+                            attackerId: civ.id, defenderId: otherCiv.id, tilesLost: lost,
+                          });
+                        }
+                      }
+                    }
                   }
                 }
               }
