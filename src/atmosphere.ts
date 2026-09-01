@@ -592,6 +592,8 @@ export interface Atmosphere {
   wind(): { x: number; y: number };
   onCelestialEvent(cb: (kind: string) => void): void;
   triggerCelestial(kind: 'comet' | 'eclipse' | 'aurora' | 'meteors'): void;
+  /** Debug: the shower's radiant and the streaks currently in flight. */
+  meteorState(): { radiant: { x: number; y: number } | null; streaks: Array<{ x: number; y: number; vx: number; vy: number }> };
   light(): CelestialLight;
   celestialPosition(): { x: number; y: number; kind: 'sun' | 'moon' } | null;
   brightStarPositions(): Array<{ x: number; y: number }>;
@@ -986,6 +988,18 @@ export function createAtmosphere(): Atmosphere {
       activeEvent.a = { x: leftToRight ? w * 0.06 : w * 0.94, y: y0 };
       activeEvent.b = { x: leftToRight ? w * 0.94 : w * 0.06, y: y1 };
     }
+    if (kind === 'meteors') {
+      // The radiant: the one point on the sky this shower comes from. Every
+      // shower has one and is named for the constellation it sits in -- the
+      // Perseids from Perseus, the Leonids from Leo -- because the debris is a
+      // single stream in one orbit, so the particles arrive on PARALLEL paths
+      // and perspective makes them appear to diverge from a point. Kept on the
+      // event, so one shower has one radiant for its whole duration.
+      activeEvent.a = {
+        x: w * (0.12 + weatherRand() * 0.76),
+        y: h * (-0.04 + weatherRand() * 0.18),
+      };
+    }
     if (kind === 'aurora') activeEvent.seed = weatherRand() * 1000;
     eventCb?.(kind);
   }
@@ -1031,23 +1045,47 @@ export function createAtmosphere(): Atmosphere {
     } else if (activeEvent.kind === 'meteors') {
       const w = limbLayout?.width ?? 1600;
       const h = limbLayout?.height ?? 900;
-      // A real shower: several streaks a second, mostly radiating one way with
-      // the odd one against the grain, plus the occasional brighter fireball.
+      // Every streak's direction is taken FROM THE RADIANT, not rolled
+      // independently. The previous version gave each meteor a random angle in
+      // a 50-degree fan from a random start, which is a spray: those paths
+      // converge nowhere. In a real shower every path back-extends to one
+      // point, and that convergence is the whole visual signature of a shower
+      // rather than a scattering of unrelated meteors.
+      //
       // Fast attack so the shower is dense within a few seconds (not a slow ramp).
       const ramp = Math.max(0, Math.min(1, activeEvent.t / 4, (activeEvent.dur - activeEvent.t) / 12));
       let expected = dt / 0.08 * ramp;     // ~12 / sec at peak — a busy shower
       while (expected > 0) {
         if (expected < 1 && Math.random() > expected) break;
         expected -= 1;
-        const ang2 = Math.PI * (0.13 + Math.random() * 0.28);
-        const sp = 240 + Math.random() * 260;
-        const dir = Math.random() < 0.82 ? 1 : -1; // most share a radiant
         const big = Math.random() < 0.12;
+        const px = w * (-0.05 + Math.random() * 1.1);
+        const py = h * (0.01 + Math.random() * 0.26);
+        const rad = activeEvent.a ?? { x: w * 0.5, y: 0 };
+        let ux = px - rad.x, uy = py - rad.y;
+        const dist = Math.hypot(ux, uy) || 1;
+        ux /= dist; uy /= dist;
+        // Roughly one meteor in eight during a shower is a SPORADIC -- an
+        // unrelated grain on its own orbit, going its own way. Keeping a few
+        // is what stops the radiant reading as a mechanical fan, and it is
+        // what the sky actually does.
+        const sporadic = Math.random() < 0.13;
+        if (sporadic) {
+          const th = Math.random() * Math.PI * 2;
+          ux = Math.cos(th); uy = Math.abs(Math.sin(th)) * 0.6 + 0.2;
+        }
+        // Foreshortening. A meteor seen close to the radiant is travelling
+        // almost straight toward the viewer, so it draws SHORT and slow; one
+        // seen far from the radiant crosses the sky and draws long and fast.
+        // Without this the radiant is geometrically right but still reads as a
+        // fan of equal streaks.
+        const spread = Math.min(1, dist / (w * 0.5));
+        const sp = sporadic ? 240 + Math.random() * 220 : 70 + 430 * spread;
         meteorStreaks.push({
-          x: w * (-0.05 + Math.random() * 1.1),
-          y: h * (0.01 + Math.random() * 0.26),
-          vx: Math.cos(ang2) * sp * dir,
-          vy: Math.sin(ang2) * sp,
+          x: px,
+          y: py,
+          vx: ux * sp,
+          vy: uy * sp,
           age: 0,
           big,
         });
@@ -2167,6 +2205,13 @@ export function createAtmosphere(): Atmosphere {
     wind: () => lastWind,
     onCelestialEvent: (cb: (kind: string) => void) => { eventCb = cb; },
     triggerCelestial: (kind: 'comet' | 'eclipse' | 'aurora' | 'meteors') => { startCelestial(kind); },
+    /** The live shower: its radiant and every streak in flight. A radiant is a
+     *  geometric claim -- that every path back-extends to one point -- and the
+     *  only way to check it is to measure the paths, not to look at them. */
+    meteorState: () => ({
+      radiant: activeEvent?.kind === 'meteors' ? activeEvent.a ?? null : null,
+      streaks: meteorStreaks.map((m) => ({ x: m.x, y: m.y, vx: m.vx, vy: m.vy })),
+    }),
     light: () => curLight,
     celestialPosition: () => {
       if (!limbLayout || curLight.altitude < 0.025) return null;
