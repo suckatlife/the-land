@@ -246,7 +246,9 @@ export const ATMOS = {
   storm: {
     meanSec: 420,
     durationSec: 100,
-    alpha: 0.34,        // cloud-cluster darkness
+    alpha: 0.34,        // the SHADOW the cluster throws on the ground
+    bodyAlpha: 0.62,    // the cloud itself, seen from above
+    crownAlpha: 0.32,   // the sunlit top of it
     rainAlpha: 0.22,
     lightningMeanSec: 7, // while storming at night
   },
@@ -569,6 +571,9 @@ export interface Atmosphere {
   shimmerLayer: Container;
   birdLayer: Container;
   stormLayer: Container;
+  /** Lightning only, kept out of `stormLayer` so the emissive pass can lift it
+   *  above the night glaze without dragging rain and cloud shadow with it. */
+  lightningLayer: Container;
   cometLayer: Container;
   auroraLayer: Container;
   celestialLayer: Container;  // the sun & moon overhead, halo (behind the planet, in the sky)
@@ -583,6 +588,8 @@ export interface Atmosphere {
   celestialPosition(): { x: number; y: number; kind: 'sun' | 'moon' } | null;
   brightStarPositions(): Array<{ x: number; y: number }>;
   setStormRate(v: number): void;             // temperament multiplier on storm frequency
+  /** Put a storm cell in the middle of the world, now. */
+  triggerStorm(): void;
   horizonColor(): number;                    // the sky's current horizon hue (dread lean included)
   /** Jump the day-night clock. A 360-second cycle means waiting six minutes to
    *  see dusk, which makes comparing two times of day a matter of patience
@@ -1104,8 +1111,18 @@ export function createAtmosphere(): Atmosphere {
 
   // Traveling storm: a heavy, rarer drifter with rain and lightning.
   const stormLayer = new Container();
-  const stormClouds: Sprite[] = [];
+  const stormClouds: Sprite[] = [];   // the shadow on the ground
+  const stormBodies: Sprite[] = [];   // the cloud itself
+  const stormCrowns: Sprite[] = [];   // the sunlit top of it
   const stormCloudOffsets: Array<{ x: number; y: number; s: number }> = [];
+  // A storm used to be five multiply sprites and nothing else, which is to say
+  // it was a shadow with no cloud above it -- from this viewpoint a dark patch
+  // slid across the map with nothing overhead casting it.
+  //
+  // Three passes now, in the order light actually meets them: the shadow on the
+  // ground, the cloud body over it, and the crown where the sun catches the
+  // top. The shadow is displaced away from the sun and the crown toward it,
+  // both scaled by how low the sun is, which is what gives the cluster height.
   for (let i = 0; i < 5; i++) {
     const sp = new Sprite(cloudTextures[i % cloudTextures.length]);
     sp.anchor.set(0.5);
@@ -1120,14 +1137,36 @@ export function createAtmosphere(): Atmosphere {
       s: 2.2 + weatherRand() * 1.6,
     });
   }
+  // Every body over every shadow, then every crown over every body: two full
+  // passes rather than one interleaved, so no cloud is shadowed by a neighbour
+  // that happens to be drawn after it.
+  for (let i = 0; i < 5; i++) {
+    const b = new Sprite(cloudTextures[i % cloudTextures.length]);
+    b.anchor.set(0.5);
+    b.alpha = 0;
+    stormLayer.addChild(b);
+    stormBodies.push(b);
+  }
+  for (let i = 0; i < 5; i++) {
+    const c = new Sprite(cloudTextures[i % cloudTextures.length]);
+    c.anchor.set(0.5);
+    c.alpha = 0;
+    stormLayer.addChild(c);
+    stormCrowns.push(c);
+  }
   const rainGfx = new Graphics();
   stormLayer.addChild(rainGfx);
+  // Its own layer, deliberately NOT a child of `stormLayer`. The emissive pass
+  // lifts whole containers above the night glaze, and lightning is the only
+  // part of a storm that emits -- taking the storm layer wholesale would put
+  // the rain and the cloud shadows through an additive pass as well.
+  const lightningLayer = new Container();
   const lightningSprite = new Sprite(cloudTextures[0]);
   lightningSprite.anchor.set(0.5);
   lightningSprite.tint = 0xeef2ff;
   lightningSprite.blendMode = 'add';
   lightningSprite.alpha = 0;
-  stormLayer.addChild(lightningSprite);
+  lightningLayer.addChild(lightningSprite);
   let storm: { x: number; y: number; t: number } | null = null;
   let lightningFlash = 0;
 
@@ -1147,6 +1186,8 @@ export function createAtmosphere(): Atmosphere {
     if (u >= 1) {
       storm = null;
       for (const sp of stormClouds) sp.alpha = 0;
+      for (const sp of stormBodies) sp.alpha = 0;
+      for (const sp of stormCrowns) sp.alpha = 0;
       rainGfx.clear();
       lightningSprite.alpha = 0;
       return;
@@ -1156,12 +1197,44 @@ export function createAtmosphere(): Atmosphere {
     storm.x += dirX * speed * dt;
     storm.y += wy * 0.6 * dt;
     const env = Math.sin(Math.PI * Math.min(1, u * 1.15));
+    // How much sun there is to model, and which way it comes from. `azimuth` is
+    // 0 at screen-left, so a sun on the left throws the shadow to the right; a
+    // low sun throws it further and lifts the crown higher off the body.
+    const lit = L.isDay ? Math.max(0, Math.min(1, L.altitude / 0.5)) : 0;
+    const lowness = L.isDay ? 1 - Math.min(1, L.altitude / 0.62) : 1;
+    const dx = (0.5 - L.azimuth) * 2;
+    const shadowDx = dx * (16 + 30 * lowness);
+    const shadowDy = 12 + 20 * lowness;
     for (let i = 0; i < stormClouds.length; i++) {
-      const sp = stormClouds[i];
       const o = stormCloudOffsets[i];
-      sp.position.set(storm.x + o.x, storm.y + o.y);
+      const cx = storm.x + o.x;
+      const cy = storm.y + o.y;
+
+      const sp = stormClouds[i];
+      sp.position.set(cx + shadowDx, cy + shadowDy);
       sp.scale.set(o.s, o.s * 0.7);
       sp.alpha = ATMOS.storm.alpha * env;
+
+      // The cloud. Dark and blue by nature, opening up a little in daylight: a
+      // thunderhead is never white from above, and never black either.
+      const body = stormBodies[i];
+      body.position.set(cx, cy);
+      body.scale.set(o.s, o.s * 0.7);
+      body.tint = lerpColor(0x2c3340, 0x4e586b, lit);
+      body.alpha = ATMOS.storm.bodyAlpha * env * (0.5 + 0.5 * lit);
+
+      // The lit top, displaced toward the sun and a size smaller so it reads as
+      // the crown of this cloud rather than as a second one. Daylight only --
+      // nothing catches the light at night, and the storm is carried by its
+      // lightning then.
+      const crown = stormCrowns[i];
+      // Small and set high on the body. At 0.78 of the body's width it
+      // covered the whole cluster and bleached it toward white at noon, which
+      // read as fog rather than as a thunderhead with the sun on its top.
+      crown.position.set(cx - dx * 22, cy - 24 - 14 * lowness);
+      crown.scale.set(o.s * 0.58, o.s * 0.32);
+      crown.tint = lerpColor(0x6b768c, L.color, 0.35 + 0.45 * lit);
+      crown.alpha = ATMOS.storm.crownAlpha * env * lit;
     }
     // Rain: a handful of slanted streaks beneath the cluster, jittered.
     rainGfx.clear();
@@ -2020,6 +2093,7 @@ export function createAtmosphere(): Atmosphere {
     shimmerLayer,
     birdLayer,
     stormLayer,
+    lightningLayer,
     cometLayer,
     auroraLayer,
     celestialLayer,
@@ -2050,6 +2124,14 @@ export function createAtmosphere(): Atmosphere {
     // The world's temperament reaches the weather: a wet planet storms far more
     // often than a dry one. Set from the sim's character in main.ts.
     setStormRate: (v: number) => { stormRateMult = Math.max(0, v); },
+    // Drop a storm cell in the middle of the view. A storm normally enters from
+    // beyond the drift bounds and takes most of its life to cross into frame,
+    // which makes looking at one a matter of waiting rather than choosing.
+    // Starts at 43% of its life, not at 0. The envelope is sin(pi * u), so a
+    // cell spawned at t=0 is at a fifth of its opacity and takes most of a
+    // minute to become worth looking at -- which defeats the point of being
+    // able to summon one.
+    triggerStorm: () => { storm = { x: 0, y: 650, t: ATMOS.storm.durationSec * 0.43 }; },
     // The sky's current horizon color, dread lean included. Anything that has
     // to melt into the horizon (the depth haze in main.ts) tints to this.
     // Desaturated on the way out. The one consumer is the depth haze, which

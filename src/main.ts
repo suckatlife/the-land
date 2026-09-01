@@ -1162,6 +1162,7 @@ world.addChild(festivalGfx);
 // where its alpha would be ~0 anyway.
 world.addChild(depthHazeSprite);
 world.addChild(atmos.stormLayer);
+world.addChild(atmos.lightningLayer);
 // Bird flocks cross at dawn and dusk.
 world.addChild(atmos.birdLayer);
 // Smaller flocks skim the canopy, forest to forest, above the surface life.
@@ -1237,6 +1238,7 @@ const worldPlane = new MeshPlane({ texture: worldRT, verticesX: 110, verticesY: 
 const EMISSIVE_LAYERS: Container[] = [
   nightLightsGfx, cityLightsGfx, festivalGfx, fireGfx, lavaGlowGfx,
   faithGfx, natWonderGlowGfx, atmos.landLightLayer, lighthouseGfx,
+  atmos.lightningLayer,
 ];
 const lightRT = RenderTexture.create({
   width: worldRT.width,
@@ -8155,6 +8157,7 @@ const DBG_SPAWNS: Array<[string, (() => void) | null]> = [
   ['War / battle', dbgBattle],
   ['Catastrophe (random)', fireCatastrophe],
   ['— sky —', null],
+  ['Storm (rain + lightning)', () => atmos.triggerStorm()],
   ['Comet', () => atmos.triggerCelestial('comet')],
   ['Eclipse', () => atmos.triggerCelestial('eclipse')],
   ['Aurora', () => atmos.triggerCelestial('aurora')],
@@ -8287,6 +8290,7 @@ const DEBUG_LAYERS: Array<[string, () => DebugLayer]> = [
   ['shimmer', () => (atmos as any).shimmerLayer],
   ['rainbow', () => (atmos as any).rainbowLayer],
   ['storm', () => (atmos as any).stormLayer],
+  ['lightning ADD', () => (atmos as any).lightningLayer],
   ['nightLights ADD', () => nightLightsGfx],
   ['cityLights ADD', () => cityLightsGfx],
   ['festival ADD', () => festivalGfx],
