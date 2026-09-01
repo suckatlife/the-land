@@ -80,7 +80,15 @@ export const ATMOS = {
     terminatorSpread: 0.135,
 
     // Ceiling on the directional darkening, independent of `glazeCap`.
-    terminatorMax: 0.70,
+    //
+    // Lowered from 0.70. That value was tuned against a glaze that was
+    // brightening the world by more than 2x mid-keyframe (two multiply layers
+    // cross-faded, since fixed), so the terminator was being asked to fight a
+    // scene that was too bright to begin with. Against a correct glaze, 0.70
+    // was a 70% multiply of desaturated blue-grey over most of the visible
+    // face at low sun -- which is why Lawrence saw everything go grey and
+    // washed out at exactly sunrise and sunset.
+    terminatorMax: 0.42,
 
     // How much warm sunset colour a low sun casts onto the world. Additive, so
     // this is the only thing here that can make part of the globe brighter
@@ -94,7 +102,9 @@ export const ATMOS = {
     // between the lit and unlit halves, and they want raising and lowering
     // together or the globe gets bright on one side without getting dark on
     // the other.
-    sunCastMax: 0.26,
+    // Also lowered, and for the same reason: it was paired to a terminatorMax
+    // that has come down, and both were compensating for the glaze bug.
+    sunCastMax: 0.14,
 
     // Hard ceiling on glaze alpha — the legibility floor. Night may not get
     // darker than this, or the world stops being watchable.
@@ -1442,8 +1452,26 @@ export function createAtmosphere(): Atmosphere {
     // frame, which put a full-strength dusk-coloured wash across the centre of
     // the world at noon. A sun directly above lights the whole visible face;
     // there is no terminator to draw.
+    // How low the sun is: 0 overhead, 1 at the horizon.
     const lowU = curLight.isDay ? 1 - Math.min(1, curLight.altitude / 0.62) : 0;
-    const lowSunFactor = lowU * lowU * (3 - 2 * lowU);
+    // ...and how much light is left to be directional with. This second term
+    // is the fix for a discontinuity, not a taste adjustment.
+    //
+    // `lowU` alone PEAKS at altitude 0 -- the instant the sun reaches the
+    // horizon -- and `isDay` flips to false at that same instant, so both the
+    // terminator and the warm cast ran at full strength and were then snapped
+    // to zero in a single frame. Measured: with the terminator drawing at any
+    // spread at all, the largest luminance step across dusk was 21-33; with it
+    // off entirely, 7.9. The step did not scale with strength, which is what
+    // gives it away as a switch rather than a wash.
+    //
+    // Fading on altitude over the last stretch to the horizon means the layer
+    // is already at zero by the time `isDay` changes, so there is nothing left
+    // to snap. Directional light also just behaves this way: a sun on the
+    // horizon casts the longest shadows, but it casts them with the least
+    // light, and both halves have to go to nothing together.
+    const horizonFade = Math.min(1, Math.max(0, curLight.altitude / 0.14));
+    const lowSunFactor = lowU * lowU * (3 - 2 * lowU) * horizonFade;
     let nightDepth = 0;
     if (globeCircle && spread > 0) {
       // How dark the unlit side gets, over and above the flat glaze. Bounded so
@@ -1502,7 +1530,12 @@ export function createAtmosphere(): Atmosphere {
       // Now it is the current glaze, leaned slightly cool. A shadow is cooler
       // than the light that casts it because the sky fills it, and that is one
       // small shift rather than a second palette.
-      const darkColor = lerpColor(glazeColor, SHADOW_COOL, 0.35);
+      // Leaned less far toward the cool grey than it was (0.35). SHADOW_COOL
+      // is a desaturated blue-grey, so every step toward it is a step out of
+      // the world's own colour -- and this multiplies a large part of the
+      // frame at low sun. Keeping it nearer the glaze keeps the shadow reading
+      // as *this* evening's shadow rather than as a grey wash over it.
+      const darkColor = lerpColor(glazeColor, SHADOW_COOL, 0.20);
 
       terminatorLayer.clear();
       // Concentric bands of constant N·L. Drawn as rings on the sphere's
@@ -1571,11 +1604,18 @@ export function createAtmosphere(): Atmosphere {
         // A low sun's light on the ground is warm and pale, not the saturated
         // colour of the sky it is lighting. This is that: a warm off-white,
         // leaned only slightly toward the horizon's hue.
-        const warm = lerpColor(
-          lerpColor(SUN_WARM, day.skyHorizon, 0.25),
-          season.cast,
-          season.castAmount * 0.5,
-        );
+        // One fixed warm, and nothing else. This layer is ADDITIVE across the
+        // whole frame, so every source blended into its colour becomes a
+        // source of colour on the world. It previously leaned 25% toward
+        // `skyHorizon` (which carries the sunset pink) and again toward
+        // `season.cast` (whose spring value is a green, hue 94) -- two moving
+        // inputs on a 360-second and a 1200-second cycle respectively, which
+        // drift against each other and never repeat. That is what made the
+        // colour at sunrise and sunset look arbitrary from one day to the next.
+        //
+        // A low sun puts warm pale light on the ground. It does not put the
+        // sky's hue there, and it does not put the season's there either.
+        const warm = SUN_WARM;
         sunCastLayer.clear();
         // On the sun itself, for the same reason as above.
         const px = sunScreenX;
