@@ -897,27 +897,42 @@ type QualityLevel = keyof typeof QUALITY;
  *  wrong downward costs some floors on a device that could have drawn them;
  *  getting it wrong upward costs the whole page.
  */
+function qualitySignals() {
+  const short = Math.min(window.innerWidth, window.innerHeight);
+  const long = Math.max(window.innerWidth, window.innerHeight);
+  const coarse = window.matchMedia?.('(pointer: coarse)').matches ?? false;
+  // `deviceMemory` is CAPPED AT 8 by Chrome, so "8 or less" is every desktop
+  // ever made; an earlier version of this quietly demoted all of them. It is
+  // reported here for diagnosis but no longer decides anything on its own.
+  const mem = (navigator as unknown as { deviceMemory?: number }).deviceMemory;
+  const cores = navigator.hardwareConcurrency ?? 0;
+  return { short, long, coarse, mem, cores };
+}
+
 function pickDefaultQuality(): QualityLevel {
   try {
-    const short = Math.min(window.innerWidth, window.innerHeight);
-    const long = Math.max(window.innerWidth, window.innerHeight);
-    const coarse = window.matchMedia?.('(pointer: coarse)').matches ?? false;
-    // `deviceMemory` is CAPPED AT 8 by Chrome, so "8 or less" is every desktop
-    // ever made and an earlier version of this quietly demoted all of them to
-    // medium. Only treat it as a signal at the genuinely small end.
-    const mem = (navigator as unknown as { deviceMemory?: number }).deviceMemory;
-    const cores = navigator.hardwareConcurrency ?? 0;
-    // Phones: a coarse pointer on a small screen, or simply a very narrow one.
-    if (short < 500 || (coarse && long < 1100)) return 'low';
-    if (mem !== undefined && mem <= 2) return 'low';
-    // Tablets and genuinely weak machines.
-    if (coarse) return 'medium';
-    if (mem !== undefined && mem <= 4) return 'medium';
-    if (cores > 0 && cores <= 2) return 'medium';
-    return 'high';
+    const { short, long, coarse } = qualitySignals();
+    // A FINE POINTER MEANS A MOUSE, AND A MOUSE MEANS A REAL MACHINE.
+    //
+    // Everything below this line is about small, touch-first devices, and a
+    // desktop should never be caught by any of it. The previous version could
+    // demote a desktop through `deviceMemory` or a low core count, which is how
+    // a Steam Machine -- a games console with a GPU in it -- ended up starting
+    // on the lowest tier.
+    //
+    // The tiers exist for #68, where iOS Safari kills the tab at around 760MB.
+    // Every device that crash applies to reports `pointer: coarse`, so gating
+    // the whole ladder on it keeps the protection exactly where it was aimed.
+    if (!coarse) return 'high';
+
+    // Phones: a coarse pointer AND a small screen. Both, not either.
+    if (short < 500 || long < 1100) return 'low';
+
+    // Tablets, and anything else driven by touch on a large display.
+    return 'medium';
   } catch {
-    // Any of the above missing is itself a signal that this is not a
-    // well-equipped browser. Erring low costs floors, not the page.
+    // matchMedia missing is odd enough to be worth erring on; medium costs
+    // floors rather than the page.
     return 'medium';
   }
 }
@@ -9297,6 +9312,15 @@ document.getElementById('reset-sim')!.addEventListener('click', () => {
 // a deliberate action, and the seed persists so the same world returns.
 const qualityBtn = document.getElementById('quality')!;
 qualityBtn.textContent = `gfx: ${QUALITY[qualityLevel].label}`;
+// What this machine reported and what was chosen from it. Diagnosing a wrong
+// tier by guessing at someone else's hardware does not work; this makes the
+// inputs readable from the console on the machine that got it wrong.
+(window as any).__quality = () => ({
+  ...qualitySignals(),
+  stored: _storedQuality,
+  autoPick: pickDefaultQuality(),
+  active: qualityLevel,
+});
 qualityBtn.addEventListener('click', () => {
   const order: QualityLevel[] = ['high', 'medium', 'low'];
   const next = order[(order.indexOf(qualityLevel) + 1) % order.length];
