@@ -33,12 +33,19 @@ export const ATMOS = {
     // Add/move/remove keyframes freely; they are interpolated in t-order
     // with smoothstep easing between neighbours.
     keyframes: [
+      // Dawn deepened too, and for the mirror reason. Sunrise sat at 0.18 and
+      // early morning at 0.07 while dusk climbs 0.26 -> 0.44 -> 0.58, so the
+      // morning reached full daylight far sooner than the evening left it —
+      // measured, dawn averaged 193 against dusk's 142 for the same settings,
+      // and read as blown out. The evening curve is the one that looks right,
+      // so the morning now matches its shape rather than racing past it.
+      //
       // Night deepened, and the glaze colours cooled with it. These predate the
       // city lights: with nothing emitting light after dark the land itself had
       // to stay readable, so night stopped at half a wash and read as dusk. The
       // cities carry legibility now, so night can be night.
-      { t: 0.00, skyTop: 0x6a6f9a, skyHorizon: 0xf0a36a, glaze: 0xf0b878, glazeAlpha: 0.18 }, // sunrise: lilac over peach
-      { t: 0.08, skyTop: 0x7ba6d4, skyHorizon: 0xf6cf9c, glaze: 0xf8e4c2, glazeAlpha: 0.07 }, // early morning
+      { t: 0.00, skyTop: 0x6a6f9a, skyHorizon: 0xf0a36a, glaze: 0xe0a468, glazeAlpha: 0.34 }, // sunrise: lilac over peach
+      { t: 0.08, skyTop: 0x7ba6d4, skyHorizon: 0xf6cf9c, glaze: 0xf2dcb4, glazeAlpha: 0.19 }, // early morning
       { t: 0.25, skyTop: 0x5b9ad8, skyHorizon: 0xc7e0ee, glaze: 0xffffff, glazeAlpha: 0.00 }, // noon: clear blue
       { t: 0.42, skyTop: 0x77a6d0, skyHorizon: 0xe9cf9a, glaze: 0xf2dcae, glazeAlpha: 0.08 }, // afternoon
       { t: 0.52, skyTop: 0x7c6a9e, skyHorizon: 0xef8a4c, glaze: 0xe49152, glazeAlpha: 0.26 }, // sunset: violet over orange
@@ -71,7 +78,7 @@ export const ATMOS = {
     // between the lit and unlit halves, and they want raising and lowering
     // together or the globe gets bright on one side without getting dark on
     // the other.
-    sunCastMax: 0.42,
+    sunCastMax: 0.26,
 
     // Hard ceiling on glaze alpha — the legibility floor. Night may not get
     // darker than this, or the world stops being watchable.
@@ -1422,6 +1429,13 @@ export function createAtmosphere(): Atmosphere {
       // Same eased factor the shadowed side uses, so the two halves of one
       // light can never disagree about how low the sun is.
       const lowSun = lowSunFactor;
+      // Deliberately NOT scaled by the glaze. An earlier version multiplied
+      // this by `glazeAlpha / 0.34` on the theory that a darker scene can take
+      // more highlight — which meant darkening the dawn keyframe to calm the
+      // morning also strengthened the cast, and more than cancelled it. Dawn
+      // went from 193 to 205 mean luminance while being "toned down". Two
+      // controls that move the same thing in opposite directions are worse
+      // than one control.
       const castStrength = lowSun * ATMOS.day.sunCastMax;
       sunCastLayer.visible = castStrength > 0.004;
       if (sunCastLayer.visible) {
