@@ -33,29 +33,42 @@ export const ATMOS = {
     // Add/move/remove keyframes freely; they are interpolated in t-order
     // with smoothstep easing between neighbours.
     keyframes: [
-      // ONE palette, three colours: blue, pink, indigo. Nothing else appears.
+      // ONE palette, three colours: blue, pink, indigo.
       //
-      // This table used to carry nine independently chosen hues — peach,
-      // orange, red-brown, violet-grey, olive — and no fix to HOW they were
-      // blended could stop the result wandering, because the palette itself
-      // wandered. Sunsets went purple to green to grey. Lawrence's model is
-      // the one implemented here: blue by day, tinting pink at sunset, dark
-      // blue and indigo at night, pink again at dawn, back to blue.
+      // And two rules about WHERE they go, which matter as much as the colours:
       //
-      // Every glaze below sits between pink (hue ~355) and indigo (~228).
-      // That arc passes through violet, which is a colour dusk has. It never
-      // passes near green, which is what made the old table lurch.
+      // 1. **`skyTop` never leaves the blue-indigo family.** It runs 209 to 240
+      //    degrees all day and all night, and is the same hue at noon as at
+      //    midnight — only darker. A real sky does not rotate as a whole at
+      //    sunset; the top stays blue and the HORIZON turns. The old table let
+      //    skyTop go violet (0x7b7aac) at dusk, which turned the entire frame
+      //    at once and is what read as a drastic shift.
+      //
+      // 2. **The pink lives in `skyHorizon`, and NOT in `glaze`.** The glaze
+      //    covers every pixel of the world, so any hue in it paints the land
+      //    that colour — a pink glaze at 0.26 turned the whole map pink at
+      //    dusk even though the sky was correct. The dawn and dusk glazes are
+      //    now near-neutral warm greys (saturation under 0.1): they DARKEN and
+      //    warm the land without recolouring it. Only deep night carries a
+      //    real hue, and there it reads as darkness rather than as tint. The
+      //    horizon band is a small part of the frame and can take a saturated
+      //    colour; the glaze covers everything, so its dusk tint is a warm grey
+      //    (saturation ~0.15) rather than a pink. The land keeps its own colour
+      //    and is merely lit warmly, instead of being painted pink.
+      //
+      // Getting from blue to pink cannot be done by rotating hue without
+      // passing through greens and purples. It is not done by rotating hue.
       //
       // t, sky top, sky horizon, glaze tint, glaze strength.
-      { t: 0.00, skyTop: 0x5c6aa2, skyHorizon: 0xe8a2ae, glaze: 0xdc9aa6, glazeAlpha: 0.34 }, // dawn: pink at the horizon
-      { t: 0.08, skyTop: 0x6f9fd4, skyHorizon: 0xdfc2cc, glaze: 0xefcbd0, glazeAlpha: 0.19 }, // early morning: pink thinning
+      { t: 0.00, skyTop: 0x4f6bb0, skyHorizon: 0xe8a2ae, glaze: 0xe6d6d2, glazeAlpha: 0.34 }, // dawn: pink at the horizon only
+      { t: 0.08, skyTop: 0x6294d0, skyHorizon: 0xdcc0c8, glaze: 0xf4e8e4, glazeAlpha: 0.19 }, // early morning
       { t: 0.25, skyTop: 0x5b9ad8, skyHorizon: 0xc7e0ee, glaze: 0xffffff, glazeAlpha: 0.00 }, // noon: blue, no cast
-      { t: 0.42, skyTop: 0x6b9dd4, skyHorizon: 0xd6dfe8, glaze: 0xf6dde2, glazeAlpha: 0.08 }, // afternoon: the first pink
-      { t: 0.52, skyTop: 0x7b7aac, skyHorizon: 0xe8a2ae, glaze: 0xdc9aa6, glazeAlpha: 0.26 }, // sunset: full pink
-      { t: 0.60, skyTop: 0x565a8e, skyHorizon: 0xb27a92, glaze: 0x9a6e8e, glazeAlpha: 0.80 }, // afterglow: pink toward violet
-      { t: 0.68, skyTop: 0x333c68, skyHorizon: 0x6a5f88, glaze: 0x6a5f8e, glazeAlpha: 0.87 }, // nightfall: violet toward indigo
+      { t: 0.42, skyTop: 0x5f96d2, skyHorizon: 0xd4dfe8, glaze: 0xfbf3f0, glazeAlpha: 0.08 }, // afternoon
+      { t: 0.52, skyTop: 0x5a7cba, skyHorizon: 0xe8a2ae, glaze: 0xecdcd6, glazeAlpha: 0.26 }, // sunset: horizon pink, top still blue
+      { t: 0.60, skyTop: 0x46589c, skyHorizon: 0xb8869c, glaze: 0x9c8a94, glazeAlpha: 0.80 }, // afterglow
+      { t: 0.68, skyTop: 0x2f3d74, skyHorizon: 0x6a5f88, glaze: 0x74688e, glazeAlpha: 0.87 }, // nightfall
       { t: 0.80, skyTop: 0x161d3a, skyHorizon: 0x2c3760, glaze: 0x46538c, glazeAlpha: 0.93 }, // night: indigo
-      { t: 0.92, skyTop: 0x1d2748, skyHorizon: 0x3a4670, glaze: 0x50508e, glazeAlpha: 0.90 }, // small hours: indigo warming
+      { t: 0.92, skyTop: 0x1d2748, skyHorizon: 0x3a4670, glaze: 0x50568e, glazeAlpha: 0.90 }, // small hours
     ],
     // Fraction of screen height where the horizon band sits in the sky
     // gradient (the world diamond occupies the area below the upper sky).
