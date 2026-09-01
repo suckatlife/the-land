@@ -33,6 +33,13 @@ export const ATMOS = {
     // Add/move/remove keyframes freely; they are interpolated in t-order
     // with smoothstep easing between neighbours.
     keyframes: [
+      // The evening curve is steep on purpose. The directional terminator
+      // switches off the instant `isDay` ends, and it was carrying up to 0.70
+      // of darkening — so the flat wash has to pick that up in the same
+      // moment or the world gets BRIGHTER at sunset, which it did: mean
+      // luminance rose from 119 to 125 across the handover. From nightfall
+      // onward the glaze alone is the whole light.
+      //
       // Dawn deepened too, and for the mirror reason. Sunrise sat at 0.18 and
       // early morning at 0.07 while dusk climbs 0.26 -> 0.44 -> 0.58, so the
       // morning reached full daylight far sooner than the evening left it —
@@ -49,10 +56,10 @@ export const ATMOS = {
       { t: 0.25, skyTop: 0x5b9ad8, skyHorizon: 0xc7e0ee, glaze: 0xffffff, glazeAlpha: 0.00 }, // noon: clear blue
       { t: 0.42, skyTop: 0x77a6d0, skyHorizon: 0xe9cf9a, glaze: 0xf2dcae, glazeAlpha: 0.08 }, // afternoon
       { t: 0.52, skyTop: 0x7c6a9e, skyHorizon: 0xef8a4c, glaze: 0xe49152, glazeAlpha: 0.26 }, // sunset: violet over orange
-      { t: 0.60, skyTop: 0x52506f, skyHorizon: 0xc06450, glaze: 0xa05a4e, glazeAlpha: 0.52 }, // afterglow: red-purple
-      { t: 0.68, skyTop: 0x303c58, skyHorizon: 0x6a5570, glaze: 0x5d7098, glazeAlpha: 0.70 }, // nightfall
-      { t: 0.80, skyTop: 0x182338, skyHorizon: 0x33405c, glaze: 0x4a5c80, glazeAlpha: 0.84 }, // deep night
-      { t: 0.92, skyTop: 0x1f2b44, skyHorizon: 0x46506a, glaze: 0x556890, glazeAlpha: 0.76 }, // small hours
+      { t: 0.60, skyTop: 0x52506f, skyHorizon: 0xc06450, glaze: 0x8d5048, glazeAlpha: 0.80 }, // afterglow: red-purple
+      { t: 0.68, skyTop: 0x303c58, skyHorizon: 0x6a5570, glaze: 0x4e6288, glazeAlpha: 0.87 }, // nightfall
+      { t: 0.80, skyTop: 0x182338, skyHorizon: 0x33405c, glaze: 0x3e5274, glazeAlpha: 0.93 }, // deep night
+      { t: 0.92, skyTop: 0x1f2b44, skyHorizon: 0x46506a, glaze: 0x445980, glazeAlpha: 0.90 }, // small hours
     ],
     // Fraction of screen height where the horizon band sits in the sky
     // gradient (the world diamond occupies the area below the upper sky).
@@ -88,7 +95,7 @@ export const ATMOS = {
     // there was nothing to see. Now the lit half is carried by the cities, so
     // the dark half can actually be dark — and it has to be, or the lights sit
     // on a bright surface and never read as lights.
-    glazeCap: 0.88,
+    glazeCap: 0.93,
   },
 
   // How far the sky leans toward the brewing catastrophe's hue at full dread
