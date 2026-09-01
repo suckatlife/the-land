@@ -33,6 +33,16 @@ export const ATMOS = {
     // Add/move/remove keyframes freely; they are interpolated in t-order
     // with smoothstep easing between neighbours.
     keyframes: [
+      // The dusk COLOURS are deliberately kept on one side of the colour
+      // wheel. Afterglow used to be a red-brown (hue ~10) and nightfall is a
+      // blue (~217) — nearly opposite — so every blend between them had to
+      // cross the wheel. Blending in RGB cut through the middle and the world
+      // went grey (measured saturation 2); blending by rotating hue the short
+      // way went through MAGENTA instead, and painted the whole map pink.
+      // Neither path is a colour dusk has. The endpoints now sit close enough
+      // that the transition is a short desaturating slide rather than a
+      // journey.
+      //
       // The evening curve is steep on purpose. The directional terminator
       // switches off the instant `isDay` ends, and it was carrying up to 0.70
       // of darkening — so the flat wash has to pick that up in the same
@@ -55,8 +65,8 @@ export const ATMOS = {
       { t: 0.08, skyTop: 0x7ba6d4, skyHorizon: 0xf6cf9c, glaze: 0xf2dcb4, glazeAlpha: 0.19 }, // early morning
       { t: 0.25, skyTop: 0x5b9ad8, skyHorizon: 0xc7e0ee, glaze: 0xffffff, glazeAlpha: 0.00 }, // noon: clear blue
       { t: 0.42, skyTop: 0x77a6d0, skyHorizon: 0xe9cf9a, glaze: 0xf2dcae, glazeAlpha: 0.08 }, // afternoon
-      { t: 0.52, skyTop: 0x7c6a9e, skyHorizon: 0xef8a4c, glaze: 0xe49152, glazeAlpha: 0.26 }, // sunset: violet over orange
-      { t: 0.60, skyTop: 0x52506f, skyHorizon: 0xc06450, glaze: 0x8d5048, glazeAlpha: 0.80 }, // afterglow: red-purple
+      { t: 0.52, skyTop: 0x7c6a9e, skyHorizon: 0xef8a4c, glaze: 0xc98a68, glazeAlpha: 0.26 }, // sunset: violet over orange
+      { t: 0.60, skyTop: 0x52506f, skyHorizon: 0xc06450, glaze: 0x6a5a72, glazeAlpha: 0.80 }, // afterglow: red-purple
       { t: 0.68, skyTop: 0x303c58, skyHorizon: 0x6a5570, glaze: 0x4e6288, glazeAlpha: 0.87 }, // nightfall
       { t: 0.80, skyTop: 0x182338, skyHorizon: 0x33405c, glaze: 0x3e5274, glazeAlpha: 0.93 }, // deep night
       { t: 0.92, skyTop: 0x1f2b44, skyHorizon: 0x46506a, glaze: 0x445980, glazeAlpha: 0.90 }, // small hours
@@ -301,6 +311,8 @@ function smoothstep(u: number): number {
 }
 
 interface DayState { skyTop: number; skyHorizon: number; glaze: number; glazeAlpha: number }
+
+
 
 function sampleDay(t: number): DayState {
   const keys = ATMOS.day.keyframes;
