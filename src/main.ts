@@ -8142,6 +8142,46 @@ hud.innerHTML = `
 `;
 document.body.appendChild(hud);
 hud.hidden = !debugMode;
+
+// A visible build stamp, always on — not gated behind `debug=1` like the HUD
+// above it. Assets are fingerprinted and the service worker serves them
+// cache-first, so "am I actually looking at the new deploy?" is a real question
+// the page could not previously answer. Now it can, and the answer is a commit
+// you can paste straight into `git show`.
+//
+// Clicking it drops every cache and unregisters the worker before reloading,
+// which is the only reliable way to escape a stale shell from inside the page.
+const buildBadge = document.createElement("button");
+buildBadge.type = "button";
+buildBadge.textContent = `build ${__BUILD_ID__}`;
+buildBadge.title = `built ${__BUILD_TIME__} UTC
+click to clear the cache and reload from the network`;
+buildBadge.style.cssText = `
+  position: fixed; z-index: 25; left: 14px; top: ${debugMode ? 52 : 12}px;
+  border: 0; cursor: pointer; padding: 2px 6px; border-radius: 3px;
+  /* The world runs from bright noon land to near-black night underneath this,
+     so the stamp carries its own ground rather than relying on contrast with
+     whatever happens to be behind it. */
+  background: rgba(0, 0, 0, 0.30);
+  color: rgba(238, 231, 211, 0.72);
+  font: 10px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: 0.08em; text-transform: lowercase;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
+`;
+buildBadge.addEventListener("click", async () => {
+  buildBadge.textContent = "refreshing...";
+  try {
+    if ("caches" in window) {
+      await Promise.all((await caches.keys()).map((key) => caches.delete(key)));
+    }
+    const regs = (await navigator.serviceWorker?.getRegistrations?.()) ?? [];
+    await Promise.all(regs.map((reg) => reg.unregister()));
+  } catch {
+    // Storage can be blocked outright. The reload below is still worth doing.
+  }
+  location.reload();
+});
+document.body.appendChild(buildBadge);
 const hudToggle = document.getElementById('hud-toggle')!;
 const hudBody = document.getElementById('hud-body')!;
 hudToggle.addEventListener('click', () => {
