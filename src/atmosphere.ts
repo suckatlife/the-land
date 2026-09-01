@@ -318,7 +318,22 @@ function smoothstep(u: number): number {
   return u * u * (3 - 2 * u);
 }
 
-interface DayState { skyTop: number; skyHorizon: number; glaze: number; glazeAlpha: number }
+interface DayKey { t: number; skyTop: number; skyHorizon: number; glaze: number; glazeAlpha: number }
+/** The day's light as a CROSSFADE between two keyframes rather than a blend of
+ *  them.
+ *
+ *  Blending produced the colour faults: `lerpColor` mixes in RGB, and RGB
+ *  between a warm and a cool colour runs through muddy grey-green. Night blue
+ *  to dawn orange interpolates literally through green, which is the green
+ *  that appeared at sunrise on both land and sky, and the same crossing left
+ *  the land at saturation 4 mid-dusk. Every warm-to-cool transition has to
+ *  cross, twice a day, on two layers — no arrangement of keyframes avoids it.
+ *
+ *  So nothing is blended any more. Both keyframes are kept, and each is drawn
+ *  at its own strength: the outgoing one fades out while the incoming one
+ *  fades in. A midpoint is LESS OF BOTH rather than a colour halfway between,
+ *  and a colour that is never computed can never be wrong. */
+interface DayState { k0: DayKey; k1: DayKey; u: number; skyTop: number; skyHorizon: number; glaze: number; glazeAlpha: number }
 
 
 
@@ -339,6 +354,10 @@ function sampleDay(t: number): DayState {
   }
   const u = smoothstep(span > 0 ? local / span : 0);
   return {
+    k0, k1, u,
+    // Kept for the few readers that genuinely want one representative colour
+    // (the warm cast picks a single tint). Nothing that covers the whole frame
+    // uses these any more.
     skyTop: lerpColor(k0.skyTop, k1.skyTop, u),
     skyHorizon: lerpColor(k0.skyHorizon, k1.skyHorizon, u),
     glaze: lerpColor(k0.glaze, k1.glaze, u),
@@ -502,6 +521,7 @@ function sampleSeason(t: number): SeasonState {
 export interface Atmosphere {
   skyLayer: Sprite;
   glazeLayer: Graphics;
+  glazeLayerB: Graphics;
   terminatorLayer: Graphics;
   sunCastLayer: Graphics;
   airLayer: Graphics;                        // era airlight (screen), sits over the glaze
@@ -594,6 +614,11 @@ export function createAtmosphere(): Atmosphere {
   const glazeLayer = new Graphics();
   glazeLayer.blendMode = 'multiply';
   glazeLayer.alpha = 0;
+  // The outgoing keyframe's wash. Two multiplies at partial strength, rather
+  // than one multiply of a blended colour — see DayState.
+  const glazeLayerB = new Graphics();
+  glazeLayerB.blendMode = 'multiply';
+  glazeLayerB.alpha = 0;
 
   // The terminator: the part of the day-night light that is NOT the same
   // everywhere. `glazeLayer` above carries the brightest column's light as a
@@ -1267,20 +1292,33 @@ export function createAtmosphere(): Atmosphere {
   let dayT = ATMOS.day.startT;
   let seasonT = ATMOS.season.startT;
   let eraAirCur = { air: 0xffffff, amount: 0, fogMult: 1 };
-  let lastSkyTop = -1;
-  let lastSkyHorizon = -1;
+  let lastSkyKey = -1;
+  let lastSkyU = -1;
+  let lastSkyDread = -1;
+  let curHorizon = 0x9fb2c4;
   let nowMs = 0; // scar clock — advances with update() so pause freezes fades
   const scars: Scar[] = [];
 
-  function redrawSky(top: number, horizon: number) {
+  function paintSkyGradient(top: number, horizon: number, alpha: number) {
     const grad = skyCtx.createLinearGradient(0, 0, 0, skyCanvas.height);
     grad.addColorStop(0, hexCss(top));
     grad.addColorStop(ATMOS.day.horizonY, hexCss(horizon));
     // Below the horizon the sky continues as a slightly lifted ground-haze of
     // the horizon color, so the world doesn't sit on a hard band.
     grad.addColorStop(1, hexCss(lerpColor(horizon, 0xffffff, 0.18)));
+    skyCtx.globalAlpha = alpha;
     skyCtx.fillStyle = grad;
     skyCtx.fillRect(0, 0, 2, skyCanvas.height);
+    skyCtx.globalAlpha = 1;
+  }
+  /** The sky is a CROSSFADE of two gradients, not a gradient of two blended
+   *  colours. Blending night blue toward dawn orange in RGB passes through
+   *  green, and the sky showed it as plainly as the land did. Painting the
+   *  outgoing gradient and then the incoming one over it at `u` never computes
+   *  a colour between them. */
+  function redrawSky(k0: DayKey, k1: DayKey, u: number, lean: (c: number, m: number) => number) {
+    paintSkyGradient(lean(k0.skyTop, 0.5), lean(k0.skyHorizon, 0.6), 1);
+    if (u > 0.001) paintSkyGradient(lean(k1.skyTop, 0.5), lean(k1.skyHorizon, 0.6), u);
     skyTexture.source.update();
   }
 
@@ -1289,6 +1327,8 @@ export function createAtmosphere(): Atmosphere {
     skyLayer.height = height;
     glazeLayer.clear();
     glazeLayer.rect(0, 0, width, height).fill(0xffffff);
+    glazeLayerB.clear();
+    glazeLayerB.rect(0, 0, width, height).fill(0xffffff);
     airLayer.clear();
     airLayer.rect(0, 0, width, height).fill(0xffffff);
     starLayer.position.set(width * ATMOS.stars.poleX, height * ATMOS.stars.poleY);
@@ -1309,38 +1349,63 @@ export function createAtmosphere(): Atmosphere {
     eraAirCur.amount += (mood.amount - eraAirCur.amount) * eraK;
     eraAirCur.fogMult += (mood.fogMult - eraAirCur.fogMult) * eraK;
 
-    // Sky: day palette, leaned by season cast, then by the brewing hue.
-    let top = lerpColor(day.skyTop, season.cast, season.castAmount * 0.5);
-    let horizon = lerpColor(day.skyHorizon, season.cast, season.castAmount * 0.6);
-    if (dreadSkyColor != null && dread > 0.01) {
-      const lean = dread * ATMOS.dreadSkyBlend;
-      top = lerpColor(top, dreadSkyColor, lean);
-      horizon = lerpColor(horizon, dreadSkyColor, lean * 0.7);
-    }
+    // Sky: day palette, leaned by season cast, then by the brewing hue. Both
+    // leans are applied to each keyframe SEPARATELY inside the crossfade, so
+    // the two gradients stay two gradients — leaning a blended colour would put
+    // the blend back.
+    const dreadLean = dreadSkyColor != null && dread > 0.01 ? dread * ATMOS.dreadSkyBlend : 0;
+    const skyLean = (c: number, m: number) => {
+      let out = lerpColor(c, season.cast, season.castAmount * m);
+      if (dreadLean > 0 && dreadSkyColor != null) {
+        out = lerpColor(out, dreadSkyColor, dreadLean * (m > 0.55 ? 0.7 : 1));
+      }
+      return out;
+    };
     // Only regenerate the gradient when it moved a perceptible amount.
-    if (Math.abs((top & 0xff) - (lastSkyTop & 0xff)) > 1
-      || Math.abs(((top >> 8) & 0xff) - ((lastSkyTop >> 8) & 0xff)) > 1
-      || Math.abs(((top >> 16) & 0xff) - ((lastSkyTop >> 16) & 0xff)) > 1
-      || Math.abs((horizon & 0xff) - (lastSkyHorizon & 0xff)) > 1
-      || Math.abs(((horizon >> 8) & 0xff) - ((lastSkyHorizon >> 8) & 0xff)) > 1
-      || Math.abs(((horizon >> 16) & 0xff) - ((lastSkyHorizon >> 16) & 0xff)) > 1) {
-      lastSkyTop = top;
-      lastSkyHorizon = horizon;
-      redrawSky(top, horizon);
+    // Redraw on a small move in `u`, not on a colour delta: the sky is now a
+    // crossfade, so what changes between frames is the mix, not a blended
+    // colour to compare.
+    const skyKeyId = ATMOS.day.keyframes.indexOf(day.k0);
+    if (skyKeyId !== lastSkyKey || Math.abs(day.u - lastSkyU) > 0.004
+        || Math.abs(dreadLean - lastSkyDread) > 0.01) {
+      lastSkyKey = skyKeyId;
+      lastSkyU = day.u;
+      lastSkyDread = dreadLean;
+      redrawSky(day.k0, day.k1, day.u, skyLean);
+    }
+    // One representative horizon colour, for the two things that need a single
+    // tint rather than a wash: the limb haze band and whatever melts into the
+    // horizon. A blend is fine here — these are thin edge elements, not the
+    // full frame, so a muddy midpoint has nowhere to show.
+    {
+      curHorizon = lerpColor(skyLean(day.k0.skyHorizon, 0.6), skyLean(day.k1.skyHorizon, 0.6), day.u);
     }
 
-    // Glaze: time-of-day light, cast by season, hazed by the era's air.
-    // Glaze: time-of-day light, cast by season, hazed by the era's air. Flat,
-    // as it always was — the spherical layer below adds the direction.
-    let glazeColor = lerpColor(day.glaze, season.cast, season.castAmount);
-    glazeColor = lerpColor(glazeColor, eraAirCur.air, eraAirCur.amount);
-    const glazeAlpha = Math.min(
-      ATMOS.day.glazeCap,
-      day.glazeAlpha + season.castAmount * 0.5 + eraAirCur.amount * 0.28,
-    );
-    glazeLayer.tint = glazeColor;
-    glazeLayer.alpha = glazeAlpha;
+    // One keyframe's wash, cast by season and hazed by the era's air.
+    const washOf = (k: DayKey) => {
+      let c = lerpColor(k.glaze, season.cast, season.castAmount);
+      c = lerpColor(c, eraAirCur.air, eraAirCur.amount);
+      const a = Math.min(
+        ATMOS.day.glazeCap,
+        k.glazeAlpha + season.castAmount * 0.5 + eraAirCur.amount * 0.28,
+      );
+      return { c, a };
+    };
+    const w0 = washOf(day.k0);
+    const w1 = washOf(day.k1);
+    // The outgoing wash fades out as the incoming one fades in. At u=0 and u=1
+    // this is exactly the old single wash; in between it is both at partial
+    // strength, which desaturates and darkens rather than sliding through an
+    // invented hue.
+    glazeLayer.tint = w0.c;
+    glazeLayer.alpha = w0.a * (1 - day.u);
     glazeLayer.visible = glazeLayer.alpha > 0.004;
+    glazeLayerB.tint = w1.c;
+    glazeLayerB.alpha = w1.a * day.u;
+    glazeLayerB.visible = glazeLayerB.alpha > 0.004;
+    // Anything downstream that wants one number for "how dark is it" reads the
+    // combined effect of the two multiplies, not either one alone.
+    const glazeColor = lerpColor(w0.c, w1.c, day.u);
 
     // --- the terminator, as a lit sphere ------------------------------------
     //
@@ -1509,7 +1574,7 @@ export function createAtmosphere(): Atmosphere {
 
     // The limb haze follows the sky's horizon color (including the dread
     // lean) and fades in with the curvature knob.
-    limbBandGfx.tint = horizon;
+    limbBandGfx.tint = curHorizon;
     limbBandGfx.alpha = ATMOS.curve.limbHazeAlpha * curCurvature;
 
     // --- Celestial light ---------------------------------------------------
@@ -1844,7 +1909,7 @@ export function createAtmosphere(): Atmosphere {
     setDayT: (v: number) => { dayT = ((v % 1) + 1) % 1; },
     setTerminatorSpread: (v: number | null) => { terminatorSpreadOverride = v; },
     getDayT: () => dayT,
-    skyLayer, glazeLayer, terminatorLayer, sunCastLayer, airLayer, scarLayer, cloudShadowLayer, fogLayer,
+    skyLayer, glazeLayer, glazeLayerB, terminatorLayer, sunCastLayer, airLayer, scarLayer, cloudShadowLayer, fogLayer,
     attach: (layers: { biomeLayer: Container }) => { attachedBiomeLayer = layers.biomeLayer; },
     attachPlane: (plane, geom) => {
       attachedPlane = plane;
@@ -1904,7 +1969,7 @@ export function createAtmosphere(): Atmosphere {
     setStormRate: (v: number) => { stormRateMult = Math.max(0, v); },
     // The sky's current horizon color, dread lean included. Anything that has
     // to melt into the horizon (the depth haze in main.ts) tints to this.
-    horizonColor: () => lastSkyHorizon,
+    horizonColor: () => curHorizon,
     setLightAzimuth: (v: number | null) => { lightAzOverride = v == null ? null : Math.max(0, Math.min(1, v)); },
     setLightAltitude: (v: number | null) => { lightAltOverride = v == null ? null : Math.max(0, Math.min(1, v)); },
     setStarRotation: (v: number) => { starRotation = v * Math.PI * 2; },
