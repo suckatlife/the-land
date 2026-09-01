@@ -566,6 +566,12 @@ export interface Atmosphere {
    *  see dusk, which makes comparing two times of day a matter of patience
    *  rather than measurement. */
   setDayT(v: number): void;
+  /** Scale the day-night clock: 1 normal, 0 holds the light still, negative
+   *  runs it backwards, fractions slow it down. Only the light moves -- the
+   *  simulation keeps its own clock, so scrubbing the sun does not rewind the
+   *  civilizations. */
+  setDayRate(v: number): void;
+  dayRate(): number;
   /** Override the terminator spread (null = use the configured value). */
   setTerminatorSpread(v: number | null): void;
   /** 0 in full sun, 1 on the unlit side, for a point in screen space. Cities
@@ -1330,10 +1336,18 @@ export function createAtmosphere(): Atmosphere {
     starLayer.position.set(width * ATMOS.stars.poleX, height * ATMOS.stars.poleY);
   }
 
+  let dayRate = 1;
+
   function update(deltaMS: number, dread: number, dreadSkyColor: number | null, dominantEra: Era) {
     nowMs += deltaMS;
     const dt = deltaMS / 1000;
-    dayT = (dayT + deltaMS / (ATMOS.day.cycleSeconds * 1000)) % 1;
+    // `dayRate` is 1 in normal play. The debug panel drives it to 0 to hold the
+    // light still, to a negative number to run the day backwards, and to
+    // fractions to slow a sunset down enough to watch one layer at a time.
+    // The season clock is deliberately NOT scaled: it is a 20-minute cycle and
+    // reversing it would change the palette underneath the thing being tested.
+    const dayStep = dayRate * deltaMS / (ATMOS.day.cycleSeconds * 1000);
+    dayT = ((dayT + dayStep) % 1 + 1) % 1;   // +1 before the modulo: dayStep can be negative
     seasonT = (seasonT + deltaMS / (ATMOS.season.cycleSeconds * 1000)) % 1;
     const day = sampleDay(dayT);
     const season = sampleSeason(seasonT);
@@ -1916,6 +1930,8 @@ export function createAtmosphere(): Atmosphere {
       return Math.max(curLight.nightness, Math.max(0, Math.min(1, 1 - nd)));
     },
     setDayT: (v: number) => { dayT = ((v % 1) + 1) % 1; },
+    setDayRate: (v: number) => { dayRate = v; },
+    dayRate: () => dayRate,
     setTerminatorSpread: (v: number | null) => { terminatorSpreadOverride = v; },
     getDayT: () => dayT,
     skyLayer, glazeLayer, glazeLayerB, terminatorLayer, sunCastLayer, airLayer, scarLayer, cloudShadowLayer, fogLayer,
