@@ -6618,7 +6618,16 @@ const boats: Boat[] = [];
 // and fades over a few seconds.
 interface Wreck { x: number; y: number; fx: number; fy: number; color: number; era: number; t: number }
 const wrecks: Wreck[] = [];
+// Wall-clock, like every other transition since #102. This was 8 WORLD-seconds,
+// so at 8x a ship went down in 0.4s -- and then nothing was left of her at all.
 const WRECK_LIFE = 8;
+/** What the sea keeps. Everything on land leaves ruins; until now a ship that
+ *  foundered was deleted eight seconds later and the ocean remembered nothing.
+ *  A hulk is the sea's version of a ruin: a dark shape on the bottom, seen
+ *  through the water, for the rest of the world's life. */
+interface Hulk { x: number; y: number; fx: number; fy: number; era: number; a: number }
+const hulks: Hulk[] = [];
+const HULK_FADE = 0.02;   // settles onto the bottom slowly
 const waterRouteCache = new Map<string, Array<{ row: number; col: number }> | null>();
 let fishSpots: Array<{ x: number; y: number }> = [];
 let whale: { x: number; y: number; t: number } | null = null;
@@ -6906,7 +6915,11 @@ function drawScaffold(bx: number, byBase: number, byTop: number, a: number) {
 }
 
 function updateWater(dt: number, nowSec: number, night: number) {
-  const empty = boats.length === 0 && wrecks.length === 0 && fishSpots.length === 0 && !whale;
+  // Hulks belong in this test. Without them, the moment the last wreck settles
+  // and no boat happens to be at sea, the whole layer stops drawing and every
+  // wreck on the bottom disappears -- which is the opposite of the point.
+  const empty = boats.length === 0 && wrecks.length === 0 && hulks.length === 0
+    && fishSpots.length === 0 && !whale;
   if (empty) { boatsGfx.clear(); return; }
   const S = TRAVELERS.scale;
   boatsGfx.clear();
@@ -6936,10 +6949,22 @@ function updateWater(dt: number, nowSec: number, night: number) {
     if (b.fade >= 1 && k > 1) boatsGfx.circle(x - fx * 4 * S, y - fy * 4 * S, 1.0 * S).fill({ color: 0xffffff, alpha: 0.16 });
     drawBoat(boatsGfx, x, y, fx, fy, b.color, S, night, b.era, Math.min(1, b.fade));
   }
+  // The bottom first, so a fresh wreck sinks over the hulks already there.
+  for (const h of hulks) {
+    h.a += (1 - h.a) * ease(HULK_FADE);
+    if (h.a < 0.01) continue;
+    drawHulk(boatsGfx, h, S);
+  }
   for (let i = wrecks.length - 1; i >= 0; i--) {
     const w = wrecks[i];
-    w.t += dt;
-    if (w.t >= WRECK_LIFE) { wrecks.splice(i, 1); continue; }
+    // Real seconds: a ship going down is something to watch, not something to
+    // simulate, so it takes the same time at 1x and 8x.
+    w.t += realFade;
+    if (w.t >= WRECK_LIFE) {
+      hulks.push({ x: w.x, y: w.y, fx: w.fx, fy: w.fy, era: w.era, a: 0 });
+      wrecks.splice(i, 1);
+      continue;
+    }
     drawWreck(boatsGfx, w, S);
   }
   // Fishing grounds: a little school of silver fish circling, with a ripple —
@@ -6968,6 +6993,64 @@ function updateWater(dt: number, nowSec: number, night: number) {
       }
     }
   }
+}
+
+/** A hull on the bottom. Deliberately quiet: a dark shape with its ribs
+ *  showing, dimmed by the water over it, with no colour left -- a wreck is not
+ *  a monument and should not read as one from orbit. What it does is make the
+ *  sea a place where things have happened. */
+// Wrecks and hulks in SCREEN space, and a way to sink a ship on demand -- a
+// founder is a 0.4%-per-second event, which is not something to sit and wait for.
+(window as any).__wrecks = () => {
+  const proj = (wx: number, wy: number) => atmos.project(wx * captureScale + world.x, wy * captureScale + world.y);
+  return {
+    boats: boats.length,
+    wrecks: wrecks.map((w) => ({ t: +w.t.toFixed(2), ...proj(w.x, w.y) })),
+    hulks: hulks.map((h) => ({ a: +h.a.toFixed(2), era: h.era, ...proj(h.x, h.y) })),
+  };
+};
+(window as any).__sinkAll = () => {
+  let n = 0;
+  for (let i = boats.length - 1; i >= 0; i--) {
+    const b = boats[i];
+    if (b.fade < 1) continue;
+    const last = b.pts.length - 1;
+    const k = Math.min(Math.floor(b.idx), last - 1), u = Math.min(1, b.idx - k);
+    const x = b.pts[k].x + (b.pts[k + 1].x - b.pts[k].x) * u;
+    const y = b.pts[k].y + (b.pts[k + 1].y - b.pts[k].y) * u;
+    let fx = b.pts[k + 1].x - b.pts[k].x, fy = b.pts[k + 1].y - b.pts[k].y;
+    const fl = Math.hypot(fx, fy) || 1; fx /= fl; fy /= fl;
+    wrecks.push({ x, y, fx, fy, color: b.color, era: b.era, t: 0 });
+    boats.splice(i, 1); n++;
+  }
+  return n;
+};
+
+function drawHulk(g: Graphics, h: Hulk, S: number): void {
+  const rx = -h.fy, ry = h.fx;
+  const L = (h.era >= 4 ? 6.4 : 4.6) * S;
+  const W = (h.era >= 4 ? 2.0 : 1.5) * S;
+  const a = h.a * 0.34;   // seen through water, never crisp
+  // The hull, broken-backed: two shallow wedges meeting at an angle rather than
+  // one clean shape, so it reads as wreckage and not a moored boat.
+  g.poly([
+    h.x + h.fx * L, h.y + h.fy * L,
+    h.x + rx * W, h.y + ry * W,
+    h.x - h.fx * L * 0.5 + rx * W * 0.4, h.y - h.fy * L * 0.5 + ry * W * 0.4,
+  ]).fill({ color: 0x243642, alpha: a });
+  g.poly([
+    h.x - h.fx * L * 0.35, h.y - h.fy * L * 0.35,
+    h.x - h.fx * L - rx * W * 0.7, h.y - h.fy * L - ry * W * 0.7,
+    h.x - rx * W * 0.9, h.y - ry * W * 0.9,
+  ]).fill({ color: 0x243642, alpha: a * 0.85 });
+  // Ribs showing through, and a settling of pale silt around her.
+  for (let k = -1; k <= 1; k++) {
+    const t = k * 0.34;
+    g.moveTo(h.x + h.fx * L * t + rx * W * 0.9, h.y + h.fy * L * t + ry * W * 0.9)
+      .lineTo(h.x + h.fx * L * t - rx * W * 0.9, h.y + h.fy * L * t - ry * W * 0.9)
+      .stroke({ color: 0x1b2830, alpha: a * 0.7, width: 0.4 * S });
+  }
+  g.ellipse(h.x, h.y, L * 1.25, W * 1.9).fill({ color: 0xbcd2de, alpha: a * 0.16 });
 }
 
 function maybeWhale(dt: number) {
@@ -7802,6 +7885,8 @@ function resetStorySurfaces() {
   fires.length = 0; fireGfx.clear();
   // The workings belong to the world that cut them.
   mines.length = 0; oldWorkings.length = 0; mineGfx.clear(); mineLightGfx.clear();
+  // The sea keeps its wrecks for the life of the world, and no longer.
+  wrecks.length = 0; hulks.length = 0;
   volcanoes.length = 0; lavaGfx.clear(); lavaGlowGfx.clear();
   plagues.length = 0; plagueGfx.clear();
   faiths.length = 0; faithGfx.clear();
