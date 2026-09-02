@@ -9,6 +9,7 @@ const CORE = [
   '/social-card.png',
   '/manifest.webmanifest',
   '/about/',
+  '/credits/',
   '/privacy/',
   '/terms/',
   '/support/',
