@@ -2385,6 +2385,10 @@ let worldClock = 0;
 // too. At 60fps easeFrames is 1 and ease(r) returns r exactly, so nothing
 // changes on a machine that was already keeping up.
 let easeFrames = 1;
+/** Seconds of REAL time in this frame. Anything that fades something in or out
+ *  should measure with this rather than the world clock, so a transition takes
+ *  the same time to watch at 1x and at 8x. */
+let realFade = 1 / 60;
 function ease(rate: number): number {
   return easeFrames === 1 ? rate : 1 - Math.pow(1 - rate, easeFrames);
 }
@@ -4740,7 +4744,7 @@ function updateRiverCraft(dt: number, night: number) {
     const b = riverBoats[i];
     const last = b.pts.length - 1;
     if (b.fade >= 1) { b.idx += b.speed * dt; if (b.idx >= last) { b.idx = last; b.fade = 0.999; } }
-    else { b.fade -= dt / 1.2; if (b.fade <= 0) { riverBoats.splice(i, 1); continue; } }
+    else { b.fade -= realFade / 1.2; if (b.fade <= 0) { riverBoats.splice(i, 1); continue; } }
     const k = Math.min(Math.floor(b.idx), last - 1), u = Math.min(1, b.idx - k);
     const x = b.pts[k].x + (b.pts[k + 1].x - b.pts[k].x) * u;
     const y = b.pts[k].y + (b.pts[k + 1].y - b.pts[k].y) * u;
@@ -6697,7 +6701,9 @@ function updateWater(dt: number, nowSec: number, night: number) {
       b.idx += b.speed * dt;
       if (b.idx >= last) { b.idx = last; b.fade = 0.999; } // arrived → fade out at the dock
     } else {
-      b.fade -= dt / 1.3;
+      // Wall-clock for the same reason as `easeFrames`: a boat leaving is a
+      // visual transition, and at 8x a 1.3-second fade was 0.16s.
+      b.fade -= realFade / 1.3;
       if (b.fade <= 0) { boats.splice(i, 1); continue; }
     }
     const k = Math.min(Math.floor(b.idx), last - 1), u = Math.min(1, b.idx - k);
@@ -8310,11 +8316,29 @@ app.ticker.add((ticker) => {
   // same split Turn 02 fixed for slow frame rates, still present on the button.
   // Scaling here instead means 2x/4x/8x compresses the whole diorama honestly.
   const worldSeconds = (frameMS / 1000) * timeScale;
+  // Real elapsed time, for anything whose job is to be watchable rather than
+  // to be simulated. Capped at 0.1s so a background tab returning does not
+  // finish every transition in one step.
+  const realSeconds = Math.min(0.1, app.ticker.deltaMS / 1000);
+  realFade = realSeconds;
   worldClock += worldSeconds;
-  // Clamped so a long stall completes a transition rather than doing something
-  // undefined with a huge exponent; at 90 frames (1.5s) any of these eases is
-  // finished anyway.
-  easeFrames = Math.max(1, Math.min(90, worldSeconds * 60));
+  // WALL-CLOCK, not world seconds. This used to be `worldSeconds * 60`, which
+  // tied every visual transition to the speed control -- at 8x a one-second
+  // crossfade finished in 0.125s, which is not a fade, it is a pop. That is the
+  // popping Lawrence noticed across the whole world.
+  //
+  // The distinction that matters: a LIFETIME is a fact about the world, and
+  // speeding the world up should genuinely burn a forest faster. A FADE is a
+  // rendering courtesy about what the eye can follow, and it should take the
+  // same wall-clock time however fast the world is running. Every consumer of
+  // `ease()` is the second kind -- biome crossfades, building floors and roofs,
+  // farm growth, skylines, energy farms -- so this moves all of them at once.
+  //
+  // Frame-rate independence, which is what this was originally for, is
+  // unaffected: a slow machine still gets a larger step and settles in the same
+  // wall-clock time. Clamped so a long stall completes a transition rather than
+  // doing something undefined with a huge exponent.
+  easeFrames = Math.max(1, Math.min(90, realSeconds * 60));
   accumulator += worldSeconds;
   const tickInterval = 1 / ticksPerSecond;
   const frameEvents: SimEvent[] = [];
