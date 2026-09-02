@@ -564,6 +564,11 @@ export interface Atmosphere {
   // Screen-space limb: the mask must be added to the stage (it clips the
   // world plane); the band draws the horizon haze above the plane.
   limbMask: Graphics;
+  /** The horizon as numbers, so a second world-space plane can be clipped to
+   *  the same arc. A Graphics can only mask one target, so anything drawn over
+   *  the world has to rebuild the shape rather than borrow `limbMask`. Null
+   *  while the world is flat and nothing is clipped. */
+  limbShape(): { apexX: number; cy: number; R: number; width: number; height: number } | null;
   limbBand: Container;
   // Seat the limb (call on resize; scrubs re-use the last layout).
   layoutLimb(args: { width: number; height: number; apexX: number; apexY: number }): void;
@@ -761,6 +766,7 @@ export function createAtmosphere(): Atmosphere {
   // plane (the far world disappears behind the horizon); limbBand lays a
   // blurred haze along the arc, tinted live to the horizon color. Both are
   // redrawn by layoutLimb (on resize and on curvature scrubs).
+  let limbClip: { apexX: number; cy: number; R: number; width: number; height: number } | null = null;
   const limbMaskG = new Graphics();
   const limbBand = new Container();
   const limbBandGfx = new Graphics();
@@ -784,6 +790,7 @@ export function createAtmosphere(): Atmosphere {
     if (sag < 2 || !attachedPlane) {
       // Flat: no horizon, no clipping.
       if (attachedPlane) attachedPlane.mask = null;
+      limbClip = null;
       applyCurve();
       return;
     }
@@ -799,6 +806,7 @@ export function createAtmosphere(): Atmosphere {
     // Mask: the circle's upper region plus everything below its center line.
     limbMaskG.circle(apexX, cy, R).fill(0xffffff);
     limbMaskG.rect(-200, cy, width + 400, height + 400).fill(0xffffff);
+    limbClip = { apexX, cy, R, width, height };
     attachedPlane.mask = limbMaskG;
     // Haze band hugging the limb: stacked arc strokes, dense at the horizon
     // line, thinning upward into the sky.
@@ -2177,6 +2185,11 @@ export function createAtmosphere(): Atmosphere {
       layoutLimb();
     },
     limbMask: limbMaskG,
+    /** The horizon as plain numbers, so anything else drawn in world space can
+     *  be clipped to exactly the same arc. A Graphics can only mask one target,
+     *  so a second plane over the world needs to rebuild the shape rather than
+     *  borrow `limbMask`. Null while the world is flat and nothing is clipped. */
+    limbShape: () => limbClip,
     limbBand,
     layoutLimb,
     limbGeometry: () => {

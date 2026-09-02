@@ -1422,6 +1422,17 @@ turnoverGfx.visible = false;
 const wipeMask = new Graphics();
 wipeMask.eventMode = 'none';
 app.stage.addChild(wipeMask);
+// The horizon, rebuilt for the farewell plane. `worldPlane` is already clipped
+// by the atmosphere's own limb mask, and a Graphics can only mask one target --
+// so without this the dying world draws straight past the horizon and hangs in
+// the sky, which is exactly what it did.
+const farewellLimb = new Graphics();
+farewellLimb.eventMode = 'none';
+app.stage.addChild(farewellLimb);
+// The plane is clipped by the limb; its HOLDER is clipped by the wipe. Two
+// masks at two levels compose as an intersection, which one level cannot do.
+const farewellHolder = new Container();
+farewellHolder.eventMode = 'none';
 
 /** Photograph the world that is about to stop existing. Returns false if the
  *  texture could not be made, in which case the caller falls back to the old
@@ -1433,10 +1444,13 @@ function captureFarewell(): boolean {
         width: worldRT.width,
         height: worldRT.height,
         antialias: false,
-        // Three-quarter resolution, and destroyed when the transition ends.
-        // Steady-state memory is unchanged, which matters for #68: this is a
-        // third full-frame texture and it only exists for three seconds.
-        resolution: (_rtOverride ?? QUALITY[qualityLevel].rt) * 0.75,
+        // MUST match worldRT's resolution exactly. At 0.75 the snapshot did not
+        // register with the live world underneath it -- the two horizons sat at
+        // different heights and the wipe showed a visible step between them.
+        // Destroyed when the transition ends, so steady-state memory is still
+        // unchanged for #68; it just costs full size for the three seconds it
+        // is alive.
+        resolution: _rtOverride ?? QUALITY[qualityLevel].rt,
       });
     }
     app.renderer.render({ container: world, target: farewellRT, clear: true });
@@ -1444,12 +1458,14 @@ function captureFarewell(): boolean {
       farewellPlane = new MeshPlane({ texture: farewellRT, verticesX: 110, verticesY: 36 });
       farewellPlane.geometry = worldPlane.geometry;
       farewellPlane.eventMode = 'none';
-      app.stage.addChildAt(farewellPlane, app.stage.getChildIndex(worldPlane) + 1);
+      farewellHolder.addChild(farewellPlane);
+      app.stage.addChildAt(farewellHolder, app.stage.getChildIndex(worldPlane) + 1);
       app.stage.addChildAt(turnoverGfx, app.stage.getChildIndex(worldPlane) + 2);
     }
     farewellPlane.visible = true;
     farewellPlane.alpha = 1;
-    farewellPlane.mask = null;
+    farewellHolder.visible = true;
+    farewellHolder.mask = null;
     turnoverGfx.visible = true;
     return true;
   } catch {
@@ -1479,9 +1495,11 @@ function endTurnover(): void {
   turnoverGfx.clear();
   turnoverGfx.visible = false;
   wipeMask.clear();
+  farewellHolder.mask = null;
+  farewellHolder.visible = false;
+  farewellLimb.clear();
   if (farewellPlane) {
     farewellPlane.mask = null;
-    farewellPlane.visible = false;
     farewellPlane.destroy();
     farewellPlane = null;
   }
@@ -1500,6 +1518,16 @@ function updateTurnover(realDt: number): void {
   turnoverGfx.clear();
   farewellPlane.position.copyFrom(worldPlane.position);
   farewellPlane.scale.copyFrom(worldPlane.scale);
+  // Clip the dying world to the same horizon the living one uses.
+  const limb = atmos.limbShape();
+  if (limb) {
+    farewellLimb.clear();
+    farewellLimb.circle(limb.apexX, limb.cy, limb.R).fill(0xffffff);
+    farewellLimb.rect(-200, limb.cy, limb.width + 400, limb.height + 400).fill(0xffffff);
+    farewellPlane.mask = farewellLimb;
+  } else {
+    farewellPlane.mask = null;
+  }
 
   if (turnover.kind === 'deluge') {
     // The waters rise until nothing is left of the old world, hold a beat, and
@@ -1553,8 +1581,8 @@ function updateTurnover(realDt: number): void {
     const edge = -0.15 * W + u * 1.3 * W;
     wipeMask.clear();
     wipeMask.rect(edge, 0, W * 1.3, H).fill({ color: 0xffffff });
-    farewellPlane.mask = wipeMask;
-    farewellPlane.visible = u < 0.995;
+    farewellHolder.mask = wipeMask;
+    farewellHolder.visible = u < 0.995;
     // A soft light along the leading edge so it reads as something passing
     // over the world rather than the image being cropped.
     for (let k = 0; k < 5; k++) {
