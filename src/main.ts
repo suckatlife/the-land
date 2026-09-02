@@ -1081,6 +1081,12 @@ vehicleLightsGfx.alpha = 0;
 const causewayGfx = new Graphics();  // strait-spanning causeway islands + rail (modern+)
 const cableGfx = new Graphics();     // undersea power/data cables between cities
 const lighthouseGfx = new Graphics(); // coastal lighthouses + sweeping beams at night
+// Offshore rigs. TWO layers on purpose: the platform is steel and should go
+// dark with the rest of the world, so it lives in the world normally; only the
+// flare is emissive. Putting the whole structure in the emissive pass -- which
+// is what the lighthouse does -- would make the steel itself glow at night.
+const rigGfx = new Graphics();       // the platform: legs, deck, derrick
+const rigFlareGfx = new Graphics();  // the gas flare, and only the flare
 const fireGfx = new Graphics();      // wildfires (additive glow)
 fireGfx.blendMode = 'add';
 const lavaGfx = new Graphics();      // molten lava bodies + ash plume (normal blend)
@@ -1189,8 +1195,14 @@ world.addChild(nomadGfx);
 // Worn sea lanes lie on the water, beneath the boats that wear them.
 world.addChild(seaTrailGfx);
 world.addChild(boatsGfx);
+// The platform itself, in the world with the other sea craft so it darkens at
+// night like everything else. Only its flare and lights are emissive. Without
+// this line the structure never rendered at all -- the rig was three lights
+// floating on empty water, invisible by day.
+world.addChild(rigGfx);
 // Lighthouses stand on the headlands, their beams sweeping the night sea.
 emissiveWorld.addChild(lighthouseGfx);
+emissiveWorld.addChild(rigFlareGfx);
 // Wildfires glow over the burning land.
 emissiveWorld.addChild(fireGfx);
 // Volcanic lava creeps over the land and cools into fresh rock.
@@ -4097,6 +4109,166 @@ function rebuildLighthouses() {
     lighthouses.push({ row: land.row, col: land.col, phase: (land.row * 7 + land.col * 13) % 100 });
   }
 }
+// Offshore rigs: from the industrial age, a civ with a coast puts platforms out
+// on the water. They are the only thing this world builds that stands in open
+// sea, and the ocean is a large part of the frame with very little in it.
+//
+// Placed OUT from the shore rather than on it -- a rig hard against the coast
+// reads as a pier. Two tiles of clearance is enough to sit in open water at this
+// scale without drifting off to somewhere the civ has no business being.
+interface Rig { row: number; col: number; phase: number }
+const rigs: Rig[] = [];
+const RIG_PER_CIV = 2;
+
+const rigDiag = { eligibleCivs: 0, cityChecks: 0, waterSeen: 0, bestOpen: 0, placed: 0 };
+(window as any).__rigDiag = () => ({ ...rigDiag, rigs: rigs.length });
+
+function rebuildRigs() {
+  rigs.length = 0;
+  rigDiag.eligibleCivs = 0; rigDiag.cityChecks = 0;
+  rigDiag.waterSeen = 0; rigDiag.bestOpen = 0; rigDiag.placed = 0;
+  // How much open sea surrounds a tile: a rig wants water on most sides, not a
+  // puddle between two headlands. This is what puts the platform offshore --
+  // an earlier version stepped diagonally outward from the first water tile
+  // found near the city, which almost always ran into land or off the map, and
+  // produced no rigs at all in two minutes of world.
+  const openness = (r: number, c: number): number => {
+    let water = 0, seen = 0;
+    for (let dr = -2; dr <= 2; dr++) {
+      for (let dc = -2; dc <= 2; dc++) {
+        const rr = r + dr, cc = c + dc;
+        if (rr < 0 || rr >= GRID_SIZE || cc < 0 || cc >= GRID_SIZE) continue;
+        seen++;
+        if (biomeMap[rr][cc] === 'water') water++;
+      }
+    }
+    return seen ? water / seen : 0;
+  };
+  for (const civ of simWorld.civs.values()) {
+    // `__rigsAnyEra` drops the industrial gate so a rig can be looked at in a
+    // young world. Rigs otherwise need a civ to reach the industrial age, which
+    // is a coin flip inside a world's lifetime and not something to wait on.
+    const eraOk = ERA_RANK[civ.era] >= 3 || (window as any).__rigsAnyEra === true;
+    if (civ.phase === 'dead' || !eraOk || civ.cities.length === 0) continue;
+    rigDiag.eligibleCivs++;
+    let placed = 0;
+    // Busiest cities first, so rigs sit off the industrial coast rather than
+    // off whichever city happens to come first in the list.
+    const ports = [...civ.cities].sort((a, b) => b.prominence - a.prominence);
+    for (const city of ports) {
+      if (placed >= RIG_PER_CIV) break;
+      rigDiag.cityChecks++;
+      // Every water tile in a band around the city, scored on how open the sea
+      // is there. Distance 3-7 keeps it offshore without wandering off to a
+      // stretch of ocean this civ has no business being in.
+      let best: { row: number; col: number; score: number } | null = null;
+      for (let dr = -7; dr <= 7; dr++) {
+        for (let dc = -7; dc <= 7; dc++) {
+          const d = Math.abs(dr) + Math.abs(dc);
+          if (d < 3 || d > 7) continue;
+          const r = city.row + dr, c = city.col + dc;
+          if (r < 0 || r >= GRID_SIZE || c < 0 || c >= GRID_SIZE) continue;
+          if (biomeMap[r][c] !== 'water') continue;
+          if (rigs.some((g) => Math.abs(g.row - r) + Math.abs(g.col - c) < 5)) continue;
+          rigDiag.waterSeen++;
+          const open = openness(r, c);
+          if (open > rigDiag.bestOpen) rigDiag.bestOpen = +open.toFixed(3);
+          if (open < 0.6) continue;            // still too close in
+          // Prefer open water, and nearer the city among equally open spots.
+          const score = open * 10 - d * 0.1;
+          if (!best || score > best.score) best = { row: r, col: c, score };
+        }
+      }
+      if (!best) continue;
+      rigs.push({ row: best.row, col: best.col, phase: (best.row * 11 + best.col * 17) % 100 });
+      placed++;
+      rigDiag.placed++;
+    }
+  }
+}
+
+// Where the rigs are, in screen space. They are small and offshore, so finding
+// one to look at otherwise means scanning the ocean by eye.
+(window as any).__rigs = () => rigs.map((r) => {
+  // gridToScreen gives WORLD coordinates. The world is scaled, offset, rendered
+  // to a texture and then bent through a curved mesh, so world coordinates are
+  // nowhere near screen coordinates -- projecting is the only way to find a rig
+  // on screen.
+  const w = gridToScreen(r.col, r.row);
+  const p = atmos.project(w.x * captureScale + world.x, w.y * captureScale + world.y);
+  return { row: r.row, col: r.col, worldX: w.x, worldY: w.y, x: p.x, y: p.y };
+});
+
+function drawRigs(nowSec: number, night: number): void {
+  rigGfx.clear();
+  rigFlareGfx.clear();
+  if (rigs.length === 0) return;
+  // Landmarks are drawn larger so they do not get lost -- lighthouses use 1.5
+  // for the same reason. At 1.35 a rig came out smaller than the boats around
+  // it and read as a speck rather than a structure.
+  const S = 2.3;
+  for (const rig of rigs) {
+    const { x, y } = gridToScreen(rig.col, rig.row);
+    const deckY = y - 5.4 * S;
+    // Legs down into the water, splayed the way a jacket platform's are.
+    for (const lx of [-3.1, -1.1, 1.1, 3.1]) {
+      rigGfx.moveTo(x + lx * S * 0.55, deckY).lineTo(x + lx * S, y + 1.4 * S)
+        .stroke({ color: 0x4a5058, alpha: 0.9, width: 0.75 * S });
+    }
+    // A little wake where the legs enter the sea, so it sits IN the water
+    // rather than on top of it.
+    rigGfx.ellipse(x, y + 1.5 * S, 4.6 * S, 1.2 * S).fill({ color: 0xdfeaf2, alpha: 0.16 });
+    // Deck.
+    rigGfx.rect(x - 3.9 * S, deckY - 1.5 * S, 7.8 * S, 1.9 * S).fill({ color: 0x69707a, alpha: 0.96 });
+    rigGfx.rect(x - 3.9 * S, deckY - 1.5 * S, 7.8 * S, 0.5 * S).fill({ color: 0x8b939d, alpha: 0.9 });
+    // Derrick: a tapering tower with a couple of cross braces.
+    const dTop = deckY - 7.4 * S;
+    rigGfx.poly([
+      x - 1.5 * S, deckY - 1.5 * S, x + 1.5 * S, deckY - 1.5 * S,
+      x + 0.65 * S, dTop, x - 0.65 * S, dTop,
+    ]).fill({ color: 0x7c848e, alpha: 0.94 });
+    for (const f of [0.32, 0.64]) {
+      const yy = deckY - 1.5 * S - (deckY - 1.5 * S - dTop) * f;
+      const w = 1.5 * S - (1.5 - 0.65) * S * f;
+      rigGfx.moveTo(x - w, yy).lineTo(x + w, yy).stroke({ color: 0x5a626c, alpha: 0.8, width: 0.4 * S });
+    }
+    // Accommodation block on one side.
+    rigGfx.rect(x + 1.9 * S, deckY - 3.6 * S, 2.0 * S, 2.1 * S).fill({ color: 0xd8dde3, alpha: 0.93 });
+
+    // The flare boom, angled off the far side, and the flame at its tip. This
+    // is the part anyone actually notices: a rig at night is a small fire
+    // standing on the sea.
+    const bx = x - 5.6 * S, by = deckY - 3.0 * S;
+    rigGfx.moveTo(x - 3.2 * S, deckY - 1.0 * S).lineTo(bx, by)
+      .stroke({ color: 0x5a626c, alpha: 0.9, width: 0.55 * S });
+    const flick = 0.75 + 0.25 * Math.sin(nowSec * 7 + rig.phase) + 0.12 * Math.sin(nowSec * 17 + rig.phase * 2);
+    const fh = (2.6 + 1.0 * flick) * S;
+    // Drawn into BOTH layers: the world copy keeps it present by day, the
+    // emissive copy is what lets it burn through the night glaze.
+    for (const g of [rigGfx, rigFlareGfx]) {
+      const lift = g === rigFlareGfx ? night : 1;
+      if (lift < 0.02) continue;
+      g.poly([bx - 0.9 * S, by, bx + 0.9 * S, by, bx + 0.25 * S, by - fh, bx - 0.35 * S, by - fh * 0.8])
+        .fill({ color: 0xffa23c, alpha: 0.85 * lift });
+      g.poly([bx - 0.45 * S, by, bx + 0.45 * S, by, bx, by - fh * 0.62])
+        .fill({ color: 0xffe9b0, alpha: 0.95 * lift });
+      // The glow it throws on the sea and its own smoke.
+      g.circle(bx, by - fh * 0.35, 4.2 * S * (0.85 + 0.15 * flick))
+        .fill({ color: 0xff9430, alpha: 0.16 * lift });
+    }
+    if (night > 0.05) {
+      // Deck lighting, and the aircraft warning light on the derrick.
+      for (let k = 0; k < 4; k++) {
+        rigFlareGfx.circle(x - 2.8 * S + k * 1.9 * S, deckY - 1.9 * S, 0.42 * S)
+          .fill({ color: 0xffeec4, alpha: 0.85 * night });
+      }
+      const beat = 0.4 + 0.6 * Math.sin(nowSec * 2.4 + rig.phase);
+      rigFlareGfx.circle(x, dTop - 0.5 * S, 0.6 * S)
+        .fill({ color: 0xff6a5a, alpha: night * (0.35 + 0.5 * beat) });
+    }
+  }
+}
+
 function drawLighthouses(nowSec: number, night: number) {
   lighthouseGfx.clear();
   if (lighthouses.length === 0) return;
@@ -8298,6 +8470,7 @@ app.ticker.add((ticker) => {
   updateOrbitalRing(dtSec, nowSec, n);
   drawCauseways();
   drawLighthouses(nowSec, n);
+  drawRigs(nowSec, n);
   // Act 4 holds the world, and freezing step() was not enough to do it: these
   // systems live in the renderer but mutate the map — fire turns forest to
   // grass, plague turns built tiles to ruins, floods and droughts rewrite
@@ -8378,6 +8551,7 @@ app.ticker.add((ticker) => {
     rebuildPowerLines();
     rebuildCables();
     rebuildLighthouses();
+    rebuildRigs();
     rebuildEnergyFarms();
     rebuildMegastructures();
     rebuildBridges();
