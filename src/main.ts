@@ -1391,6 +1391,180 @@ app.stage.addChild(atmos.auroraLayer);
 // only shows where it climbs above the horizon into the sky.
 app.stage.addChild(ringBackGfx);
 app.stage.addChild(worldPlane);
+
+// --- the turnover -----------------------------------------------------------
+//
+// A world used to be replaced by a fade to black. That is a cut, not an ending:
+// it carries no information, and once the end cards were removed it was
+// indistinguishable from a rendering fault -- Lawrence watched several and read
+// them as a bug in the lighting.
+//
+// A world now leaves the way it actually died. `committedEnding.apocalypse` has
+// been decided for ~102 world-seconds by this point, so the transition is not a
+// random flourish; it is the last thing the world does, and it tells you what
+// happened without a card.
+//
+// The mechanism: the dying world is captured into its own texture the instant
+// before the reset and drawn over the live one, which is already the NEW world.
+// So both are on screen at once, and taking the old one away reveals the new.
+// Same trick as the emissive pass -- geometry is shared with `worldPlane`, so
+// the farewell curves with the globe for free.
+type TurnoverKind = 'dissolve' | 'deluge' | 'impact';
+let farewellRT: RenderTexture | null = null;
+let farewellPlane: MeshPlane | null = null;
+let turnover: { kind: TurnoverKind; t: number; dur: number; ix: number; iy: number } | null = null;
+// Water, flash and shockwave. Above the farewell plane, below the limb and the
+// glaze, so the whole transition is lit by the same light as the world.
+const turnoverGfx = new Graphics();
+turnoverGfx.eventMode = 'none';
+turnoverGfx.visible = false;
+// The wipe's edge. A mask has to be in the scene graph to work.
+const wipeMask = new Graphics();
+wipeMask.eventMode = 'none';
+app.stage.addChild(wipeMask);
+
+/** Photograph the world that is about to stop existing. Returns false if the
+ *  texture could not be made, in which case the caller falls back to the old
+ *  fade -- a turnover must never fail to happen. */
+function captureFarewell(): boolean {
+  try {
+    if (!farewellRT) {
+      farewellRT = RenderTexture.create({
+        width: worldRT.width,
+        height: worldRT.height,
+        antialias: false,
+        // Three-quarter resolution, and destroyed when the transition ends.
+        // Steady-state memory is unchanged, which matters for #68: this is a
+        // third full-frame texture and it only exists for three seconds.
+        resolution: (_rtOverride ?? QUALITY[qualityLevel].rt) * 0.75,
+      });
+    }
+    app.renderer.render({ container: world, target: farewellRT, clear: true });
+    if (!farewellPlane) {
+      farewellPlane = new MeshPlane({ texture: farewellRT, verticesX: 110, verticesY: 36 });
+      farewellPlane.geometry = worldPlane.geometry;
+      farewellPlane.eventMode = 'none';
+      app.stage.addChildAt(farewellPlane, app.stage.getChildIndex(worldPlane) + 1);
+      app.stage.addChildAt(turnoverGfx, app.stage.getChildIndex(worldPlane) + 2);
+    }
+    farewellPlane.visible = true;
+    farewellPlane.alpha = 1;
+    farewellPlane.mask = null;
+    turnoverGfx.visible = true;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Run a turnover on demand, with a chosen ending. A real one is 17,000+ ticks
+// away, so without this the only way to look at a transition is to wait for a
+// world to die.
+(window as any).__turnover = (kind: TurnoverKind = 'dissolve') => {
+  if (!captureFarewell()) return 'capture failed';
+  turnover = {
+    kind, t: 0,
+    dur: kind === 'deluge' ? 3.8 : kind === 'impact' ? 2.9 : 2.3,
+    ix: window.innerWidth * 0.5,
+    iy: window.innerHeight * 0.42,
+  };
+  return kind;
+};
+(window as any).__turnoverState = () => (turnover
+  ? { kind: turnover.kind, t: +turnover.t.toFixed(2), u: +(turnover.t / turnover.dur).toFixed(3) }
+  : null);
+
+function endTurnover(): void {
+  turnover = null;
+  turnoverGfx.clear();
+  turnoverGfx.visible = false;
+  wipeMask.clear();
+  if (farewellPlane) {
+    farewellPlane.mask = null;
+    farewellPlane.visible = false;
+    farewellPlane.destroy();
+    farewellPlane = null;
+  }
+  if (farewellRT) { farewellRT.destroy(true); farewellRT = null; }
+}
+
+/** Run the transition. REAL seconds, not world seconds: at 8x a world-timed
+ *  transition is a 0.4-second blink, which is how the old fade managed to read
+ *  as a glitch. An ending should take the same time to watch however fast the
+ *  world is running. */
+function updateTurnover(realDt: number): void {
+  if (!turnover || !farewellPlane) return;
+  turnover.t += realDt;
+  const u = Math.min(1, turnover.t / turnover.dur);
+  const W = window.innerWidth, H = window.innerHeight;
+  turnoverGfx.clear();
+  farewellPlane.position.copyFrom(worldPlane.position);
+  farewellPlane.scale.copyFrom(worldPlane.scale);
+
+  if (turnover.kind === 'deluge') {
+    // The waters rise until nothing is left of the old world, hold a beat, and
+    // go back down over new continents. The swap happens under the water, so
+    // there is no seam to hide -- the water IS the hiding.
+    const rise = u < 0.42 ? u / 0.42 : u < 0.58 ? 1 : 1 - (u - 0.58) / 0.42;
+    const eased = rise * rise * (3 - 2 * rise);
+    const level = H * (1.06 - 1.20 * eased);
+    farewellPlane.visible = eased < 0.985;   // gone once submerged
+    turnoverGfx.rect(0, level, W, H - level).fill({ color: 0x2c5c84, alpha: 0.94 });
+    // A wavy crest rather than a ruled line, and a pale foam edge on it.
+    for (let x = -40; x < W + 40; x += 26) {
+      const wob = Math.sin(x * 0.011 + turnover.t * 2.1) * 7
+        + Math.sin(x * 0.027 - turnover.t * 1.3) * 3.5;
+      turnoverGfx.ellipse(x, level + wob, 20, 9).fill({ color: 0x2c5c84, alpha: 0.94 });
+      turnoverGfx.ellipse(x, level + wob - 2, 17, 3).fill({ color: 0xbfe0f2, alpha: 0.30 });
+    }
+  } else if (turnover.kind === 'impact') {
+    // Something arrived. A white instant, a ring crossing the whole sky, and the
+    // old world thrown outward from where it struck.
+    const push = u * u;
+    farewellPlane.scale.set(worldPlane.scale.x * (1 + push * 0.16), worldPlane.scale.y * (1 + push * 0.16));
+    farewellPlane.alpha = Math.max(0, 1 - push * 1.5);
+    farewellPlane.visible = farewellPlane.alpha > 0.01;
+    if (u < 0.14) {
+      turnoverGfx.rect(0, 0, W, H).fill({ color: 0xfff4dc, alpha: (1 - u / 0.14) * 0.92 });
+    }
+    const reach = Math.hypot(W, H);
+    for (let k = 0; k < 3; k++) {
+      const ru = Math.max(0, u - k * 0.06);
+      if (ru <= 0 || ru >= 1) continue;
+      turnoverGfx.circle(turnover.ix, turnover.iy, ru * reach * 0.95)
+        .stroke({ color: k === 0 ? 0xfff0cc : 0xd9a878, alpha: (1 - ru) * (0.5 - k * 0.13), width: 1 + 6 * (1 - ru) });
+    }
+    // A dark bloom at the point of impact rather than a ring of discs. Nine
+    // circles thrown outward read as nine circles; what sells an impact is the
+    // sky going wrong above the place it happened.
+    const bloom = Math.sin(Math.PI * Math.min(1, u * 1.3));
+    for (let k = 0; k < 4; k++) {
+      turnoverGfx.ellipse(
+        turnover.ix, turnover.iy,
+        (70 + k * 95) * (0.5 + u * 1.4),
+        (40 + k * 55) * (0.5 + u * 1.4),
+      ).fill({ color: 0x4a3b2c, alpha: bloom * (0.13 - k * 0.028) });
+    }
+  } else {
+    // The quiet ending, and the common one: the old world thins away from one
+    // side and the new one is simply there behind it. Deliberately the least
+    // eventful of the three -- most worlds end quietly, and a spectacle every
+    // ten minutes would be exhausting.
+    const edge = -0.15 * W + u * 1.3 * W;
+    wipeMask.clear();
+    wipeMask.rect(edge, 0, W * 1.3, H).fill({ color: 0xffffff });
+    farewellPlane.mask = wipeMask;
+    farewellPlane.visible = u < 0.995;
+    // A soft light along the leading edge so it reads as something passing
+    // over the world rather than the image being cropped.
+    for (let k = 0; k < 5; k++) {
+      turnoverGfx.rect(edge - k * 13, 0, 13, H)
+        .fill({ color: 0xf2ead8, alpha: (0.16 - k * 0.03) * Math.sin(Math.PI * u) });
+    }
+  }
+
+  if (u >= 1) endTurnover();
+}
 // The limb mask clips the plane at the circular horizon; it must live in the
 // tree. The band lays horizon haze along the arc, above the plane.
 app.stage.addChild(atmos.limbMask);
@@ -7868,9 +8042,27 @@ function beginWorldEnding() {
     simWorld, biomeMap, currentWorldHistory, currentWorldFate, committedEnding?.ending,
   );
   accumulator = 0;
+  // Photograph the dying world BEFORE the reset -- afterwards it does not exist.
+  const captured = captureFarewell();
+  const apocalypse = committedEnding?.apocalypse ?? 'quiet';
   resetWorld(randomSeed(), outcome.kind, outcome);
   trackEvent('world_generated', { source: 'automatic' });
-  blackout = 1; blackoutHold = BLACKOUT_HOLD;
+  if (captured) {
+    // How it died decides how it leaves. `impact` and `deluge` are roughly one
+    // ending in six each, so most turnovers are the quiet dissolve and the
+    // dramatic ones stay rare enough to still mean something.
+    const kind: TurnoverKind = apocalypse === 'deluge' ? 'deluge'
+      : apocalypse === 'impact' ? 'impact' : 'dissolve';
+    turnover = {
+      kind, t: 0,
+      dur: kind === 'deluge' ? 3.8 : kind === 'impact' ? 2.9 : 2.3,
+      ix: window.innerWidth * (0.3 + Math.random() * 0.4),
+      iy: window.innerHeight * (0.32 + Math.random() * 0.3),
+    };
+  } else {
+    // The texture could not be made. A turnover must still happen.
+    blackout = 1; blackoutHold = BLACKOUT_HOLD;
+  }
 }
 
 // Rare celestial events get a narrated line — wonder, not warning.
@@ -8050,6 +8242,9 @@ app.ticker.add((ticker) => {
   } else if (blackoutGfx.visible) {
     blackoutGfx.visible = false;
   }
+  // Real seconds: an ending should take the same time to watch whatever speed
+  // the world is running at.
+  updateTurnover(Math.min(0.1, app.ticker.deltaMS / 1000));
   updateSmoke(dtSec);
   // Declared here rather than lower down so the land transitions below can be
   // gated too: a field growing into view during act 4 is the world still
