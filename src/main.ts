@@ -6457,7 +6457,13 @@ function maybeSpawnPlanes() {
 });
 
 function maybeSpawnRockets(dt: number) {
-  if (rockets.length >= 3 || Math.random() > dt / 26) return;
+  // `dt` here is worldSeconds -- the SPEED-SCALED clock, not real time. At 8x
+  // the old mean of 26 fired roughly every three seconds of watching, which is
+  // a barrage rather than an occasional launch. Keeping it on world time is
+  // right (a launch is something a civilization does, so more world time should
+  // mean more launches) but the interval has to be sized for the fast end:
+  // 220 world-seconds is about every 27 seconds at 8x and a few minutes at 1x.
+  if (rockets.length >= 2 || Math.random() > dt / 220) return;
   const posts = [...simWorld.civs.values()].filter((c) => c.phase !== 'dead' && ERA_RANK[c.era] >= 4 && c.cities.length);
   if (!posts.length) return;
   const civ = posts[Math.floor(Math.random() * posts.length)];
@@ -6697,12 +6703,25 @@ function updateAir(dt: number, night: number) {
       // standing as a straight column, and the older (lower) puffs have grown
       // biggest, so the pillar is broad at the bottom and thins with height.
       const drift = p.t * p.t * 2.2;
+      // Same reasoning as the pad cloud: smoke is lit by the sun, so there is
+      // very little of it to see at night.
+      const trailDim = 1 - 0.65 * night;
       skyStructGfx.circle(p.x + drift, p.y - p.t * 3.2, p.r)
-        .fill({ color: 0xe8eef2, alpha: pa * 0.42 });
+        .fill({ color: 0xe8eef2, alpha: pa * 0.42 * trailDim });
       skyStructGfx.circle(p.x + drift * 0.7, p.y - p.t * 3.2 + p.r * 0.3, p.r * 0.7)
-        .fill({ color: 0xfbfdff, alpha: pa * 0.3 });
+        .fill({ color: 0xfbfdff, alpha: pa * 0.3 * trailDim });
     }
     if (!aloft) continue; // rocket itself is gone; just let the trail dissipate
+
+    // `skyStructGfx` is drawn ABOVE the glaze, so unlike everything on the
+    // ground it does not darken when the world does -- a launch kept its full
+    // daylight brightness at midnight and blew out the frame. Exhaust smoke is
+    // only visible by reflected sunlight, so it loses most of its brightness
+    // after dark; the flame makes its own light and loses less. The gap between
+    // the two factors is what a night launch actually looks like: a hard bright
+    // flame with almost no visible smoke around it.
+    const flameDim = 1 - 0.42 * night;
+    const smokeDim = 1 - 0.65 * night;
 
     // --- the vehicle ------------------------------------------------------
     // Launch vehicles are LONG. A Falcon 9 is 70m tall and 3.7m across, close
@@ -6737,7 +6756,7 @@ function updateAir(dt: number, night: number) {
       skyStructGfx.ellipse(rk.x, yy, wid, 2.6)
         .fill({
           color: t < 0.22 ? 0xfff8e2 : t < 0.6 ? 0xffb257 : 0xff7a30,
-          alpha: (1 - t) * 0.72,
+          alpha: (1 - t) * 0.72 * flameDim,
         });
     }
     for (let d = 0; d < 3; d++) {
@@ -6748,7 +6767,7 @@ function updateAir(dt: number, night: number) {
         rk.x + NOZ * 0.8 * sc, yy,
         rk.x, yy + 1.7 * sc,
         rk.x - NOZ * 0.8 * sc, yy,
-      ]).fill({ color: 0xfffdf4, alpha: 0.8 * sc });
+      ]).fill({ color: 0xfffdf4, alpha: 0.8 * sc * flameDim });
     }
 
     // --- the pad ----------------------------------------------------------
@@ -6766,13 +6785,13 @@ function updateAir(dt: number, night: number) {
           const px = rk.x + side * (5 + k * reach * 0.24);
           const py = rk.y0 - 1 - k * 1.5 + Math.sin(k * 1.7 + rk.x) * 1.3;
           skyStructGfx.ellipse(px, py, 7 + k * 3.2, 3.2 + k * 1.3)
-            .fill({ color: 0xf3f6f7, alpha: 0.46 * punch * decay * (1 - k / 6) });
+            .fill({ color: 0xf3f6f7, alpha: 0.46 * punch * decay * (1 - k / 6) * smokeDim });
         }
       }
       // The flash in the trench itself, brief and warm.
       if (rk.t < 1.0) {
         skyStructGfx.ellipse(rk.x, rk.y0, 15 * (1 - rk.t), 5 * (1 - rk.t))
-          .fill({ color: 0xffd070, alpha: 0.3 * (1 - rk.t) });
+          .fill({ color: 0xffd070, alpha: 0.3 * (1 - rk.t) * flameDim });
       }
     }
   }
