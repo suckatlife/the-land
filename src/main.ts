@@ -1085,6 +1085,11 @@ const lighthouseGfx = new Graphics(); // coastal lighthouses + sweeping beams at
 // dark with the rest of the world, so it lives in the world normally; only the
 // flare is emissive. Putting the whole structure in the emissive pass -- which
 // is what the lighthouse does -- would make the steel itself glow at night.
+// Mines, and the workings they leave behind. Two layers for the same reason as
+// the rigs: cut rock and spoil should darken with the world, and only the lamps
+// at the pithead belong in the emissive pass.
+const mineGfx = new Graphics();      // the cut, the spoil, the headframe
+const mineLightGfx = new Graphics(); // pithead lamps at night
 const rigGfx = new Graphics();       // the platform: legs, deck, derrick
 const rigFlareGfx = new Graphics();  // the gas flare, and only the flare
 const fireGfx = new Graphics();      // wildfires (additive glow)
@@ -1203,6 +1208,7 @@ world.addChild(rigGfx);
 // Lighthouses stand on the headlands, their beams sweeping the night sea.
 emissiveWorld.addChild(lighthouseGfx);
 emissiveWorld.addChild(rigFlareGfx);
+emissiveWorld.addChild(mineLightGfx);
 // Wildfires glow over the burning land.
 emissiveWorld.addChild(fireGfx);
 // Volcanic lava creeps over the land and cools into fresh rock.
@@ -1217,6 +1223,9 @@ world.addChild(floodGfx);
 // Drought parches the land brown and cracked.
 world.addChild(droughtGfx);
 // Renewable farms sit on open land near cities, beneath the megastructures.
+// Under the buildings and roads: a mine is cut INTO the ground, so anything
+// built on the same tile should sit on top of it.
+world.addChild(mineGfx);
 world.addChild(energyGfx);
 // Natural wonders' standing forms (volcano cone + plume, monolith, spires)
 // tower over the land like the megastructures, above the buildings around them.
@@ -4126,6 +4135,213 @@ const RIG_PER_CIV = 2;
 
 const rigDiag = { eligibleCivs: 0, cityChecks: 0, waterSeen: 0, bestOpen: 0, placed: 0 };
 (window as any).__rigDiag = () => ({ ...rigDiag, rigs: rigs.length });
+
+// Mines: what a civilization takes OUT of a world.
+//
+// Everything else this world builds sits on the land. A mine is the one thing
+// that removes some of it, and the cut stays after the people are gone -- which
+// is the same argument the ruins make, applied to the one kind of mark the
+// world did not yet keep. Mountains were the only region here that was scenery
+// rather than a place; this gives them something to be for.
+interface Mine { row: number; col: number; era: number; phase: number; a: number; dying?: boolean }
+const mines: Mine[] = [];
+// Abandoned workings. A mine fades out when its civ dies; the hole it made does
+// not. These are only cleared when the world is.
+interface Working { row: number; col: number; phase: number; a: number }
+const oldWorkings: Working[] = [];
+// Tiles from a city that count as reachable. Six was far too tight: rock is
+// only 0.4% of the world, and a run went its whole length with ZERO rock
+// within six of any city. Fourteen on a 96-grid is still local -- a day or two
+// over the hills -- and it is what makes "there is a mountain near a city"
+// actually happen rather than being theoretically true.
+const MINE_REACH = 14;    // how far a civ will go for ore
+const MINE_PER_CIV = 3;   // and how many seams it actually works
+const MINE_MIN_GAP = 4;   // spread along the range, not clustered at its edge
+const MINE_FADE = 0.05;      // per-frame ease, wall-clock since #102
+const WORKING_FADE = 0.012;  // the scar settles in slower than the mine leaves
+
+function mineTileValid(r: number, c: number): boolean {
+  return r >= 0 && r < GRID_SIZE && c >= 0 && c < GRID_SIZE && biomeMap[r][c] === 'rock';
+}
+
+function rebuildMines() {
+  // Reach generously, then take only the best few.
+  //
+  // Rock density swings enormously between worlds -- one measured 38 rock tiles
+  // in a 96x96 grid, another had hundreds -- so a single rule cannot be both
+  // reliable and restrained. A tight reach (6) went whole runs with ZERO rock
+  // near any city; an open one with no cap put 573 mines on the map and turned
+  // a mountain range into a quarry.
+  //
+  // So: look far enough to find the mountains a civ actually lives near, and
+  // work only the handful nearest each city. A civilization with a range on its
+  // doorstep gets mines; one on a plain gets none; nobody gets a carpet.
+  const live = new Set<number>();
+  for (const civ of simWorld.civs.values()) {
+    if (civ.phase === 'dead' || ERA_RANK[civ.era] < 1 || civ.cities.length === 0) continue;
+    // Every reachable seam for this civ, nearest first.
+    const seams: Array<{ r: number; c: number; d: number }> = [];
+    const seen = new Set<number>();
+    for (const city of civ.cities) {
+      for (let dr = -MINE_REACH; dr <= MINE_REACH; dr++) {
+        for (let dc = -MINE_REACH; dc <= MINE_REACH; dc++) {
+          const d = Math.abs(dr) + Math.abs(dc);
+          if (d < 1 || d > MINE_REACH) continue;
+          const r = city.row + dr, c = city.col + dc;
+          if (!mineTileValid(r, c)) continue;
+          const key = r * GRID_SIZE + c;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          seams.push({ r, c, d });
+        }
+      }
+    }
+    // Nearest first, and position breaks ties so the choice is deterministic
+    // rather than depending on iteration order.
+    seams.sort((a, b) => a.d - b.d || (a.r * GRID_SIZE + a.c) - (b.r * GRID_SIZE + b.c));
+    let placed = 0;
+    for (const s of seams) {
+      if (placed >= MINE_PER_CIV) break;
+      const key = s.r * GRID_SIZE + s.c;
+      if (live.has(key)) continue;
+      // Spread them along the range instead of clustering on the near edge of
+      // it, which is what sorting purely by distance would do.
+      if (mines.some((g) => !g.dying && Math.abs(g.row - s.r) + Math.abs(g.col - s.c) < MINE_MIN_GAP
+        && !(g.row === s.r && g.col === s.c))) continue;
+      live.add(key);
+      const here = mines.find((g) => g.row === s.r && g.col === s.c);
+      if (here) {
+        here.dying = false;
+        here.era = Math.max(here.era, ERA_RANK[civ.era]);   // a civ that advances re-equips its workings
+      } else {
+        mines.push({ row: s.r, col: s.c, era: ERA_RANK[civ.era], phase: (s.r * 13 + s.c * 7) % 100, a: 0 });
+      }
+      placed++;
+    }
+  }
+  // Anything nobody worked this pass is closing.
+  for (const g of mines) {
+    if (!live.has(g.row * GRID_SIZE + g.col) || !mineTileValid(g.row, g.col)) g.dying = true;
+  }
+}
+
+/** The cut and the spoil. Shared by a working mine and an abandoned one, so an
+ *  old working is recognisably the same hole with the people taken away. */
+function drawCut(g: Graphics, x: number, y: number, phase: number, a: number, weathered: boolean): void {
+  const S = 1.6;
+  const rnd = (k: number) => tileRand(Math.round(x), Math.round(y), k + phase);
+  // Benches cut into the slope: pale stepped ledges, lighter than the rock.
+  const face = weathered ? 0x8e8779 : 0xa79c88;
+  for (let b = 0; b < 3; b++) {
+    const w = (9 - b * 2.1) * S, h = 1.5 * S;
+    g.ellipse(x, y - 1.4 * S - b * 1.7 * S, w, h)
+      .fill({ color: lerpColor(face, 0xffffff, b * 0.12), alpha: (weathered ? 0.55 : 0.8) * a });
+  }
+  // A dark adit at the foot of the cut -- the part that is actually a hole.
+  g.ellipse(x, y - 0.6 * S, 2.1 * S, 1.0 * S).fill({ color: 0x2b2620, alpha: (weathered ? 0.6 : 0.85) * a });
+  // Spoil tipped downhill, which is what makes a mine read as a mine from
+  // above: the material has to have gone somewhere.
+  for (let k = 0; k < 4; k++) {
+    const ox = (rnd(k * 3 + 1) - 0.5) * 17;
+    const oy = 1.6 * S + rnd(k * 3 + 2) * 3.4;
+    g.ellipse(x + ox, y + oy, (2.6 + rnd(k * 3 + 3) * 1.8) * S, (1.0 + rnd(k * 3 + 3) * 0.6) * S)
+      .fill({ color: weathered ? 0x7d7466 : 0x8c8172, alpha: (weathered ? 0.45 : 0.7) * a });
+  }
+}
+
+// Positions in SCREEN space, projected through the curved mesh. World
+// coordinates are nowhere near screen coordinates, which cost several wasted
+// captures when the rigs went in.
+(window as any).__mines = () => {
+  const proj = (row: number, col: number) => {
+    const w = gridToScreen(col, row);
+    return atmos.project(w.x * captureScale + world.x, w.y * captureScale + world.y);
+  };
+  // How much workable rock a civ can actually reach. If this is near zero the
+  // feature cannot fire however correct the placement code is.
+  let rockTotal = 0, rockNearCity = 0;
+  for (let r = 0; r < GRID_SIZE; r++) for (let c = 0; c < GRID_SIZE; c++) if (biomeMap[r][c] === 'rock') rockTotal++;
+  const seen = new Set<number>();
+  for (const civ of simWorld.civs.values()) {
+    if (civ.phase === 'dead') continue;
+    for (const city of civ.cities) {
+      for (let dr = -6; dr <= 6; dr++) for (let dc = -6; dc <= 6; dc++) {
+        const d = Math.abs(dr) + Math.abs(dc);
+        if (d < 1 || d > 6) continue;
+        const r = city.row + dr, c = city.col + dc;
+        if (!mineTileValid(r, c)) continue;
+        const k = r * GRID_SIZE + c;
+        if (!seen.has(k)) { seen.add(k); rockNearCity++; }
+      }
+    }
+  }
+  return {
+    rockTotal, rockNearCity,
+    mines: mines.map((g) => ({ row: g.row, col: g.col, era: g.era, a: +g.a.toFixed(2), dying: !!g.dying, ...proj(g.row, g.col) })),
+    workings: oldWorkings.map((w) => ({ row: w.row, col: w.col, a: +w.a.toFixed(2), ...proj(w.row, w.col) })),
+  };
+};
+
+function drawMines(nowSec: number, night: number): void {
+  mineGfx.clear();
+  mineLightGfx.clear();
+
+  // Old workings first, so a re-opened mine draws over its own scar.
+  for (const w of oldWorkings) {
+    w.a += (1 - w.a) * ease(WORKING_FADE);
+    if (w.a < 0.01) continue;
+    const { x, y } = gridToScreen(w.col, w.row);
+    drawCut(mineGfx, x, y, w.phase, w.a * 0.85, true);
+  }
+
+  for (let i = mines.length - 1; i >= 0; i--) {
+    const g = mines[i];
+    const target = g.dying ? 0 : 1;
+    g.a += (target - g.a) * ease(MINE_FADE);
+    if (g.dying && g.a < 0.02) {
+      // The people go; the hole stays.
+      if (!oldWorkings.some((w) => w.row === g.row && w.col === g.col)) {
+        oldWorkings.push({ row: g.row, col: g.col, phase: g.phase, a: 0.6 });
+      }
+      mines.splice(i, 1);
+      continue;
+    }
+    if (g.a < 0.01) continue;
+    const { x, y } = gridToScreen(g.col, g.row);
+    drawCut(mineGfx, x, y, g.phase, g.a, false);
+    const S = 1.6;
+    if (g.era >= 3) {
+      // A headframe over the shaft once there is machinery to sink one: two
+      // legs, a winding wheel, and a hoist house beside it.
+      const hy = y - 2.2 * S;
+      mineGfx.moveTo(x - 1.9 * S, hy).lineTo(x, hy - 6.2 * S)
+        .stroke({ color: 0x54504a, alpha: 0.92 * g.a, width: 0.7 * S });
+      mineGfx.moveTo(x + 1.9 * S, hy).lineTo(x, hy - 6.2 * S)
+        .stroke({ color: 0x54504a, alpha: 0.92 * g.a, width: 0.7 * S });
+      mineGfx.circle(x, hy - 6.4 * S, 1.15 * S).stroke({ color: 0x6d6862, alpha: 0.95 * g.a, width: 0.55 * S });
+      mineGfx.rect(x + 2.4 * S, hy - 2.6 * S, 3.0 * S, 2.6 * S).fill({ color: 0x7a7268, alpha: 0.93 * g.a });
+    } else {
+      // Before that: timber staging and a spoil ramp at the mouth.
+      mineGfx.moveTo(x - 2.4 * S, y - 0.4 * S).lineTo(x - 2.4 * S, y - 3.1 * S)
+        .stroke({ color: 0x6a5844, alpha: 0.85 * g.a, width: 0.55 * S });
+      mineGfx.moveTo(x + 2.4 * S, y - 0.4 * S).lineTo(x + 2.4 * S, y - 3.1 * S)
+        .stroke({ color: 0x6a5844, alpha: 0.85 * g.a, width: 0.55 * S });
+      mineGfx.moveTo(x - 2.8 * S, y - 3.1 * S).lineTo(x + 2.8 * S, y - 3.1 * S)
+        .stroke({ color: 0x6a5844, alpha: 0.85 * g.a, width: 0.5 * S });
+    }
+    // Lamps at the pithead. A mine works through the night, which is most of
+    // why it is worth seeing one from here.
+    if (night > 0.05) {
+      const glow = 0.75 + 0.25 * Math.sin(nowSec * 1.7 + g.phase);
+      for (let k = 0; k < 3; k++) {
+        mineLightGfx.circle(x - 2.4 * S + k * 2.4 * S, y - 2.9 * S, 0.5 * S)
+          .fill({ color: 0xffe3a8, alpha: 0.8 * night * g.a });
+      }
+      mineLightGfx.circle(x, y - 2.2 * S, 5.0 * S)
+        .fill({ color: 0xffb867, alpha: 0.10 * night * g.a * glow });
+    }
+  }
+}
 
 function rebuildRigs() {
   rigs.length = 0;
@@ -7584,6 +7800,8 @@ function resetStorySurfaces() {
   cables.length = 0; cableGfx.clear();
   lighthouses.length = 0; lighthouseGfx.clear();
   fires.length = 0; fireGfx.clear();
+  // The workings belong to the world that cut them.
+  mines.length = 0; oldWorkings.length = 0; mineGfx.clear(); mineLightGfx.clear();
   volcanoes.length = 0; lavaGfx.clear(); lavaGlowGfx.clear();
   plagues.length = 0; plagueGfx.clear();
   faiths.length = 0; faithGfx.clear();
@@ -8495,6 +8713,7 @@ app.ticker.add((ticker) => {
   drawCauseways();
   drawLighthouses(nowSec, n);
   drawRigs(nowSec, n);
+  drawMines(nowSec, n);
   // Act 4 holds the world, and freezing step() was not enough to do it: these
   // systems live in the renderer but mutate the map — fire turns forest to
   // grass, plague turns built tiles to ruins, floods and droughts rewrite
@@ -8576,6 +8795,7 @@ app.ticker.add((ticker) => {
     rebuildCables();
     rebuildLighthouses();
     rebuildRigs();
+    rebuildMines();
     rebuildEnergyFarms();
     rebuildMegastructures();
     rebuildBridges();
