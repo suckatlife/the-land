@@ -4149,7 +4149,14 @@ const mines: Mine[] = [];
 // not. These are only cleared when the world is.
 interface Working { row: number; col: number; phase: number; a: number }
 const oldWorkings: Working[] = [];
-const MINE_PER_CIV = 2;
+// Tiles from a city that count as reachable. Six was far too tight: rock is
+// only 0.4% of the world, and a run went its whole length with ZERO rock
+// within six of any city. Fourteen on a 96-grid is still local -- a day or two
+// over the hills -- and it is what makes "there is a mountain near a city"
+// actually happen rather than being theoretically true.
+const MINE_REACH = 14;    // how far a civ will go for ore
+const MINE_PER_CIV = 3;   // and how many seams it actually works
+const MINE_MIN_GAP = 4;   // spread along the range, not clustered at its edge
 const MINE_FADE = 0.05;      // per-frame ease, wall-clock since #102
 const WORKING_FADE = 0.012;  // the scar settles in slower than the mine leaves
 
@@ -4158,62 +4165,61 @@ function mineTileValid(r: number, c: number): boolean {
 }
 
 function rebuildMines() {
-  // Same shape as the energy farms: nothing vanishes on the spot. A mine whose
-  // rock is gone (buried, drowned, blasted) is flagged dying and eases out in
-  // the draw loop, and one whose civ comes back simply un-dies.
+  // Reach generously, then take only the best few.
+  //
+  // Rock density swings enormously between worlds -- one measured 38 rock tiles
+  // in a 96x96 grid, another had hundreds -- so a single rule cannot be both
+  // reliable and restrained. A tight reach (6) went whole runs with ZERO rock
+  // near any city; an open one with no cap put 573 mines on the map and turned
+  // a mountain range into a quarry.
+  //
+  // So: look far enough to find the mountains a civ actually lives near, and
+  // work only the handful nearest each city. A civilization with a range on its
+  // doorstep gets mines; one on a plain gets none; nobody gets a carpet.
   const live = new Set<number>();
   for (const civ of simWorld.civs.values()) {
     if (civ.phase === 'dead' || ERA_RANK[civ.era] < 1 || civ.cities.length === 0) continue;
-    let placed = 0;
-    const ports = [...civ.cities].sort((a, b) => b.prominence - a.prominence);
-    for (const city of ports) {
-      // `__minesEverywhere` digs one on every workable seam instead of two per
-      // civ. A mine sits where the rock is, which is usually not where the
-      // camera is, and waiting for one to appear on screen is not a way to look
-      // at art.
-      if (placed >= MINE_PER_CIV && (window as any).__minesEverywhere !== true) break;
-      // The nearest workable rock to this city. Mining follows the ore, but it
-      // also follows the road: a seam nobody can reach is not a mine.
-      //
-      // Tiles that ALREADY have a mine are candidates, not exclusions. Skipping
-      // them meant an existing mine could never be re-claimed, so every mine was
-      // marked dying the pass after it was dug -- ten abandoned workings inside
-      // the first minute, and never a mine that stood long enough to look at.
-      // A working mine should be the most likely thing to keep working.
-      let best: { row: number; col: number; d: number } | null = null;
-      for (let dr = -6; dr <= 6; dr++) {
-        for (let dc = -6; dc <= 6; dc++) {
+    // Every reachable seam for this civ, nearest first.
+    const seams: Array<{ r: number; c: number; d: number }> = [];
+    const seen = new Set<number>();
+    for (const city of civ.cities) {
+      for (let dr = -MINE_REACH; dr <= MINE_REACH; dr++) {
+        for (let dc = -MINE_REACH; dc <= MINE_REACH; dc++) {
+          const d = Math.abs(dr) + Math.abs(dc);
+          if (d < 1 || d > MINE_REACH) continue;
           const r = city.row + dr, c = city.col + dc;
           if (!mineTileValid(r, c)) continue;
-          const d = Math.abs(dr) + Math.abs(dc);
-          if (d < 1 || d > 6) continue;
-          if (live.has(r * GRID_SIZE + c)) continue;   // already claimed this pass
-          if ((window as any).__minesEverywhere === true) {
-            const here = mines.find((g) => g.row === r && g.col === c);
-            if (here) { here.dying = false; }
-            else mines.push({ row: r, col: c, era: ERA_RANK[civ.era], phase: (r * 13 + c * 7) % 100, a: 0 });
-            live.add(r * GRID_SIZE + c);
-            continue;
-          }
-          // Bias hard toward a mine that is already here: an open pit does not
-          // move to the next hillside because a slightly nearer one appeared.
-          const existingHere = mines.some((g) => g.row === r && g.col === c);
-          const score = d - (existingHere ? 4 : 0);
-          if (!best || score < best.d) best = { row: r, col: c, d: score };
+          const key = r * GRID_SIZE + c;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          seams.push({ r, c, d });
         }
       }
-      if (!best) continue;
-      const existing = mines.find((g) => g.row === best!.row && g.col === best!.col);
-      if (existing) { existing.dying = false; live.add(existing.row * GRID_SIZE + existing.col); placed++; continue; }
-      mines.push({
-        row: best.row, col: best.col, era: ERA_RANK[civ.era],
-        phase: (best.row * 13 + best.col * 7) % 100, a: 0,
-      });
-      live.add(best.row * GRID_SIZE + best.col);
+    }
+    // Nearest first, and position breaks ties so the choice is deterministic
+    // rather than depending on iteration order.
+    seams.sort((a, b) => a.d - b.d || (a.r * GRID_SIZE + a.c) - (b.r * GRID_SIZE + b.c));
+    let placed = 0;
+    for (const s of seams) {
+      if (placed >= MINE_PER_CIV) break;
+      const key = s.r * GRID_SIZE + s.c;
+      if (live.has(key)) continue;
+      // Spread them along the range instead of clustering on the near edge of
+      // it, which is what sorting purely by distance would do.
+      if (mines.some((g) => !g.dying && Math.abs(g.row - s.r) + Math.abs(g.col - s.c) < MINE_MIN_GAP
+        && !(g.row === s.r && g.col === s.c))) continue;
+      live.add(key);
+      const here = mines.find((g) => g.row === s.r && g.col === s.c);
+      if (here) {
+        here.dying = false;
+        here.era = Math.max(here.era, ERA_RANK[civ.era]);   // a civ that advances re-equips its workings
+      } else {
+        mines.push({ row: s.r, col: s.c, era: ERA_RANK[civ.era], phase: (s.r * 13 + s.c * 7) % 100, a: 0 });
+      }
       placed++;
     }
   }
-  // Anything not claimed this pass is closing.
+  // Anything nobody worked this pass is closing.
   for (const g of mines) {
     if (!live.has(g.row * GRID_SIZE + g.col) || !mineTileValid(g.row, g.col)) g.dying = true;
   }
