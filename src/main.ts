@@ -1347,11 +1347,16 @@ const lightRT = RenderTexture.create({
   width: worldRT.width,
   height: worldRT.height,
   antialias: false,
-  // Half the world's resolution. These are soft glows, so the extra softness
-  // costs nothing visually -- and it holds the second texture to a quarter of
-  // the first's memory, which matters on the phones that were already running
-  // out before the quality tiers landed.
-  resolution: (_rtOverride ?? QUALITY[qualityLevel].rt) * 0.5,
+  // The lights should be exactly as sharp as the world they sit in, and they
+  // were not: at half the world's resolution every lamp was rendered into a
+  // quarter of the pixels and then stretched back up, which is most of why the
+  // night read as fuzzy. On 'high' the emissive pass now matches worldRT
+  // one-for-one.
+  //
+  // Still halved on medium and low. That halving exists because phones were
+  // running out of texture memory before the quality tiers landed, and a phone
+  // never picks 'high'.
+  resolution: (_rtOverride ?? QUALITY[qualityLevel].rt) * (qualityLevel === 'high' ? 1 : 0.5),
 });
 const lightPlane = new MeshPlane({ texture: lightRT, verticesX: 110, verticesY: 36 });
 // Share the world's geometry object outright, so the lights curve with the
@@ -1674,6 +1679,10 @@ function tileToSky(row: number, col: number): { x: number; y: number } {
 }
 
 (window as any).__layers = { world, cityMarkersContainer, labelLayer, biomeLayer, buildingLayer, simLayer };
+// Where a tile actually lands on SCREEN. gridToScreen returns world coordinates,
+// which then go through the capture texture and the curved plane -- so anything
+// wanting to point a camera at a tile needs this, not gridToScreen.
+(window as any).__screenOf = (row: number, col: number) => tileToSky(row, col);
 (window as any).__anim = () => ({ tiles: animatingTiles.size, buildings: animatingBuildingTiles.size, biome: animatingBiomeTiles.size, easeFrames: +easeFrames.toFixed(2), ease15: +ease(0.15).toFixed(3) });
 (window as any).__rt = () => ({ res: worldRT.source.resolution, w: worldRT.source.pixelWidth, h: worldRT.source.pixelHeight, bound: worldPlane.texture === worldRT, tickerFPS: Math.round(app.ticker.FPS) });
 (window as any).__perf = { sky: atmos.skyLayer, plane: worldPlane, set skipRT(v: boolean) { (window as any).__skipRT = v; } };
@@ -3812,7 +3821,9 @@ function noteTileChange(r: number, c: number) {
 const LIGHTS = {
   maxAlpha: 0.9,        // layer alpha at full night
   dotRadius: 2.1,       // per-tile lamp dot
-  cityHaloRadius: 10,   // soft halo at cities (scaled by prominence)
+  cityHaloRadius: 7,    // soft halo at cities (scaled by prominence)
+  haloAlpha: 0.085,     // ... and how strongly it blooms. The halo is the one
+                        // deliberately soft thing here; the lamps are hard.
   densityFloor: 0.16,   // tiles dimmer than this stay dark
   // The quality of light is the era speaking: hearth embers, lamplight,
   // sooty industry, cool modern sprawl, synthetic post glow.
@@ -3837,7 +3848,7 @@ function rebuildCityLights() {
     for (const city of civ.cities) {
       const { x, y } = gridToScreen(city.col, city.row);
       cityLightsGfx.circle(x, y, LIGHTS.cityHaloRadius * (0.5 + city.prominence) * (0.85 + rank * 0.05))
-        .fill({ color, alpha: (0.10 + 0.08 * city.prominence) * glow * lit });
+        .fill({ color, alpha: (LIGHTS.haloAlpha + 0.07 * city.prominence) * glow * lit });
     }
     const ts = civTiles.get(civ.id);
     if (!ts) continue;
@@ -3863,9 +3874,15 @@ function rebuildCityLights() {
         const av = ((h >> 24) & 0xff) / 255;
         // Some windows stay dark — a lit settlement isn't uniformly bright.
         if (av < 0.18) continue;
-        const sz = (0.8 + szv * 2.0) * (0.55 + density * 0.5);
+        // SQUARES, snapped to whole world pixels. A window was a circle of
+        // fractional radius, which is a sub-pixel smudge once it has been
+        // through the emissive texture -- and a round smudge is the one shape
+        // that cannot belong in a world drawn out of isometric tiles. A lamp is
+        // now 1, 2 or 3 pixels of light sitting squarely on the grid.
+        const sz = Math.max(1, Math.round((0.7 + szv * 1.9) * (0.55 + density * 0.5)));
         const a = Math.min(1, (0.22 + 0.5 * density) * (0.6 + av * 0.6) * glow);
-        cityLightsGfx.circle(x + sx + jx, y + sy + jy, sz).fill({ color, alpha: a });
+        const lx = Math.round(x + sx + jx), ly = Math.round(y + sy + jy);
+        cityLightsGfx.rect(lx, ly, sz, sz).fill({ color, alpha: a });
       }
     }
   }
@@ -6719,7 +6736,10 @@ function redrawRouteLights(): void {
       const ka = (ek / TRAIL_N) | 0, kb = ek % TRAIL_N;
       const pa = gridToScreen(ka % GRID_SIZE, (ka / GRID_SIZE) | 0);
       const pb = gridToScreen(kb % GRID_SIZE, (kb / GRID_SIZE) | 0);
-      const f = (t - minHeat) / (1 - minHeat);
+      // Square-rooted, so a route reaches most of its brightness early in its
+      // life rather than only once it is fully worn in. A lane that is used at
+      // all should read as used.
+      const f = Math.sqrt((t - minHeat) / (1 - minHeat));
       // Two strokes: a wide soft halo and a fine core, which is what makes a
       // line read as lit rather than merely coloured.
       routeLightsGfx.moveTo(pa.x, pa.y).lineTo(pb.x, pb.y)
@@ -6730,9 +6750,12 @@ function redrawRouteLights(): void {
   };
   // Sodium-warm roads, cold decks at sea, colder still in the air: the three
   // networks stay tellable apart at a glance in the dark.
-  glow(landTrail, 0xffc07a, 0.30, 0.75, 0.9);
-  glow(seaTrail,  0x9fd8ff, 0.34, 0.62, 0.9);
-  glow(airTrail,  0xd8e6ff, 0.30, 0.50, 0.7);
+  // The thresholds carry 'sooner' and the sqrt ramp carries 'faster'; the peaks
+  // stay near where they were, because a fully worn trunk road was already as
+  // bright as it should be. Raising all three at once blew the lanes out.
+  glow(landTrail, 0xffc07a, 0.16, 0.78, 0.9);
+  glow(seaTrail,  0x9fd8ff, 0.18, 0.66, 0.9);
+  glow(airTrail,  0xd8e6ff, 0.15, 0.54, 0.7);
 }
 
 /** Traffic in the dark: each vessel a small point of light on its route. */
@@ -7276,6 +7299,9 @@ function maybeSpawnCaravans() {
 // (post) lift off vertically from a city and fade into the sky.
 interface Plane { x: number; y: number; vx: number; vy: number; trail: Array<{ x: number; y: number }>; color: number }
 interface Rocket { x: number; y0: number; t: number; smoke: Array<{ x: number; y: number; t: number; r: number }> }
+// How many positions a jet remembers. At 34 the streak was about as long as
+// the aircraft's own approach; a real contrail hangs behind for far longer.
+const PLANE_TRAIL_LEN = 96;
 const planes: Plane[] = [];
 const rockets: Rocket[] = [];
 
@@ -7521,14 +7547,17 @@ function updateAir(dt: number, night: number) {
     const pl = planes[i];
     pl.x += pl.vx * dt; pl.y += pl.vy * dt;
     pl.trail.push({ x: pl.x, y: pl.y });
-    if (pl.trail.length > 34) pl.trail.shift();
+    if (pl.trail.length > PLANE_TRAIL_LEN) pl.trail.shift();
     if (Math.abs(pl.x) > 1900 || pl.y > 1800 || pl.y < -300) { planes.splice(i, 1); continue; }
     // Contrail: a white streak the jet pulls behind it, fading and narrowing
     // toward the tail.
     for (let t = 1; t < pl.trail.length; t++) {
       const f = t / pl.trail.length; // 0 tail … 1 at the jet
+      // Square-rooted alpha: with a streak this long a linear fade puts most
+      // of it below the visible floor, so the extra length would have bought
+      // nothing. This keeps the tail readable and still narrows it to a point.
       airGfx.moveTo(pl.trail[t - 1].x, pl.trail[t - 1].y).lineTo(pl.trail[t].x, pl.trail[t].y)
-        .stroke({ color: 0xffffff, alpha: 0.5 * f, width: 0.5 + 1.7 * f, cap: 'round' });
+        .stroke({ color: 0xffffff, alpha: 0.55 * Math.sqrt(f), width: 0.4 + 1.8 * f, cap: 'round' });
     }
     let hx = pl.vx, hy = pl.vy;
     const hl = Math.hypot(hx, hy) || 1; hx /= hl; hy /= hl;
@@ -9072,7 +9101,7 @@ app.ticker.add((ticker) => {
     rebuildCauseways();
     maybeSpawnCausewayTrains();
     // Route trails fade slowly toward the unused, then redraw the worn web.
-    trailDecay(seaTrail, 0.99); trailDecay(landTrail, 0.99); trailDecay(airTrail, 0.988);
+    trailDecay(seaTrail, 0.992); trailDecay(landTrail, 0.992); trailDecay(airTrail, 0.994);
     redrawTrails();
     queueFestivals();
     // checkWarQuiet pushes "the border falls quiet" on its own 45-second
