@@ -1108,7 +1108,16 @@ faithGfx.blendMode = 'add';
 const floodGfx = new Graphics();     // river floods sheeting over the lowlands
 const droughtGfx = new Graphics();   // a parched, cracked pall over drought regions
 const energyGfx = new Graphics();    // renewable energy farms (solar arrays, wind turbines)
-const megaGfx = new Graphics();      // post-era megastructures (arcologies, space elevators)
+// A CONTAINER, not a Graphics. Each megastructure gets its own Graphics from a
+// pool so it can carry its own alpha and fade independently -- a shared canvas
+// can only be all-or-nothing, and threading an alpha through every fill inside
+// drawOneMega would mean editing twenty call sites for the same result.
+const megaGfx = new Container();     // post-era megastructures (arcologies, reactors, towers)
+const megaPool: Graphics[] = [];
+// Space elevators draw in SCREEN space, so they need their own pool alongside
+// skyStructGfx rather than inside the world.
+const elevatorLayer = new Container();
+const elevatorPool: Graphics[] = [];
 const ringGfx = new Graphics();      // orbital ring — NEAR arc, in front of the globe
 ringGfx.eventMode = 'none';
 const ringBackGfx = new Graphics();  // orbital ring — FAR arc, behind the globe (occluded by it)
@@ -1640,6 +1649,9 @@ app.stage.addChild(ringGfx);
 app.stage.addChild(satelliteGfx);
 // Rockets & space elevators rise past the horizon (screen-space, unclipped).
 app.stage.addChild(skyStructGfx);
+// Immediately after skyStructGfx, preserving the order elevators were drawn in
+// when they shared it.
+app.stage.addChild(elevatorLayer);
 // The silhouette remap needs the diamond's corners in texture pixels.
 const toTex = (wx: number, wy: number) => ({
   x: (wx - WORLD_CAPTURE.x0) * captureScale,
@@ -5583,34 +5595,78 @@ function updateFaiths(nowSec: number, night: number) {
 // city — an arcology dome or a space elevator threading toward orbit.
 type MegaKind = 'dome' | 'elevator' | 'megatower' | 'reactor';
 const MEGA_KINDS: MegaKind[] = ['elevator', 'megatower', 'dome', 'reactor'];
-interface Mega { row: number; col: number; kind: MegaKind; color: number }
+interface Mega { row: number; col: number; kind: MegaKind; color: number; a: number; dying?: boolean }
 const megastructures: Mega[] = [];
 // Debug-spawned structures persist independent of the civ-driven rebuild, so the
 // test menu can drop one and watch it. Drawn alongside the real ones.
-const debugMegas: Mega[] = [];
+const debugMegas: Mega[] = [];   // hand-placed, always at full strength
 function rebuildMegastructures() {
-  megastructures.length = 0;
+  // Nothing is removed here any more. A structure whose civilization is gone --
+  // or whose hub moved -- is flagged dying and eases out in the draw loop, and
+  // one that comes back un-dies. These are the largest things on the map, so
+  // they were also the loudest pop: an arcology the size of a city vanished
+  // between two frames.
+  const live = new Set<string>();
   for (const civ of simWorld.civs.values()) {
-    if (civ.phase === 'dead' || ERA_RANK[civ.era] < 5 || civ.cities.length === 0) continue;
+    // `__megasAnyEra` drops the post-era gate. A megastructure otherwise needs a
+    // civilization to reach the very last age, which a world often never does,
+    // and that is not a way to look at one.
+    const eraOk = ERA_RANK[civ.era] >= 5 || (window as any).__megasAnyEra === true;
+    if (civ.phase === 'dead' || !eraOk || civ.cities.length === 0) continue;
     const hub = civ.cities.reduce((b, c) => (c.prominence > b.prominence ? c : b), civ.cities[0]);
-    megastructures.push({ row: hub.row, col: hub.col, kind: MEGA_KINDS[civ.id % MEGA_KINDS.length], color: civ.color });
+    const kind = MEGA_KINDS[civ.id % MEGA_KINDS.length];
+    const key = `${hub.row},${hub.col},${kind}`;
+    live.add(key);
+    const existing = megastructures.find((s) => `${s.row},${s.col},${s.kind}` === key);
+    if (existing) { existing.dying = false; existing.color = civ.color; continue; }
+    megastructures.push({ row: hub.row, col: hub.col, kind, color: civ.color, a: 0 });
+  }
+  for (const s of megastructures) {
+    if (!live.has(`${s.row},${s.col},${s.kind}`)) s.dying = true;
   }
 }
+const MEGA_FADE = 0.035;   // per-frame ease, wall-clock since #102
+(window as any).__megas = () => megastructures.map((s) => ({
+  kind: s.kind, row: s.row, col: s.col, a: +s.a.toFixed(3), dying: !!s.dying,
+}));
+// A stable fingerprint of the natural wonders, to see whether the list churns
+// at all. They are recomputed deterministically from the biome map, so they may
+// simply never change -- in which case they cannot pop and need no fade.
+(window as any).__wonderSig = () => naturalWonders.map((w) => `${w.kind}@${w.row},${w.col}`).sort().join('|');
+
 function drawMegastructures(nowSec: number, night: number) {
-  megaGfx.clear();
-  if (megastructures.length === 0 && debugMegas.length === 0) return;
   const ng = Math.max(0.25, night);
+  let gi = 0, ei = 0;
+  // Ease everything toward full or gone, and cull once invisible.
+  for (let i = megastructures.length - 1; i >= 0; i--) {
+    const s = megastructures[i];
+    s.a += ((s.dying ? 0 : 1) - s.a) * ease(MEGA_FADE);
+    if (s.dying && s.a < 0.02) megastructures.splice(i, 1);
+  }
   for (const m of [...megastructures, ...debugMegas]) {
+    // Debug spawns have no fade state and are simply always present.
+    const a = (m as Mega).a ?? 1;
+    if (a < 0.01) continue;
     if (m.kind === 'elevator') {
       // Space elevators draw in screen space so the tether threads all the way
       // up past the horizon, instead of being clipped at the planet's limb.
+      let g = elevatorPool[ei];
+      if (!g) { g = new Graphics(); g.eventMode = 'none'; elevatorPool[ei] = g; elevatorLayer.addChild(g); }
+      g.clear(); g.visible = true; g.alpha = a;
       const s = tileToSky(m.row, m.col);
-      drawSkyElevator(skyStructGfx, s.x, s.y, m.color, nowSec, ng);
+      drawSkyElevator(g, s.x, s.y, m.color, nowSec, ng);
+      ei++;
     } else {
+      let g = megaPool[gi];
+      if (!g) { g = new Graphics(); g.eventMode = 'none'; megaPool[gi] = g; megaGfx.addChild(g); }
+      g.clear(); g.visible = true; g.alpha = a;
       const { x, y } = gridToScreen(m.col, m.row);
-      drawOneMega(megaGfx, x, y, m.kind, m.color, nowSec, ng, night);
+      drawOneMega(g, x, y, m.kind, m.color, nowSec, ng, night);
+      gi++;
     }
   }
+  for (let i = gi; i < megaPool.length; i++) megaPool[i].visible = false;
+  for (let i = ei; i < elevatorPool.length; i++) elevatorPool[i].visible = false;
 }
 // A space elevator climbing from its city base all the way to the top of the
 // screen, the tether thinning and dissolving into the sky, with way-stations,
@@ -7938,7 +7994,11 @@ function resetStorySurfaces() {
   floods.length = 0; floodGfx.clear();
   droughts.length = 0; droughtGfx.clear();
   energyFarms.length = 0; energyGfx.clear();
-  megastructures.length = 0; megaGfx.clear();
+  // megaGfx is a container of pooled Graphics now, so emptying it means hiding
+  // the pool rather than clearing one canvas.
+  megastructures.length = 0;
+  for (const g of megaPool) { g.clear(); g.visible = false; }
+  for (const g of elevatorPool) { g.clear(); g.visible = false; }
   riverBoats.length = 0; riverBridges.length = 0; riverCraftGfx.clear();
   curPollution = 0;
   pollutionNarrated = false;
@@ -9263,7 +9323,7 @@ function dbgRandomCity(): { row: number; col: number; color: number } {
 function dbgMega(kind: MegaKind) {
   const s = dbgRandomCity();
   if (debugMegas.length >= 4) debugMegas.shift();
-  debugMegas.push({ row: s.row, col: s.col, kind, color: s.color });
+  debugMegas.push({ a: 1, row: s.row, col: s.col, kind, color: s.color });
   triggerPing(s.row, s.col, 0xfff0d0);
 }
 function dbgWonder(era: Era) {
