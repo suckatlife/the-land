@@ -4099,7 +4099,9 @@ function drawRoads(dt: number) {
 // each civ's main city to its others, strung with pylons. By day a faint steel
 // thread; by night the wires carry running pulses of electric light — the
 // strongest visual tell that a civilization has industrialized.
-interface PowerLine { a: { x: number; y: number }; b: { x: number; y: number } }
+interface PowerLine { a: { x: number; y: number }; b: { x: number; y: number }; f: number; dying?: boolean }
+// `f` is the fade, not the endpoints -- `a` and `b` were already taken.
+const GRID_FADE = 0.05;
 const powerLines: PowerLine[] = [];
 let powerPulse = 0;
 
@@ -4153,10 +4155,12 @@ function drawCables(dt: number, night: number) {
 
 // Lighthouses: a seafaring civ raises a beacon at its busiest harbour — a
 // striped tower whose lamp sweeps the night sea.
-interface Lighthouse { row: number; col: number; phase: number }
+interface Lighthouse { row: number; col: number; phase: number; a: number; dying?: boolean }
 const lighthouses: Lighthouse[] = [];
 function rebuildLighthouses() {
-  lighthouses.length = 0;
+  // Landmarks, drawn 50% larger on purpose so they do not get lost -- which
+  // also made them a loud pop. Fingerprint changed on 33 of 90 samples.
+  const live = new Set<number>();
   for (const civ of simWorld.civs.values()) {
     if (civ.phase === 'dead' || ERA_RANK[civ.era] < 1 || civ.cities.length === 0) continue;
     let best: CivCity | null = null;
@@ -4176,8 +4180,13 @@ function rebuildLighthouses() {
         if (d < bestD) { bestD = d; land = { row: r, col: c }; }
       }
     }
-    lighthouses.push({ row: land.row, col: land.col, phase: (land.row * 7 + land.col * 13) % 100 });
+    const lk = land.row * GRID_SIZE + land.col;
+    live.add(lk);
+    const existing = lighthouses.find((l) => l.row === land.row && l.col === land.col);
+    if (existing) { existing.dying = false; continue; }
+    lighthouses.push({ row: land.row, col: land.col, phase: (land.row * 7 + land.col * 13) % 100, a: 0 });
   }
+  for (const l of lighthouses) if (!live.has(l.row * GRID_SIZE + l.col)) l.dying = true;
 }
 // Offshore rigs: from the industrial age, a civ with a coast puts platforms out
 // on the water. They are the only thing this world builds that stands in open
@@ -4186,7 +4195,7 @@ function rebuildLighthouses() {
 // Placed OUT from the shore rather than on it -- a rig hard against the coast
 // reads as a pier. Two tiles of clearance is enough to sit in open water at this
 // scale without drifting off to somewhere the civ has no business being.
-interface Rig { row: number; col: number; phase: number }
+interface Rig { row: number; col: number; phase: number; a: number; dying?: boolean }
 const rigs: Rig[] = [];
 const RIG_PER_CIV = 2;
 
@@ -4401,7 +4410,10 @@ function drawMines(nowSec: number, night: number): void {
 }
 
 function rebuildRigs() {
-  rigs.length = 0;
+  // Mine, and built with the same flaw I was fixing elsewhere: the array was
+  // replaced wholesale, so a platform appeared and vanished between frames.
+  // Fingerprint changed on 39 of 90 samples.
+  const live = new Set<number>();
   rigDiag.eligibleCivs = 0; rigDiag.cityChecks = 0;
   rigDiag.waterSeen = 0; rigDiag.bestOpen = 0; rigDiag.placed = 0;
   // How much open sea surrounds a tile: a rig wants water on most sides, not a
@@ -4457,11 +4469,16 @@ function rebuildRigs() {
         }
       }
       if (!best) continue;
-      rigs.push({ row: best.row, col: best.col, phase: (best.row * 11 + best.col * 17) % 100 });
+      const rk = best.row * GRID_SIZE + best.col;
+      live.add(rk);
+      const existing = rigs.find((g) => g.row === best!.row && g.col === best!.col);
+      if (existing) { existing.dying = false; placed++; continue; }
+      rigs.push({ row: best.row, col: best.col, phase: (best.row * 11 + best.col * 17) % 100, a: 0 });
       placed++;
       rigDiag.placed++;
     }
   }
+  for (const g of rigs) if (!live.has(g.row * GRID_SIZE + g.col)) g.dying = true;
 }
 
 // Where the rigs are, in screen space. They are small and offshore, so finding
@@ -4484,40 +4501,45 @@ function drawRigs(nowSec: number, night: number): void {
   // for the same reason. At 1.35 a rig came out smaller than the boats around
   // it and read as a speck rather than a structure.
   const S = 2.3;
-  for (const rig of rigs) {
+  for (let ri = rigs.length - 1; ri >= 0; ri--) {
+    const rig = rigs[ri];
+    rig.a += ((rig.dying ? 0 : 1) - rig.a) * ease(GRID_FADE);
+    if (rig.dying && rig.a < 0.02) { rigs.splice(ri, 1); continue; }
+    if (rig.a < 0.01) continue;
+    const ra = rig.a;
     const { x, y } = gridToScreen(rig.col, rig.row);
     const deckY = y - 5.4 * S;
     // Legs down into the water, splayed the way a jacket platform's are.
     for (const lx of [-3.1, -1.1, 1.1, 3.1]) {
       rigGfx.moveTo(x + lx * S * 0.55, deckY).lineTo(x + lx * S, y + 1.4 * S)
-        .stroke({ color: 0x4a5058, alpha: 0.9, width: 0.75 * S });
+        .stroke({ color: 0x4a5058, alpha: (0.9) * ra, width: 0.75 * S });
     }
     // A little wake where the legs enter the sea, so it sits IN the water
     // rather than on top of it.
-    rigGfx.ellipse(x, y + 1.5 * S, 4.6 * S, 1.2 * S).fill({ color: 0xdfeaf2, alpha: 0.16 });
+    rigGfx.ellipse(x, y + 1.5 * S, 4.6 * S, 1.2 * S).fill({ color: 0xdfeaf2, alpha: (0.16) * ra});
     // Deck.
-    rigGfx.rect(x - 3.9 * S, deckY - 1.5 * S, 7.8 * S, 1.9 * S).fill({ color: 0x69707a, alpha: 0.96 });
-    rigGfx.rect(x - 3.9 * S, deckY - 1.5 * S, 7.8 * S, 0.5 * S).fill({ color: 0x8b939d, alpha: 0.9 });
+    rigGfx.rect(x - 3.9 * S, deckY - 1.5 * S, 7.8 * S, 1.9 * S).fill({ color: 0x69707a, alpha: (0.96) * ra});
+    rigGfx.rect(x - 3.9 * S, deckY - 1.5 * S, 7.8 * S, 0.5 * S).fill({ color: 0x8b939d, alpha: (0.9) * ra});
     // Derrick: a tapering tower with a couple of cross braces.
     const dTop = deckY - 7.4 * S;
     rigGfx.poly([
       x - 1.5 * S, deckY - 1.5 * S, x + 1.5 * S, deckY - 1.5 * S,
       x + 0.65 * S, dTop, x - 0.65 * S, dTop,
-    ]).fill({ color: 0x7c848e, alpha: 0.94 });
+    ]).fill({ color: 0x7c848e, alpha: (0.94) * ra});
     for (const f of [0.32, 0.64]) {
       const yy = deckY - 1.5 * S - (deckY - 1.5 * S - dTop) * f;
       const w = 1.5 * S - (1.5 - 0.65) * S * f;
-      rigGfx.moveTo(x - w, yy).lineTo(x + w, yy).stroke({ color: 0x5a626c, alpha: 0.8, width: 0.4 * S });
+      rigGfx.moveTo(x - w, yy).lineTo(x + w, yy).stroke({ color: 0x5a626c, alpha: (0.8) * ra, width: 0.4 * S });
     }
     // Accommodation block on one side.
-    rigGfx.rect(x + 1.9 * S, deckY - 3.6 * S, 2.0 * S, 2.1 * S).fill({ color: 0xd8dde3, alpha: 0.93 });
+    rigGfx.rect(x + 1.9 * S, deckY - 3.6 * S, 2.0 * S, 2.1 * S).fill({ color: 0xd8dde3, alpha: (0.93) * ra});
 
     // The flare boom, angled off the far side, and the flame at its tip. This
     // is the part anyone actually notices: a rig at night is a small fire
     // standing on the sea.
     const bx = x - 5.6 * S, by = deckY - 3.0 * S;
     rigGfx.moveTo(x - 3.2 * S, deckY - 1.0 * S).lineTo(bx, by)
-      .stroke({ color: 0x5a626c, alpha: 0.9, width: 0.55 * S });
+      .stroke({ color: 0x5a626c, alpha: (0.9) * ra, width: 0.55 * S });
     const flick = 0.75 + 0.25 * Math.sin(nowSec * 7 + rig.phase) + 0.12 * Math.sin(nowSec * 17 + rig.phase * 2);
     const fh = (2.6 + 1.0 * flick) * S;
     // Drawn into BOTH layers: the world copy keeps it present by day, the
@@ -4526,22 +4548,22 @@ function drawRigs(nowSec: number, night: number): void {
       const lift = g === rigFlareGfx ? night : 1;
       if (lift < 0.02) continue;
       g.poly([bx - 0.9 * S, by, bx + 0.9 * S, by, bx + 0.25 * S, by - fh, bx - 0.35 * S, by - fh * 0.8])
-        .fill({ color: 0xffa23c, alpha: 0.85 * lift });
+        .fill({ color: 0xffa23c, alpha: (0.85 * lift) * ra});
       g.poly([bx - 0.45 * S, by, bx + 0.45 * S, by, bx, by - fh * 0.62])
-        .fill({ color: 0xffe9b0, alpha: 0.95 * lift });
+        .fill({ color: 0xffe9b0, alpha: (0.95 * lift) * ra});
       // The glow it throws on the sea and its own smoke.
       g.circle(bx, by - fh * 0.35, 4.2 * S * (0.85 + 0.15 * flick))
-        .fill({ color: 0xff9430, alpha: 0.16 * lift });
+        .fill({ color: 0xff9430, alpha: (0.16 * lift) * ra});
     }
     if (night > 0.05) {
       // Deck lighting, and the aircraft warning light on the derrick.
       for (let k = 0; k < 4; k++) {
         rigFlareGfx.circle(x - 2.8 * S + k * 1.9 * S, deckY - 1.9 * S, 0.42 * S)
-          .fill({ color: 0xffeec4, alpha: 0.85 * night });
+          .fill({ color: 0xffeec4, alpha: (0.85 * night) * ra});
       }
       const beat = 0.4 + 0.6 * Math.sin(nowSec * 2.4 + rig.phase);
       rigFlareGfx.circle(x, dTop - 0.5 * S, 0.6 * S)
-        .fill({ color: 0xff6a5a, alpha: night * (0.35 + 0.5 * beat) });
+        .fill({ color: 0xff6a5a, alpha: (night * (0.35 + 0.5 * beat)) * ra});
     }
   }
 }
@@ -4550,7 +4572,12 @@ function drawLighthouses(nowSec: number, night: number) {
   lighthouseGfx.clear();
   if (lighthouses.length === 0) return;
   const S = 1.5; // unique landmark structures drawn 50% larger so they don't get lost
-  for (const lh of lighthouses) {
+  for (let li = lighthouses.length - 1; li >= 0; li--) {
+    const lh = lighthouses[li];
+    lh.a += ((lh.dying ? 0 : 1) - lh.a) * ease(GRID_FADE);
+    if (lh.dying && lh.a < 0.02) { lighthouses.splice(li, 1); continue; }
+    if (lh.a < 0.01) continue;
+    const la = lh.a;
     const { x, y } = gridToScreen(lh.col, lh.row);
     // A lamp beam sweeping the sea, at night — an iso-flattened cone.
     if (night > 0.08) {
@@ -4558,11 +4585,11 @@ function drawLighthouses(nowSec: number, night: number) {
       const dx = Math.cos(ang), dy = Math.sin(ang) * 0.5;
       const lx = x, ly = y - 7 * S, bl = 52, hw = 6 * S;
       const ex = lx + dx * bl, ey = ly + dy * bl, px = -dy * hw, py = dx * hw;
-      lighthouseGfx.poly([lx, ly, ex + px, ey + py, ex - px, ey - py]).fill({ color: 0xfff0c0, alpha: 0.13 * night });
+      lighthouseGfx.poly([lx, ly, ex + px, ey + py, ex - px, ey - py]).fill({ color: 0xfff0c0, alpha: 0.13 * night * la });
     }
     // The tower: white with red bands and a dark lantern room.
-    lighthouseGfx.poly([x - 1.6 * S, y, x + 1.6 * S, y, x + 1.1 * S, y - 7 * S, x - 1.1 * S, y - 7 * S]).fill({ color: 0xeef0f2, alpha: 0.95 });
-    lighthouseGfx.rect(x - 1.4 * S, y - 2.6 * S, 2.8 * S, 1.3 * S).fill({ color: 0xc83828, alpha: 0.9 });
+    lighthouseGfx.poly([x - 1.6 * S, y, x + 1.6 * S, y, x + 1.1 * S, y - 7 * S, x - 1.1 * S, y - 7 * S]).fill({ color: 0xeef0f2, alpha: 0.95 * la });
+    lighthouseGfx.rect(x - 1.4 * S, y - 2.6 * S, 2.8 * S, 1.3 * S).fill({ color: 0xc83828, alpha: 0.9 * la });
     lighthouseGfx.rect(x - 1.2 * S, y - 5.4 * S, 2.4 * S, 1.1 * S).fill({ color: 0xc83828, alpha: 0.9 });
     lighthouseGfx.rect(x - 1.1 * S, y - 8.4 * S, 2.2 * S, 1.6 * S).fill({ color: 0x3a3f48, alpha: 0.95 }); // lantern room
     // The lamp, blinking and brighter after dark.
@@ -5891,7 +5918,13 @@ function drawWindFarm(g: Graphics, x: number, y: number, nowSec: number, n: numb
 }
 
 function rebuildPowerLines() {
-  powerLines.length = 0;
+  // Measured the most volatile family in the world: the fingerprint changed on
+  // 50 of 90 samples, and a transmission line is a long visible span rather
+  // than a dot. Nothing is dropped on the spot any more -- a line whose route
+  // is gone eases out, and one that comes back un-dies.
+  const live = new Set<string>();
+  const key = (p: PowerLine) =>
+    `${Math.round(p.a.x)},${Math.round(p.a.y)}>${Math.round(p.b.x)},${Math.round(p.b.y)}`;
   for (const civ of simWorld.civs.values()) {
     if (civ.phase === 'dead' || ERA_RANK[civ.era] < 3 || civ.cities.length < 2) continue;
     const hub = civ.cities.reduce((best, c) => (c.prominence > best.prominence ? c : best), civ.cities[0]);
@@ -5900,26 +5933,45 @@ function rebuildPowerLines() {
       if (city === hub) continue;
       // Only where a land route exists, so wires don't span open ocean.
       if (!roadBetween(hub, city)) continue;
-      powerLines.push({ a: hubS, b: gridToScreen(city.col, city.row) });
+      const line: PowerLine = { a: hubS, b: gridToScreen(city.col, city.row), f: 0 };
+      const k = key(line);
+      live.add(k);
+      const existing = powerLines.find((p) => key(p) === k);
+      if (existing) { existing.dying = false; continue; }
+      powerLines.push(line);
     }
   }
+  for (const p of powerLines) if (!live.has(key(p))) p.dying = true;
 }
+
+// The live fade value of every family that now carries one, so "does it ease?"
+// is answered by reading the number rather than staring at pixels.
+(window as any).__fades = () => ({
+  power: powerLines.map((p) => ({ f: +p.f.toFixed(3), dying: !!p.dying })),
+  lighthouses: lighthouses.map((l) => ({ a: +l.a.toFixed(3), dying: !!l.dying })),
+  rigs: rigs.map((r) => ({ a: +r.a.toFixed(3), dying: !!r.dying })),
+});
 
 function drawPowerLines(dt: number, night: number) {
   powerGfx.clear();
   if (powerLines.length === 0) return;
   powerPulse = (powerPulse + dt * 0.33) % 1;
-  for (const pl of powerLines) {
+  for (let i = powerLines.length - 1; i >= 0; i--) {
+    const pl = powerLines[i];
+    pl.f += ((pl.dying ? 0 : 1) - pl.f) * ease(GRID_FADE);
+    if (pl.dying && pl.f < 0.02) { powerLines.splice(i, 1); continue; }
+    if (pl.f < 0.01) continue;
+    const fa = pl.f;
     const dx = pl.b.x - pl.a.x, dy = pl.b.y - pl.a.y;
     const len = Math.hypot(dx, dy);
     // The wire: steel by day, faintly lit by night.
     powerGfx.moveTo(pl.a.x, pl.a.y).lineTo(pl.b.x, pl.b.y)
-      .stroke({ color: 0x4c5662, alpha: 0.26 + 0.14 * night, width: 0.9 });
+      .stroke({ color: 0x4c5662, alpha: (0.26 + 0.14 * night) * fa, width: 0.9 });
     // Pylons every ~52px.
     const nP = Math.max(1, Math.round(len / 52));
     for (let i = 1; i < nP; i++) {
       const t = i / nP, px = pl.a.x + dx * t, py = pl.a.y + dy * t;
-      powerGfx.rect(px - 0.6, py - 2.6, 1.2, 5.2).fill({ color: 0x363f49, alpha: 0.32 + 0.12 * night });
+      powerGfx.rect(px - 0.6, py - 2.6, 1.2, 5.2).fill({ color: 0x363f49, alpha: (0.32 + 0.12 * night) * fa });
     }
     // Power and data pulse along the wire — subtle by day, brighter at night.
     const glow = 0.2 + 0.8 * night;
