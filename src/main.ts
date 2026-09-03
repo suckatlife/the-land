@@ -2404,6 +2404,49 @@ function ease(rate: number): number {
 
 const fadedDeadCivs = new Set<number>();
 
+// How lit a civilization still is, 0..1.
+//
+// A civilization's lights used to vanish between frames: both `drawNightLights`
+// and `rebuildCityLights` opened with `if (civ.phase === 'dead') continue`, so
+// the moment a people died every window in every city cut to black in a single
+// frame. A continent going dark should be the slowest thing this world does --
+// it is the piece's whole subject -- and instead it was a jump cut.
+//
+// So the lights outlive the civilization by a few seconds and go out gradually.
+// Wall-clock, so an age ends at the same pace at 1x and at 8x.
+const civLight = new Map<number, number>();
+const CIV_LIGHT_FADE = 0.7;   // seconds of real time for a dead civ to go dark
+/** True while at least one civilization is still dimming, which is when the
+ *  city-light layer has to be rebuilt every frame rather than on its usual
+ *  slow cadence. */
+let civLightsSettling = false;
+
+function updateCivLights(): void {
+  civLightsSettling = false;
+  for (const civ of simWorld.civs.values()) {
+    const target = civ.phase === 'dead' ? 0 : 1;
+    const cur = civLight.get(civ.id) ?? (civ.phase === 'dead' ? 0 : 1);
+    if (cur === target) continue;
+    const step = realFade / CIV_LIGHT_FADE;
+    const next = target > cur ? Math.min(target, cur + step) : Math.max(target, cur - step);
+    civLight.set(civ.id, next);
+    if (next > 0.004 && next < 0.996) civLightsSettling = true;
+  }
+}
+
+/** 1 while a civilization is alive, easing to 0 over the seconds after it dies. */
+(window as any).__civLight = () => [...simWorld.civs.values()].map((c) => ({
+  id: c.id, dead: c.phase === 'dead', lit: +(civLight.get(c.id) ?? -1).toFixed(3),
+}));
+
+function civLightLevel(civ: Civ): number {
+  const v = civLight.get(civ.id);
+  if (v !== undefined) return v;
+  const init = civ.phase === 'dead' ? 0 : 1;
+  civLight.set(civ.id, init);
+  return init;
+}
+
 // Ocean apron: the sea continues past the diamond in every direction, so the
 // world has no diamond boundary — the circular horizon (limb mask) is the
 // only edge the viewer ever sees. Same fill and grid treatment as water
@@ -3751,7 +3794,9 @@ const LIGHTS = {
 function rebuildCityLights() {
   cityLightsGfx.clear();
   for (const civ of simWorld.civs.values()) {
-    if (civ.phase === 'dead') continue;
+    // Dead civilizations are still drawn, at whatever is left of their light.
+    const lit = civLightLevel(civ);
+    if (lit < 0.004) continue;
     const color = LIGHTS.eraColors[civ.era];
     // The grid electrifies through the ages: sparse, dim hearths in the early
     // eras → a dense, bright modern sprawl.
@@ -3761,7 +3806,7 @@ function rebuildCityLights() {
     for (const city of civ.cities) {
       const { x, y } = gridToScreen(city.col, city.row);
       cityLightsGfx.circle(x, y, LIGHTS.cityHaloRadius * (0.5 + city.prominence) * (0.85 + rank * 0.05))
-        .fill({ color, alpha: (0.10 + 0.08 * city.prominence) * glow });
+        .fill({ color, alpha: (0.10 + 0.08 * city.prominence) * glow * lit });
     }
     const ts = civTiles.get(civ.id);
     if (!ts) continue;
@@ -8316,6 +8361,7 @@ function resetWorld(newSeed: string, archiveEnding?: WorldEnding, outcome?: Reso
   syncSimWonders();
   (window as any).__sim = simWorld;
   fadedDeadCivs.clear();
+  civLight.clear();
   civCurSatMult.clear();
   civsTransitioningSat.clear();
   civLastEra.clear();
@@ -8363,6 +8409,7 @@ function resetSimOnly() {
   seedInitialCivs(simWorld, biomeMap, 1);
   (window as any).__sim = simWorld;
   fadedDeadCivs.clear();
+  civLight.clear();
   civCurSatMult.clear();
   civsTransitioningSat.clear();
   civLastEra.clear();
@@ -9119,7 +9166,8 @@ app.ticker.add((ticker) => {
 function drawNightLights(): void {
   nightLightsGfx.clear();
   for (const civ of simWorld.civs.values()) {
-    if (civ.phase === 'dead') continue;
+    const lit = civLightLevel(civ);
+    if (lit < 0.004) continue;
     for (let i = 0; i < civ.cities.length; i++) {
       const city = civ.cities[i];
       const p = tileToSky(city.row, city.col);
@@ -9129,7 +9177,7 @@ function drawNightLights(): void {
       const t = Math.min(1, (night - 0.3) / 0.4);
       const prom = i === 0 ? 1 : Math.max(0.35, city.prominence);
       const { x, y } = gridToScreen(city.col, city.row);
-      const a = t * (0.78 + 0.5 * prom);
+      const a = t * (0.78 + 0.5 * prom) * lit;
       // Three rings, not two. `glazeCap` keeps the night land legible rather
       // than black, so a light has to beat a surface that is still fairly
       // bright — the first pass used a 2px halo at a fifth alpha and simply
@@ -9144,6 +9192,12 @@ function drawNightLights(): void {
 app.ticker.add(() => {
   measureFps();
   updateFpsLabel();
+  // Before the lights are drawn, so a civilization that died this frame is
+  // already dimming rather than waiting a frame to start.
+  updateCivLights();
+  // The city-light layer is normally rebuilt on a slow cadence; while an age is
+  // going dark it has to be rebuilt every frame or the fade would step.
+  if (civLightsSettling) rebuildCityLights();
   drawNightLights();
   {
     // One alpha for the whole network rather than per segment. The world
@@ -10449,6 +10503,7 @@ document.getElementById('skip')!.addEventListener('click', () => {
   drawBiomes();
   resetStorySurfaces();
   fadedDeadCivs.clear();
+  civLight.clear();
   for (const civ of simWorld.civs.values()) {
     if (civ.phase === 'dead') fadedDeadCivs.add(civ.id);
   }
