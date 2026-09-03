@@ -313,6 +313,12 @@ export const SIM = {
     coldDecay:    1.7,    // extra decay multiplier for tiles deep in the ice
     refugeBuffer: 0.20,   // latitude nearest the equator the ice may never take:
                           // the warm belt civilisation retreats into and survives in
+    nearPoleFactor: 0.72, // the NEAR pole's front, as a fraction of the far one's.
+                          // Both poles freeze -- that is what an ice age is -- but
+                          // latitude runs straight down the screen here, so the near
+                          // pole lands in the foreground where a pale wash reads as a
+                          // smear rather than as a front. Held back, it still frosts
+                          // over, later and less, and the far front carries the event.
     memoryTicks:  2600,   // pale ground + moraine linger this long after the melt
   },
 
@@ -905,7 +911,12 @@ export function iceDepthAt(world: SimWorld, row: number, col: number, biome?: Bi
   const cover = world.iceExtent;
   if (cover <= 0.001) return 0;
   const I = SIM.ice;
-  let lat = Math.abs(row + col - (world.height - 1)) / (world.height - 1);
+  // Signed latitude: negative is the far pole (top of frame), positive the near
+  // one (bottom). gridToScreen projects y as (col + row), so this axis IS the
+  // screen vertical -- the equator is the diamond's horizontal midline and the
+  // two poles are its top and bottom vertices.
+  const signed = (row + col - (world.height - 1)) / (world.height - 1);
+  let lat = Math.abs(signed) * (signed > 0 ? I.nearPoleFactor : 1);
   if (biome === 'water') lat += 0.07;        // sea ice tongues out ahead of the front
   else if (biome === 'rock') lat += 0.06;     // ridges hold snow first
   else if (biome === 'forest') lat += 0.03;   // snow catches and stays under trees

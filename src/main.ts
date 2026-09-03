@@ -1751,6 +1751,25 @@ function tileToSky(row: number, col: number): { x: number; y: number } {
     rebuildBuildingSprites();
   },
   iceState: () => ({ extent: +simWorld.iceExtent.toFixed(3), max: +simWorld.iceMax.toFixed(3), memory: +iceMemoryFade().toFixed(3) }),
+  // Hemisphere balance. Latitude runs down the screen, so 'far' is the pole at
+  // the horizon and 'near' the one in the foreground; the far front should lead.
+  iceProfile: (extent?: number) => {
+    const prev = simWorld.iceExtent;
+    const ext = extent ?? prev;
+    simWorld.iceExtent = ext;
+    let farN = 0, farIce = 0, nearN = 0, nearIce = 0;
+    for (let r = 0; r < GRID_SIZE; r++) {
+      for (let c = 0; c < GRID_SIZE; c++) {
+        const signed = (r + c - (GRID_SIZE - 1)) / (GRID_SIZE - 1);
+        if (signed === 0) continue;                 // the equator itself belongs to neither
+        const d = iceDepthAt(simWorld, r, c, biomeMap[r][c]);
+        if (signed < 0) { farN++; if (d > 0.05) farIce++; }
+        else { nearN++; if (d > 0.05) nearIce++; }
+      }
+    }
+    simWorld.iceExtent = prev;
+    return { extent: +ext.toFixed(2), far: +(farIce / farN).toFixed(3), near: +(nearIce / nearN).toFixed(3) };
+  },
   flat: () => {
     HIERARCHY.quietSat = 1; HIERARCHY.quietBlend = 0; HIERARCHY.capitalBoost = 0;
     DEPTH.strength = 0; GROUND.bareBelow = 0; GROUND.bladeAlpha = 0.3; GROUND.grainAlpha = 0.32;
