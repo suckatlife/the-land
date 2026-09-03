@@ -16,7 +16,7 @@ const WONDER_RADIUS: Record<NaturalWonderKind, number> = {
   volcano: 5, crater_lake: 8, monolith: 7, rainbow_hills: 6, karst_spires: 6, salt_flat: 6,
   atoll: 6, canyon: 8, dune_sea: 9,
 };
-import { drawTile, drawStateOverlayPersistent, redrawOverlay, redrawBiomeTile, lerpColor, gridToScreen, rgbToHsl, hslToRgb } from './iso';
+import { drawTile, drawStateOverlayPersistent, redrawOverlay, redrawBiomeTile, lerpColor, gridToScreen, rgbToHsl, hslToRgb, TILE_WIDTH, TILE_HEIGHT } from './iso';
 import { createSimWorld, beginEnding, beginSilence, rollCharacter, characterOf, step, tileOverlayColor, seedInitialCivs, applyCatastrophe, setVolcanoes, eruptVolcanoesNow, setWonderSites, iceDepthAt, SIM, CATASTROPHE, CITY, nearestCityDist, type SimWorld, type Civ, type CivCity, type SimEvent, type Era, type TileOverlay, type BiomeChange, type CatastropheType, type CivArchetype } from './sim';
 import { createAtmosphere, ATMOS } from './atmosphere';
 import { initializeAnalytics, trackEvent } from './analytics';
@@ -1058,6 +1058,10 @@ function makeDepthHazeTexture(): Texture {
 const depthHazeSprite = new Sprite(makeDepthHazeTexture());
 
 const biomeLayer = new Container();
+// Coast foam and biome fringes. A child of biomeLayer so it bakes into the same
+// cached texture as the tiles and costs nothing per frame; rebuilt whenever the
+// tiles are.
+const edgeGfx = new Graphics();
 const simLayer = new Container();
 const farmGfx = new Graphics();      // mature fields, cached to one texture (cheap)
 const farmGrowGfx = new Graphics();  // fields currently growing in, animated per-frame
@@ -3234,6 +3238,72 @@ function groundTint(row: number, col: number, base: number,
   return scaleColor(base, 1 + patch + grain + reliefFrom(elevAt, row, col) * RELIEF.shade);
 }
 
+// --- Coast foam and biome fringes ----------------------------------------
+//
+// Two tiles of different kinds met on a hard diamond edge, which is the other
+// half of why the ground read as a chart. Both fixes work on the SHARED EDGE
+// between neighbours rather than on the tiles themselves, so neither disturbs
+// the tile colours the relief pass just set.
+//
+// The four neighbours map to the four edges of the diamond. gridToScreen puts
+// col along (+W/2, +H/2) and row along (-W/2, +H/2), so:
+//
+//        top                col-1 is up-left,  row-1 is up-right
+//    left    right          col+1 is down-right, row+1 is down-left
+//       bottom
+const EDGES = {
+  foamColor: 0xdff0f7,
+  foamAlpha: 0.30,   // pale line where water meets land
+  foamWidth: 1.9,
+  fringeAlpha: 0.24, // softening between two different land biomes
+  fringeWidth: 2.6,
+};
+// [dRow, dCol, [x0, y0, x1, y1]] — the edge of THIS tile shared with that neighbour.
+const HW = TILE_WIDTH / 2, HH = TILE_HEIGHT / 2;
+const EDGE_GEOM: Array<[number, number, [number, number, number, number]]> = [
+  [0,  1, [ HW, 0, 0,  HH]],   // col+1  down-right
+  [1,  0, [ 0, HH, -HW, 0]],   // row+1  down-left
+  [0, -1, [-HW, 0, 0, -HH]],   // col-1  up-left
+  [-1, 0, [ 0, -HH, HW, 0]],   // row-1  up-right
+];
+
+/** Foam along every water/land boundary, and a soft seam between land biomes. */
+function drawEdges(): void {
+  edgeGfx.clear();
+  for (let row = 0; row < GRID_SIZE; row++) {
+    for (let col = 0; col < GRID_SIZE; col++) {
+      const here = biomeMap[row][col];
+      const { x, y } = gridToScreen(col, row);
+      for (const [dr, dc, e] of EDGE_GEOM) {
+        const r = row + dr, c = col + dc;
+        if (r < 0 || r >= GRID_SIZE || c < 0 || c >= GRID_SIZE) continue;
+        const there = biomeMap[r][c];
+        if (there === here) continue;
+        const wHere = here === 'water', wThere = there === 'water';
+        if (wHere === wThere) {
+          // Two different LAND biomes. Half the pairs would be drawn twice --
+          // once from each side -- so only the lower key draws, or the seam is
+          // twice as strong as intended.
+          if (row * GRID_SIZE + col > r * GRID_SIZE + c) continue;
+          // Forest and rock sit on grass, so they are not a colour boundary at
+          // all and a seam between them would be inventing an edge.
+          const solid = (b: Biome) => b === 'forest' || b === 'rock' ? 'grass' : b;
+          if (solid(here) === solid(there)) continue;
+          const mid = lerpColor(BIOME_COLORS[solid(here)], BIOME_COLORS[solid(there)], 0.5);
+          edgeGfx.moveTo(x + e[0], y + e[1]).lineTo(x + e[2], y + e[3])
+            .stroke({ color: mid, alpha: EDGES.fringeAlpha, width: EDGES.fringeWidth });
+        } else if (wThere) {
+          // Draw foam from the LAND side only. Drawn from the water side it
+          // sits on top of the sea and reads as a rim around each island; from
+          // the land side it reads as surf running up the beach.
+          edgeGfx.moveTo(x + e[0], y + e[1]).lineTo(x + e[2], y + e[3])
+            .stroke({ color: EDGES.foamColor, alpha: EDGES.foamAlpha, width: EDGES.foamWidth });
+        }
+      }
+    }
+  }
+}
+
 /** The ground colour of a grid tile: water as before, land varied and shaded. */
 function tileBaseColor(row: number, col: number): number {
   const biome = biomeMap[row][col];
@@ -3361,6 +3431,10 @@ function drawBiomes() {
       biomeTileVisuals[row][col] = { g, curColor: color, targetColor: color };
     }
   }
+  // After the tiles, so the seams sit on top of them; before the cache bake,
+  // so it costs nothing to keep.
+  drawEdges();
+  biomeLayer.addChild(edgeGfx);
   drawRivers();
   // The biome layer is ~9k tile Graphics + 20k scenery-water polys that
   // almost never change — cache the whole subtree to one texture. While a
