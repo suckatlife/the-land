@@ -3200,7 +3200,11 @@ const GROUND = {
 const RELIEF = {
   patch:  0.055,   // broad soil/pasture swell, as a fraction of tile brightness
   grain:  0.030,   // per-tile step
-  shade:  0.40,    // hillshade strength
+  shade:  0.20,    // hillshade strength -- halved from 0.40, which was heavy
+                   // handed. The gradient still does all the same work; it is
+                   // the amount of brightness it is allowed to move that is
+                   // cut, so the relief stays legible without stamping itself
+                   // over the biome colours underneath.
   gain:   3.2,     // turns an elevation gradient into a -1..1 shading term
   // Light from the upper left: the convention every relief map uses, because
   // the eye reads upper-left lighting as raised and the reverse as sunken.
