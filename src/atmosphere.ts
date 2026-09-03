@@ -61,10 +61,20 @@ export const ATMOS = {
       //
       // t, sky top, sky horizon, glaze tint, glaze strength.
       { t: 0.00, skyTop: 0x4f6bb0, skyHorizon: 0xe8a2ae, glaze: 0xe6d6d2, glazeAlpha: 0.34 }, // dawn: pink at the horizon only
-      { t: 0.08, skyTop: 0x6294d0, skyHorizon: 0xdcc0c8, glaze: 0xf4e8e4, glazeAlpha: 0.19 }, // early morning
-      { t: 0.25, skyTop: 0x5b9ad8, skyHorizon: 0xc7e0ee, glaze: 0xffffff, glazeAlpha: 0.00 }, // noon: blue, no cast
-      { t: 0.42, skyTop: 0x5f96d2, skyHorizon: 0xd4dfe8, glaze: 0xfbf3f0, glazeAlpha: 0.08 }, // afternoon
-      { t: 0.52, skyTop: 0x5a7cba, skyHorizon: 0xe8a2ae, glaze: 0xecdcd6, glazeAlpha: 0.26 }, // sunset: horizon pink, top still blue
+      { t: 0.08, skyTop: 0x35619c, skyHorizon: 0xdcc0c8, glaze: 0xf4e8e4, glazeAlpha: 0.19 }, // early morning
+      // Deep blue at the top of frame, pale at the limb.
+      //
+      // From orbit the atmosphere is a THIN BRIGHT BAND against black -- the
+      // air is only dense enough to scatter blue for a few kilometres, so
+      // looking up through it from out here you are mostly looking at space.
+      // These used to run pale at the horizon to a medium blue overhead, which
+      // is what the sky looks like from underneath it.
+      //
+      // Still inside the blue-indigo family the palette work fixed: 0x2a5c9e is
+      // hue 214, well within the 209-247 band skyTop is held to.
+      { t: 0.25, skyTop: 0x2a5c9e, skyHorizon: 0xc7e0ee, glaze: 0xffffff, glazeAlpha: 0.00 }, // noon
+      { t: 0.42, skyTop: 0x2d5d99, skyHorizon: 0xd4dfe8, glaze: 0xfbf3f0, glazeAlpha: 0.08 }, // afternoon
+      { t: 0.52, skyTop: 0x33538f, skyHorizon: 0xe8a2ae, glaze: 0xecdcd6, glazeAlpha: 0.26 }, // sunset: horizon pink, top still blue
       { t: 0.60, skyTop: 0x46589c, skyHorizon: 0xb8869c, glaze: 0x9c8a94, glazeAlpha: 0.80 }, // afterglow
       { t: 0.68, skyTop: 0x2f3d74, skyHorizon: 0x6a5f88, glaze: 0x74688e, glazeAlpha: 0.87 }, // nightfall
       { t: 0.80, skyTop: 0x161d3a, skyHorizon: 0x2c3760, glaze: 0x46538c, glazeAlpha: 0.93 }, // night: indigo
