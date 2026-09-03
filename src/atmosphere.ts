@@ -185,10 +185,22 @@ export const ATMOS = {
     cycleSeconds: 1200,
     startT: 0.06,
     keyframes: [
-      { t: 0.00, cast: 0xdfe8d8, castAmount: 0.10, biomeTint: 0xfdfff6, fogMult: 1.1 },  // spring
-      { t: 0.25, cast: 0xf2e2b8, castAmount: 0.12, biomeTint: 0xfff6e2, fogMult: 0.7 },  // summer
-      { t: 0.50, cast: 0xd8c49a, castAmount: 0.15, biomeTint: 0xf0dcc0, fogMult: 1.25 }, // autumn
-      { t: 0.75, cast: 0xc7d2dc, castAmount: 0.18, biomeTint: 0xdde4ec, fogMult: 1.5 },  // winter
+      // NO SEASONS. Every keyframe is neutral, so the year no longer tints
+      // anything.
+      //
+      // The trees here are all conifers, so a season can never show where a
+      // viewer would look for it -- no autumn colour, no bare winter woods. All
+      // the cycle did was drift the palette of the whole world on a 20-minute
+      // period nobody could read, and it drifted it into trouble: `cast` was
+      // one of the inputs that made the sunrise colour look arbitrary, and its
+      // spring value (0xdfe8d8) is a green at hue 94.
+      //
+      // The keyframes are kept rather than the system deleted: if deciduous
+      // trees ever arrive, putting the year back is editing four lines.
+      { t: 0.00, cast: 0xffffff, castAmount: 0, biomeTint: 0xffffff, fogMult: 1.0 },
+      { t: 0.25, cast: 0xffffff, castAmount: 0, biomeTint: 0xffffff, fogMult: 1.0 },
+      { t: 0.50, cast: 0xffffff, castAmount: 0, biomeTint: 0xffffff, fogMult: 1.0 },
+      { t: 0.75, cast: 0xffffff, castAmount: 0, biomeTint: 0xffffff, fogMult: 1.0 },
     ],
   },
 
@@ -1143,15 +1155,41 @@ export function createAtmosphere(): Atmosphere {
     const horizon = limbLayout?.apexY ?? h * 0.24;
     const yTopBase = h * 0.02;            // crowns of the curtains, near the top
     const yBotBase = horizon - h * 0.01;  // draped hems, just above the horizon
+    // An arc, not a wall. From orbit an aurora is a band lying along the
+    // auroral oval -- bright over part of the limb and absent either side of
+    // it. Hanging one curtain across the whole sky is the giveaway that it was
+    // drawn rather than observed, so the band is given a centre and an extent,
+    // and falls away at both ends.
+    const bandCentre = w * (0.30 + ((seed * 0.37) % 1) * 0.40);
+    const bandHalf = w * 0.30;
     const cols = 130;
     const step = w / cols;
     // Vertical colour ramp (bottom → top), as [frac, color, alphaMul].
+    //
+    // This is an emission spectrum, not a palette choice. An aurora is lit by
+    // specific atmospheric transitions at specific altitudes:
+    //
+    //   ~100 km   427.8 nm  ionised nitrogen  violet-blue, faint, strong events
+    //   100-150   557.7 nm  atomic oxygen     GREEN, the bright body
+    //   200-400   630.0 nm  atomic oxygen     RED, the high crown
+    //
+    // So green sits low with a hard lower border, and the curtain goes CRIMSON
+    // as it rises. The previous ramp ran green to teal to pale cyan, which is
+    // the one colour progression an aurora never makes -- it was drifting
+    // toward white at the top where it should be deepening toward red.
     const ramp: Array<[number, number, number]> = [
-      [0.00, 0xb84ad0, 0.5],  // magenta-violet lower fringe (an accent, not the body)
-      [0.13, 0x4dffa6, 1.2],  // bright green — the dominant body
-      [0.45, 0x57ecc8, 1.05], // teal
-      [0.74, 0x9af0e4, 0.55], // pale cyan
-      [1.00, 0xbfeafc, 0.0],  // fades out at the crown
+      [0.00, 0x7a5cff, 0.30], // 427.8 nm nitrogen: a faint violet fringe, no more
+      [0.05, 0x5cff77, 1.30], // 557.7 nm oxygen: the hard, bright lower border
+      [0.34, 0x3fe86a, 1.05], // the green body
+      [0.62, 0xb8794e, 0.85], // where green gives way to red
+      [0.85, 0xe03348, 0.78], // 630.0 nm oxygen: the crimson crown
+      [1.00, 0x8e1e34, 0.0],  // and out
+      // Two corrections after measuring the rendered pixels rather than trusting
+      // the numbers. The green carried too much blue (0x62ff9c) and read as
+      // teal; 557.7 nm is a yellow-green. And the red crown never appeared at
+      // all -- its alpha multipliers were small enough that the layer's 0.3
+      // ceiling erased it, so the curtain faded to neutral where it should have
+      // deepened to crimson.
     ];
     for (let i = 0; i <= cols; i++) {
       const x = i * step;
@@ -1167,7 +1205,11 @@ export function createAtmosphere(): Atmosphere {
       if (H < 4) continue;
       // Per-ray shimmer gives vertical striations that ripple along the curtain.
       const shim = 0.4 + 0.6 * Math.max(0, Math.sin(ph * 0.16 + t * 2.1 + Math.sin(t * 0.7 + ph * 0.02) * 2.4));
-      const a = amount * shim;
+      // Fall away toward the ends of the band, so it reads as a stretch of the
+      // oval rather than a curtain cut off by the edge of the frame.
+      const off = Math.min(1, Math.abs(x - bandCentre) / bandHalf);
+      const along = Math.cos(off * Math.PI * 0.5);
+      const a = amount * shim * along * along;
       if (a < 0.012) continue;
       // Draw the ray bottom-up as stacked gradient segments.
       const segs = 8;
