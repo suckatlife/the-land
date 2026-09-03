@@ -929,12 +929,16 @@ export function createAtmosphere(): Atmosphere {
   const rainbowLayer = new Graphics();
   // Drifting clouds in the sky (upper band), lit by the time of day.
   const skyCloudLayer = new Container();
-  const skyClouds: Array<{ sp: Sprite; x: number; yFrac: number; sc: number }> = [];
+  // `lift` is height ABOVE THE HORIZON, not distance from the top of the frame.
+  // These clouds used to hang at a fixed screen height and slide sideways,
+  // which is what a flat sky does; from out here the high cloud has to lie
+  // along the planet's curve or it reads as a strip pasted over the picture.
+  const skyClouds: Array<{ sp: Sprite; x: number; lift: number; sc: number }> = [];
   for (let i = 0; i < 7; i++) {
     const sp = new Sprite(cloudTextures[i % cloudTextures.length]);
     sp.anchor.set(0.5);
     skyCloudLayer.addChild(sp);
-    skyClouds.push({ sp, x: celestialRand(), yFrac: 0.02 + celestialRand() * 0.2, sc: 0.45 + celestialRand() * 0.7 });
+    skyClouds.push({ sp, x: celestialRand(), lift: 0.02 + celestialRand() * 0.2, sc: 0.45 + celestialRand() * 0.7 });
   }
   // Constellations: astronomers join bright stars into a figure. The lines
   // live in the rotating dome and fade with the bright population.
@@ -2019,10 +2023,33 @@ export function createAtmosphere(): Atmosphere {
         if (cl.x > 1.18) cl.x -= 1.36;
         if (cl.x < -0.18) cl.x += 1.36;
         cl.sp.x = cl.x * w;
-        cl.sp.y = cl.yFrac * h;
-        cl.sp.scale.set(cl.sc * 0.62, cl.sc * 0.4);
+        if (limbClip) {
+          // Sit on the horizon circle, lifted by the cloud's own altitude. The
+          // limb is a real circle -- centre (apexX, cy), radius R -- so the
+          // horizon's height under this x is exact rather than approximated.
+          const dx = cl.sp.x - limbClip.apexX;
+          const inside = Math.max(0, limbClip.R * limbClip.R - dx * dx);
+          const root = Math.sqrt(inside);
+          cl.sp.y = limbClip.cy - root - cl.lift * h;
+          // Lie ALONG the arc. Without this the clouds follow the curve but each
+          // one stays level, which reads as a row of decals on a curve rather
+          // than as cloud wrapping a planet. The tangent angle at this point is
+          // just the angle from the top of the circle.
+          cl.sp.rotation = Math.atan2(dx, root);
+          // Toward the ends of the limb you are looking along the deck rather
+          // than down on it, so the cloud flattens and pales into the distance.
+          const edge = Math.min(1, Math.abs(dx) / (w * 0.62));
+          const squash = 1 - 0.55 * edge * edge;
+          cl.sp.scale.set(cl.sc * 0.62, cl.sc * 0.4 * squash);
+          cl.sp.alpha = cloudAlpha * (1 - 0.35 * edge);
+        } else {
+          // Flat world: there is no horizon to follow, so keep the old band.
+          cl.sp.y = cl.lift * h;
+          cl.sp.rotation = 0;
+          cl.sp.scale.set(cl.sc * 0.62, cl.sc * 0.4);
+          cl.sp.alpha = cloudAlpha;
+        }
         cl.sp.tint = cloudTint;
-        cl.sp.alpha = cloudAlpha;
       }
 
       // The sun or the moon — it rises from behind the globe (celestialLayer is
