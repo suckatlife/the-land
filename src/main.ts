@@ -1687,6 +1687,26 @@ function tileToSky(row: number, col: number): { x: number; y: number } {
 // which then go through the capture texture and the curved plane -- so anything
 // wanting to point a camera at a tile needs this, not gridToScreen.
 (window as any).__screenOf = (row: number, col: number) => tileToSky(row, col);
+// Coast foam / biome seams: mutate a value then call redraw().
+(window as any).__edges = {
+  get EDGES() { return EDGES; },
+  redraw: () => { drawEdges(); biomeLayer.cacheAsTexture?.(false); biomeLayer.cacheAsTexture?.(true); },
+  count: () => {
+    let foam = 0, fringe = 0;
+    for (let row = 0; row < GRID_SIZE; row++) for (let col = 0; col < GRID_SIZE; col++) {
+      const here = biomeMap[row][col];
+      for (const [dr, dc] of [[0,1],[1,0],[0,-1],[-1,0]]) {
+        const r = row + dr, c = col + dc;
+        if (r < 0 || r >= GRID_SIZE || c < 0 || c >= GRID_SIZE) continue;
+        const there = biomeMap[r][c];
+        if (there === here) continue;
+        if ((here === 'water') !== (there === 'water')) { if (there === 'water') foam++; }
+        else if (here !== 'water' && row * GRID_SIZE + col < r * GRID_SIZE + c) fringe++;
+      }
+    }
+    return { foamEdges: foam, fringeEdges: fringe };
+  },
+};
 // Is the hillshade actually doing anything, or is the visible variation all
 // colour jitter? Reports how the relief term is distributed over land tiles.
 (window as any).__reliefStats = () => {
@@ -3200,7 +3220,7 @@ const GROUND = {
 const RELIEF = {
   patch:  0.055,   // broad soil/pasture swell, as a fraction of tile brightness
   grain:  0.030,   // per-tile step
-  shade:  0.20,    // hillshade strength -- halved from 0.40, which was heavy
+  shade:  0.10,    // hillshade strength -- quartered from 0.40, which was heavy
                    // handed. The gradient still does all the same work; it is
                    // the amount of brightness it is allowed to move that is
                    // cut, so the relief stays legible without stamping itself
@@ -3256,9 +3276,22 @@ function groundTint(row: number, col: number, base: number,
 //    left    right          col+1 is down-right, row+1 is down-left
 //       bottom
 const EDGES = {
-  foamColor: 0xdff0f7,
-  foamAlpha: 0.30,   // pale line where water meets land
-  foamWidth: 1.9,
+  // Surf is a BAND, not a stroke. Drawn as one 1.9px line at alpha 0.30 it was
+  // invisible, and for a reason worth writing down: the world renders through a
+  // 0.72-resolution texture and is then scaled by 0.68, so a 1.9px stroke lands
+  // at about 0.9 screen pixels. A sub-pixel pale line at 30% alpha over pale
+  // sand is nothing.
+  //
+  // Simply turning the alpha up gives a hard constant-width outline, which
+  // reads as a border drawn around each island rather than as water meeting
+  // land. So it is three passes instead: a wide faint wash, a middle, and a
+  // narrow bright core, which falls off from the shoreline the way surf does.
+  foamColor: 0xeaf6fb,
+  foamBands: [
+    [9.0, 0.07],   // [width, alpha] — the outer haze
+    [4.6, 0.13],
+    [2.2, 0.26],   // the bright edge itself
+  ] as Array<[number, number]>,
   fringeAlpha: 0.24, // softening between two different land biomes
   fringeWidth: 2.6,
 };
@@ -3300,8 +3333,10 @@ function drawEdges(): void {
           // Draw foam from the LAND side only. Drawn from the water side it
           // sits on top of the sea and reads as a rim around each island; from
           // the land side it reads as surf running up the beach.
-          edgeGfx.moveTo(x + e[0], y + e[1]).lineTo(x + e[2], y + e[3])
-            .stroke({ color: EDGES.foamColor, alpha: EDGES.foamAlpha, width: EDGES.foamWidth });
+          for (const [w, a] of EDGES.foamBands) {
+            edgeGfx.moveTo(x + e[0], y + e[1]).lineTo(x + e[2], y + e[3])
+              .stroke({ color: EDGES.foamColor, alpha: a, width: w, cap: 'round' });
+          }
         }
       }
     }
