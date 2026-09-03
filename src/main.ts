@@ -5844,13 +5844,13 @@ function updateFaiths(nowSec: number, night: number) {
       if (intensity < 0.03) continue;
       const built = simWorld.tiles[t.row][t.col].state === 'built';
       const { x, y } = gridToScreen(t.col, t.row);
+      // A warm glow over the tile, brighter and wider where there is a
+      // settlement to light. There used to be a shrine candle on top of every
+      // built tile as well -- a hard dot flickering at about 1.3Hz, one per
+      // tile -- and read from a distance that is not a candle, it is a grid of
+      // blinking lights with no obvious cause. The spreading warmth says the
+      // same thing without asking anyone to decode a dot.
       faithGfx.circle(x, y - 2, (built ? 8 : 5)).fill({ color: 0xffce78, alpha: (built ? 0.13 : 0.07) * intensity * ng });
-      if (built) {
-        // A shrine candle alight in the streets, flickering.
-        const fl = 0.7 + 0.3 * Math.sin(nowSec * 8 + t.row * 3 + t.col * 5);
-        faithGfx.circle(x, y - 3, 1.6 * fl).fill({ color: 0xffe8b0, alpha: 0.5 * intensity });
-        faithGfx.poly([x, y - 5 - fl * 1.5, x - 1, y - 3, x + 1, y - 3]).fill({ color: 0xfff0c4, alpha: 0.7 * intensity });
-      }
     }
     // The golden age crests over the holy city — a soft expanding halo.
     if (crest > 0.02) {
