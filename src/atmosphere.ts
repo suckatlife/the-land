@@ -938,7 +938,15 @@ export function createAtmosphere(): Atmosphere {
     const sp = new Sprite(cloudTextures[i % cloudTextures.length]);
     sp.anchor.set(0.5);
     skyCloudLayer.addChild(sp);
-    skyClouds.push({ sp, x: celestialRand(), lift: 0.02 + celestialRand() * 0.2, sc: 0.45 + celestialRand() * 0.7 });
+    // Hugging the limb, not floating up by the sun.
+    //
+    // The lift used to reach 0.22 of the frame height, which put clouds more
+    // than a hundred pixels off the horizon -- out in space, well above where
+    // any air is. An atmosphere is a THIN SHELL: against a globe whose visible
+    // radius here is around 1700px, weather sits within a few pixels of the
+    // surface. So the band is 0.5% to 5% of the frame above the horizon, which
+    // is both what it should look like and the only part that read as natural.
+    skyClouds.push({ sp, x: celestialRand(), lift: 0.005 + celestialRand() * 0.045, sc: 0.45 + celestialRand() * 0.7 });
   }
   // Constellations: astronomers join bright stars into a figure. The lines
   // live in the rotating dome and fade with the bright population.
