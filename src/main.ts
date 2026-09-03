@@ -1787,6 +1787,30 @@ function tileToSky(row: number, col: number): { x: number; y: number } {
 };
 (window as any).__fx = { smogGfx, farmGfx, buildingLayer, sky: atmos.skyLayer, fog: atmos.fogLayer };
 (window as any).__life = () => ({ herds: herds.length, power: powerLines.length, cables: cables.length, caravans: caravans.length, boats: boats.length });
+// Which routes are actually LIT, per network, and whether the causeways -- the
+// spans that carry traffic across open water -- are among them. A vessel moving
+// along an unlit lane is the bug this reports on.
+(window as any).__trailStats = () => {
+  const stat = (t: Map<number, number>, minHeat: number) => {
+    let lit = 0;
+    for (const v of t.values()) if (v / TRAIL_CAP >= minHeat) lit++;
+    return { edges: t.size, lit, pct: t.size ? +(lit / t.size).toFixed(2) : 0 };
+  };
+  let cwLit = 0;
+  for (const cw of causeways) {
+    let any = false;
+    for (let i = 0; i < cw.line.length - 1; i++) {
+      const ka = cw.line[i].row * GRID_SIZE + cw.line[i].col;
+      const kb = cw.line[i + 1].row * GRID_SIZE + cw.line[i + 1].col;
+      if (ka === kb) continue;
+      const ek = ka < kb ? ka * TRAIL_N + kb : kb * TRAIL_N + ka;
+      if ((landTrail.get(ek) || 0) / TRAIL_CAP >= 0.16) { any = true; break; }
+    }
+    if (any) cwLit++;
+  }
+  return { land: stat(landTrail, 0.16), sea: stat(seaTrail, 0.18), air: stat(airTrail, 0.15),
+           causeways: causeways.length, causewaysLit: cwLit };
+};
 
 const expeditionGfx = new Graphics();
 expeditionLayer.addChild(expeditionGfx);
@@ -6679,6 +6703,12 @@ function drawOneWonder(g: Graphics, x: number, y: number, era: Era, prog: number
 // trails read as continuous lines.
 const TRAIL_N = GRID_SIZE * GRID_SIZE;
 const TRAIL_CAP = 12;        // heat at which a route is fully worn in
+// What one trip contributes. This has to clear the lowest glow threshold in
+// redrawRouteLights (air 0.15 of TRAIL_CAP = 1.8) or a vessel can be watched
+// crossing a lane that never lights at all -- which is what was happening: a
+// voyage added 1.3 and the sea needed 2.16. One trip now lights a lane faintly
+// and reuse still brightens it, which was always the intent.
+const TRAIL_PER_TRIP = 2.4;
 type Trail = Map<number, number>;
 const seaTrail: Trail = new Map();
 const landTrail: Trail = new Map();
@@ -7046,7 +7076,7 @@ function maybeSpawnBoats() {
     if (!waterRouteCache.has(ck)) waterRouteCache.set(ck, findWaterPath(a.row, a.col, b.row, b.col));
     const route = waterRouteCache.get(ck);
     if (!route || route.length < 6) continue;
-    trailAdd(seaTrail, route, 1.3); // wear the sea lane
+    trailAdd(seaTrail, route, TRAIL_PER_TRIP); // wear the sea lane
     const rank = ERA_RANK[civ.era];
     const eraSpeed = rank >= 4 ? 1.5 : rank === 3 ? 1.2 : rank === 2 ? 0.95 : 0.75; // sail is slow; steam and cargo are fast
     boats.push({
@@ -7278,7 +7308,7 @@ function maybeSpawnCaravans() {
     const [i, j] = hubAndSpoke(cities.length, (k) => cities[k].prominence);
     const path = roadBetween(cities[i], cities[j]);
     if (!path || path.length < 4) continue;
-    trailAdd(landTrail, path, 1.3); // wear the road
+    trailAdd(landTrail, path, TRAIL_PER_TRIP); // wear the road
     // Foot-and-wagon caravans give way to rail in the industrial age, then to
     // cars and trucks on the roads by the modern age (with some rail still).
     const rank = ERA_RANK[civ.era];
@@ -7314,7 +7344,7 @@ function maybeSpawnPlanes() {
     const cities = civ.cities;
     const [i, j] = hubAndSpoke(cities.length, (k) => cities[k].prominence);
     const A = cities[i], B = cities[j];
-    trailAdd(airTrail, sampleLine(A.row, A.col, B.row, B.col), 1.6); // lay the flight corridor
+    trailAdd(airTrail, sampleLine(A.row, A.col, B.row, B.col), TRAIL_PER_TRIP); // lay the flight corridor
     const pa = gridToScreen(A.col, A.row), pb = gridToScreen(B.col, B.row);
     let dx = pb.x - pa.x, dy = pb.y - pa.y;
     const d = Math.hypot(dx, dy) || 1; dx /= d; dy /= d;
@@ -7534,6 +7564,12 @@ function maybeSpawnCausewayTrains() {
   if (Math.random() > 0.4) return;
   const cw = causeways[Math.floor(Math.random() * causeways.length)];
   const path = Math.random() < 0.5 ? cw.line : [...cw.line].reverse();
+  // The span itself lays heat 5 when it is built, but that decays below the
+  // glow threshold in about two minutes while the trains keep running. Every
+  // crossing has to wear the rail, or a causeway ends up carrying traffic in
+  // the dark -- the one place in the world where a lit route matters most,
+  // because the rail is the only thing out there on the water.
+  trailAdd(landTrail, path, TRAIL_PER_TRIP);
   caravans.push({ pts: path.map((t) => gridToScreen(t.col, t.row)), idx: 0, speed: 2.4 + Math.random() * 0.6, color: cw.color, kind: 'train' });
 }
 
