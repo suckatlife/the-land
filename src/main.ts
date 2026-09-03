@@ -1683,6 +1683,36 @@ function tileToSky(row: number, col: number): { x: number; y: number } {
 // which then go through the capture texture and the curved plane -- so anything
 // wanting to point a camera at a tile needs this, not gridToScreen.
 (window as any).__screenOf = (row: number, col: number) => tileToSky(row, col);
+// Is the hillshade actually doing anything, or is the visible variation all
+// colour jitter? Reports how the relief term is distributed over land tiles.
+(window as any).__reliefStats = () => {
+  // The RAW shading term, before gain and before clamping -- the clamped value
+  // cannot tell you how far past the clamp the terrain goes, and that is
+  // exactly what picking a gain depends on.
+  const rawv: number[] = [];
+  for (let r = 0; r < GRID_SIZE; r++) {
+    for (let c = 0; c < GRID_SIZE; c++) {
+      if (biomeMap[r][c] === 'water') continue;
+      const dCol = gridElev(r, c + 1) - gridElev(r, c - 1);
+      const dRow = gridElev(r + 1, c) - gridElev(r - 1, c);
+      const gx = dCol - dRow, gy = dCol + dRow;
+      rawv.push(Math.abs(-(gx * RELIEF.lx + gy * RELIEF.ly)));
+    }
+  }
+  const s = [...rawv].sort((a, b) => a - b);
+  const pct = (p: number) => +s[Math.min(s.length - 1, Math.floor(s.length * p))].toFixed(4);
+  // How many tiles saturate at the CURRENT gain.
+  const clipped = rawv.filter((v) => v * RELIEF.gain >= 1).length;
+  return {
+    landTiles: rawv.length, gain: RELIEF.gain,
+    p50: pct(0.5), p80: pct(0.8), p95: pct(0.95), p99: pct(0.99), max: pct(1),
+    clippedPct: +(clipped / rawv.length).toFixed(2),
+    // What fraction would saturate at some candidate gains.
+    atGain: [1, 1.5, 2, 3, 4.5].map((g) => ({
+      g, clipped: +(rawv.filter((v) => v * g >= 1).length / rawv.length).toFixed(2),
+    })),
+  };
+};
 (window as any).__anim = () => ({ tiles: animatingTiles.size, buildings: animatingBuildingTiles.size, biome: animatingBiomeTiles.size, easeFrames: +easeFrames.toFixed(2), ease15: +ease(0.15).toFixed(3) });
 (window as any).__rt = () => ({ res: worldRT.source.resolution, w: worldRT.source.pixelWidth, h: worldRT.source.pixelHeight, bound: worldPlane.texture === worldRT, tickerFPS: Math.round(app.ticker.FPS) });
 (window as any).__perf = { sky: atmos.skyLayer, plane: worldPlane, set skipRT(v: boolean) { (window as any).__skipRT = v; } };
@@ -2652,7 +2682,12 @@ function drawScenery() {
       const elev = sampler.elevationAt(r, c);
       const biome = classify(elev, sampler.moistureAt(r, c));
       const water = biome === 'water';
-      const color = water ? waterColorFromElev(elev, r, c) : BIOME_COLORS[biome];
+      // Varied and shaded out here too. If only the simulated square got
+      // relief, the grid would read as a textured patch sitting in flat colour
+      // -- the exact giveaway the scenery grain below exists to prevent. The
+      // sampler evaluates past the grid, so the gradient is real out here.
+      const color = water ? waterColorFromElev(elev, r, c)
+        : groundTint(r, c, BIOME_COLORS[biome], (rr, cc) => sampler.elevationAt(rr, cc));
       const target = water ? sceneryWaterGfx : sceneryLandGfx;
       sceneryTiles.push({ r, c, x, y, water });
       target.poly([x, y - 8, x + 16, y, x, y + 8, x - 16, y])
@@ -3131,6 +3166,83 @@ const GROUND = {
   bladeAlpha: 0.20,  // grass/fertile blades (was a flat 0.30 everywhere)
   grainAlpha: 0.22,  // sand grains (was a flat 0.32 everywhere)
 };
+
+// --- Ground variation and relief -----------------------------------------
+//
+// Every land tile was the exact same hex -- one BIOME_COLORS entry per biome,
+// no variation at all -- which is what made the ground read as a chart rather
+// than as terrain. Only water varied, through waterColorFromElev.
+//
+// Two fields break that up, deliberately at different scales:
+//
+//   patch  a broad smooth swell several tiles across. Soil and pasture varying
+//          over a landscape.
+//   grain  a small per-tile step. On its own this is television static; under
+//          the patch field it is the last bit of unevenness that keeps the
+//          larger shapes from looking airbrushed.
+//
+// And relief. The elevation map has been there all along -- it decides where
+// mountains go and how deep the water is -- but nothing ever SHADED the ground
+// with it, so a hillside and a plain were the same flat colour. Hillshading is
+// the standard cartographic answer: brighten slopes facing the light, darken
+// the ones facing away.
+//
+// It is worth being precise about why this is safe where the terminator was
+// not. The terminator was ONE directional multiply over the whole frame, so it
+// took light away everywhere at once and flattened the picture. Hillshading is
+// local and signed -- for every slope it darkens there is another it brightens
+// -- so it adds contrast at every scale without moving the average brightness.
+// It cannot grey the world out.
+const RELIEF = {
+  patch:  0.055,   // broad soil/pasture swell, as a fraction of tile brightness
+  grain:  0.030,   // per-tile step
+  shade:  0.40,    // hillshade strength
+  gain:   3.2,     // turns an elevation gradient into a -1..1 shading term
+  // Light from the upper left: the convention every relief map uses, because
+  // the eye reads upper-left lighting as raised and the reverse as sunken.
+  // Fixed rather than tracking the sun -- the shading is baked into the tile
+  // colours, and following the sun would mean re-baking 9k tile Graphics on a
+  // schedule.
+  lx: -0.70, ly: -0.71,
+};
+
+/** -1 (slope faces away from the light) .. +1 (faces into it). */
+function reliefFrom(elevAt: (r: number, c: number) => number, row: number, col: number): number {
+  const dCol = elevAt(row, col + 1) - elevAt(row, col - 1);
+  const dRow = elevAt(row + 1, col) - elevAt(row - 1, col);
+  // Grid gradients into SCREEN gradients: gridToScreen puts x on (col - row)
+  // and y on (col + row), so both grid axes mix into both screen axes. Without
+  // this the light comes from a direction that does not exist on screen, and
+  // the result reads as diagonal corduroy rather than as hills.
+  const gx = dCol - dRow;
+  const gy = dCol + dRow;
+  // tanh, not a clamp. Measured on real terrain, a hard clamp at gain 9 pinned
+  // 63% of land tiles to the extremes -- which is not relief, it is a two-tone
+  // stencil. tanh rolls steep ground off smoothly instead of clipping it, and
+  // it makes the gain a taste control rather than a cliff edge.
+  return Math.tanh(-(gx * RELIEF.lx + gy * RELIEF.ly) * RELIEF.gain);
+}
+const gridElev = (r: number, c: number) =>
+  elevationMap[Math.max(0, Math.min(GRID_SIZE - 1, r))][Math.max(0, Math.min(GRID_SIZE - 1, c))];
+
+/** A flat biome colour, varied and shaded for this particular tile. */
+function groundTint(row: number, col: number, base: number,
+                    elevAt: (r: number, c: number) => number = gridElev): number {
+  const a = Math.sin(row * 0.17 + col * 0.11) + Math.sin(col * 0.13 - row * 0.19);
+  const patch = (a / 2) * RELIEF.patch;
+  const grain = ((_bldHash(row, col, 0, 77) & 0xff) / 255 - 0.5) * 2 * RELIEF.grain;
+  return scaleColor(base, 1 + patch + grain + reliefFrom(elevAt, row, col) * RELIEF.shade);
+}
+
+/** The ground colour of a grid tile: water as before, land varied and shaded. */
+function tileBaseColor(row: number, col: number): number {
+  const biome = biomeMap[row][col];
+  if (biome === 'water') return waterColorAt(row, col);
+  // Forest and rock keep the grass base under their trees/peaks so their edges
+  // blend into the surrounding land instead of ending on a border.
+  const flat = (biome === 'forest' || biome === 'rock') ? BIOME_COLORS.grass : BIOME_COLORS[biome];
+  return groundTint(row, col, flat);
+}
 function groundCover(row: number, col: number): number {
   const a = Math.sin(row * 0.13 + col * 0.09) + Math.sin(col * 0.11 - row * 0.16);
   const swell = (a / 2 + 1) / 2;                       // ~0..1, smooth
@@ -3239,11 +3351,12 @@ function drawBiomes() {
       // Forests AND mountains sit on the same ground as the land around them —
       // the trees / the peak provide the colour, not the tile — so their edges
       // blend seamlessly into the grass instead of ending on a hard border.
-      const color = biome === 'water' ? waterColorAt(row, col)
-        : (biome === 'forest' || biome === 'rock') ? BIOME_COLORS.grass
-        : BIOME_COLORS[biome];
+      const color = tileBaseColor(row, col);
       const g = drawTile(biomeLayer, col, row, biome);
-      if (biome === 'water' || biome === 'forest' || biome === 'rock') redrawBiomeTile(g, color);
+      // Unconditional now. Grass, sand and fertile used to keep drawTile's own
+      // flat BIOME_COLORS fill -- precisely the uniformity being removed here,
+      // so they have to be repainted too.
+      redrawBiomeTile(g, color);
       if (biome !== 'water') decorateTile(g, biome, row, col);
       biomeTileVisuals[row][col] = { g, curColor: color, targetColor: color };
     }
@@ -3275,9 +3388,7 @@ function refreshBiomeTile(row: number, col: number) {
   const btv = biomeTileVisuals[row][col];
   if (!btv) return;
   const biome = biomeMap[row][col];
-  const base = biome === 'water' ? waterColorAt(row, col)
-    : (biome === 'forest' || biome === 'rock') ? BIOME_COLORS.grass
-    : BIOME_COLORS[biome];
+  const base = tileBaseColor(row, col);
   redrawBiomeTile(btv.g, base);
   if (biome !== 'water') decorateTile(btv.g, biome, row, col);
   btv.curColor = base; btv.targetColor = base;
@@ -3294,9 +3405,7 @@ const BIOME_FADE = 0.016; // per-frame ease — ~1s crossfade at 60fps
 function enrollBiomeTrans(row: number, col: number) {
   const key = row * GRID_SIZE + col;
   const biome = biomeMap[row][col];
-  const base = biome === 'water' ? waterColorAt(row, col)
-    : (biome === 'forest' || biome === 'rock') ? BIOME_COLORS.grass
-    : BIOME_COLORS[biome];
+  const base = tileBaseColor(row, col);
   let tr = biomeTrans.get(key);
   if (!tr) {
     const g = new Graphics();
@@ -3550,8 +3659,9 @@ function refreshBuildingSprite(row: number, col: number) {
   // The ground this tile stands on, matching drawBiomes' rule that forest and
   // rock tiles keep the grass base under their trees/peaks.
   const tileBiome = biomeMap[row][col];
-  const groundTone = (tileBiome === 'forest' || tileBiome === 'rock' || tileBiome === 'water')
-    ? BIOME_COLORS.grass : BIOME_COLORS[tileBiome];
+  const groundTone = groundTint(row, col,
+    (tileBiome === 'forest' || tileBiome === 'rock' || tileBiome === 'water')
+      ? BIOME_COLORS.grass : BIOME_COLORS[tileBiome]);
   const quiet = quietZones.length ? quietnessAt(row, col, worldClock) : 0;
   const cold = simWorld.iceExtent > 0.002 ? iceDepthAt(simWorld, row, col, tileBiome) : 0;
   const count = densityToCount(density);
