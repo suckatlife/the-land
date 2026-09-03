@@ -4741,13 +4741,26 @@ function rebuildRigs() {
           const r = city.row + dr, c = city.col + dc;
           if (r < 0 || r >= GRID_SIZE || c < 0 || c >= GRID_SIZE) continue;
           if (biomeMap[r][c] !== 'water') continue;
-          if (rigs.some((g) => Math.abs(g.row - r) + Math.abs(g.col - c) < 5)) continue;
+          // The minimum gap must not exclude the candidate's OWN tile. It did,
+          // and the consequence was an oil rig that moved every tick: a rig
+          // sits at distance 0 from itself, which is under the gap, so its own
+          // tile was skipped, some other tile five away won, the old platform
+          // was marked dying and a new one was built. Read from the world, that
+          // is a rig wandering the sea. Exactly the bug already fixed for mines
+          // -- see MINE_MIN_GAP, which carries the same guard.
+          if (rigs.some((g) => !g.dying && Math.abs(g.row - r) + Math.abs(g.col - c) < 5
+            && !(g.row === r && g.col === c))) continue;
           rigDiag.waterSeen++;
           const open = openness(r, c);
           if (open > rigDiag.bestOpen) rigDiag.bestOpen = +open.toFixed(3);
           if (open < 0.6) continue;            // still too close in
           // Prefer open water, and nearer the city among equally open spots.
-          const score = open * 10 - d * 0.1;
+          // A platform that already exists wins outright: a rig is a permanent
+          // structure, so once one is standing it should keep its tile even if
+          // a marginally better score appears nearby -- otherwise reordering
+          // the ports, or a city gaining prominence, is enough to relocate it.
+          const standing = rigs.some((g) => g.row === r && g.col === c && !g.dying);
+          const score = open * 10 - d * 0.1 + (standing ? 100 : 0);
           if (!best || score > best.score) best = { row: r, col: c, score };
         }
       }
@@ -4766,6 +4779,30 @@ function rebuildRigs() {
 
 // Where the rigs are, in screen space. They are small and offshore, so finding
 // one to look at otherwise means scanning the ocean by eye.
+// Do the rigs stay put? Samples positions over time; a platform is a permanent
+// structure, so any movement at all is the bug.
+(window as any).__rigDrift = (() => {
+  // Tracked as a SET OF OCCUPIED TILES, not by array index. Indexing by
+  // position in the array counts a splice as movement, which is not the
+  // question -- the question is whether a tile that had a platform still has
+  // one. `vanished` is the bug: a rig that stopped existing where it stood.
+  let prev = new Set<number>();
+  let vanished = 0, appeared = 0, checks = 0, first = true;
+  return {
+    sample: () => {
+      const now = new Set<number>(rigs.filter((r) => !r.dying).map((r) => r.row * GRID_SIZE + r.col));
+      if (!first) {
+        checks++;
+        for (const k of prev) if (!now.has(k)) vanished++;
+        for (const k of now) if (!prev.has(k)) appeared++;
+      }
+      first = false;
+      prev = now;
+      return { rigs: now.size, vanished, appeared, checks };
+    },
+    reset: () => { prev = new Set(); vanished = appeared = checks = 0; first = true; },
+  };
+})();
 (window as any).__rigs = () => rigs.map((r) => {
   // gridToScreen gives WORLD coordinates. The world is scaled, offset, rendered
   // to a texture and then bent through a curved mesh, so world coordinates are
