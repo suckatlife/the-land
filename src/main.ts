@@ -1687,6 +1687,24 @@ function tileToSky(row: number, col: number): { x: number; y: number } {
 // which then go through the capture texture and the curved plane -- so anything
 // wanting to point a camera at a tile needs this, not gridToScreen.
 (window as any).__screenOf = (row: number, col: number) => tileToSky(row, col);
+// Night traffic: how many vehicles exist, and how many of them resolve to a
+// real position. Before the fractional-index fix the second number was 0 for
+// everything but planes.
+(window as any).__traffic = () => {
+  const ok = (pts: Array<{ x: number; y: number }>, idx: number) => {
+    const p = pathAt(pts, idx);
+    return Number.isFinite(p.x) && Number.isFinite(p.y);
+  };
+  const oldWay = (pts: Array<{ x: number; y: number }>, idx: number) => !!(pts as any)[idx];
+  return {
+    boats: boats.length, boatsPositioned: boats.filter((b) => ok(b.pts, b.idx)).length,
+    boatsOldWay: boats.filter((b) => oldWay(b.pts, b.idx)).length,
+    caravans: caravans.length, caravansPositioned: caravans.filter((c) => ok(c.pts, c.idx)).length,
+    caravansOldWay: caravans.filter((c) => oldWay(c.pts, c.idx)).length,
+    planes: planes.length,
+    layerAlpha: +vehicleLightsGfx.alpha.toFixed(3),
+  };
+};
 // Coast foam / biome seams: mutate a value then call redraw().
 (window as any).__edges = {
   get EDGES() { return EDGES; },
@@ -7048,7 +7066,52 @@ function redrawRouteLights(): void {
   glow(airTrail,  0xd8e6ff, 0.15, 0.54, 0.7);
 }
 
-/** Traffic in the dark: each vessel a small point of light on its route. */
+/** Position along a polyline at a FRACTIONAL index, which is what idx is. */
+function pathAt(pts: Array<{ x: number; y: number }>, t: number): { x: number; y: number } {
+  const last = pts.length - 1;
+  const k = Math.max(0, Math.min(last - 1, Math.floor(t)));
+  const u = Math.max(0, Math.min(1, t - k));
+  return { x: pts[k].x + (pts[k + 1].x - pts[k].x) * u, y: pts[k].y + (pts[k + 1].y - pts[k].y) * u };
+}
+
+// The wake each vehicle drags behind it at night. `len` is measured in path
+// index units, which are tiles, so these are lengths in tiles.
+const WAKE = {
+  boat:    { len: 5.0, alpha: 0.60, width: 1.6, color: 0xbfe4ff },
+  caravan: { len: 3.0, alpha: 0.42, width: 1.1, color: 0xffcf92 },
+  train:   { len: 5.5, alpha: 0.62, width: 1.5, color: 0xfff0d2 },
+  plane:   { pts: 46,  alpha: 0.58, width: 1.3, color: 0xdfefff },
+};
+
+/** A bright head fading back along the path the vehicle actually travelled. */
+function drawWake(pts: Array<{ x: number; y: number }>, idx: number,
+                  color: number, len: number, peakA: number, peakW: number): void {
+  if (pts.length < 2 || peakA <= 0.004) return;
+  const tail = Math.max(0, idx - len);
+  const span = idx - tail;
+  if (span < 0.05) return;
+  const STEPS = 10;
+  let prev = pathAt(pts, tail);
+  for (let s = 1; s <= STEPS; s++) {
+    const f = s / STEPS;                    // 0 at the tail, 1 at the vehicle
+    const p = pathAt(pts, tail + span * f);
+    // Squared, so the wake is bright at the vehicle and gone a few tiles back
+    // rather than being a uniform bar dragged along behind it.
+    vehicleLightsGfx.moveTo(prev.x, prev.y).lineTo(p.x, p.y)
+      .stroke({ color, alpha: peakA * f * f, width: 0.3 + peakW * f, cap: 'round' });
+    prev = p;
+  }
+}
+
+/** Traffic in the dark: each vessel a point of light dragging a wake.
+ *
+ *  The wake is the transient half of the two-part story the routes already
+ *  tell. A worn lane says this way is used; a wake says something is on it
+ *  right now. Only the second one moves, and it is what makes the world look
+ *  inhabited after dark rather than merely mapped.
+ *
+ *  This layer is gated on nightness by its own alpha, so none of it shows by
+ *  day. */
 function drawVehicleLights(): void {
   vehicleLightsGfx.clear();
   const dot = (x: number, y: number, color: number, r: number, a: number) => {
@@ -7056,15 +7119,36 @@ function drawVehicleLights(): void {
     vehicleLightsGfx.circle(x, y, r).fill({ color, alpha: a });
   };
   for (const b of boats) {
-    const p = b.pts[b.idx];
-    if (p) dot(p.x, p.y, 0xfff0cf, 0.85, 0.85 * Math.min(1, b.fade));
+    // `idx` is fractional -- it accumulates as speed * dt -- so pts[idx] was
+    // indexing an array with a float and getting undefined every frame but the
+    // ones that happened to land on a whole number. Boats and land vehicles
+    // have therefore had NO night lights at all; only planes, which carry
+    // their own x/y, ever drew. Interpolating is both the fix and what the
+    // wake needs anyway.
+    const f = Math.min(1, b.fade);
+    drawWake(b.pts, b.idx, WAKE.boat.color, WAKE.boat.len, WAKE.boat.alpha * f, WAKE.boat.width);
+    const p = pathAt(b.pts, b.idx);
+    dot(p.x, p.y, 0xfff0cf, 0.85, 0.85 * f);
   }
   for (const c of caravans) {
-    const p = c.pts[c.idx];
+    const w = c.kind === 'caravan' ? WAKE.caravan : WAKE.train;
+    drawWake(c.pts, c.idx, w.color, w.len, w.alpha, w.width);
+    const p = pathAt(c.pts, c.idx);
     // A train is lit along its length; a caravan is one lamp.
-    if (p) dot(p.x, p.y, c.kind === 'caravan' ? 0xffd9a0 : 0xfff4de, c.kind === 'caravan' ? 0.7 : 1.0, 0.8);
+    dot(p.x, p.y, c.kind === 'caravan' ? 0xffd9a0 : 0xfff4de, c.kind === 'caravan' ? 0.7 : 1.0, 0.8);
   }
   for (const pl of planes) {
+    // Aircraft keep their own history rather than a route, so the wake is read
+    // straight off it. The white contrail in airGfx is the daytime version of
+    // the same thing; this is the one that glows.
+    const t = pl.trail, n = t.length;
+    const take = Math.min(n, WAKE.plane.pts);
+    for (let i = Math.max(1, n - take); i < n; i++) {
+      const f = (i - (n - take)) / take;
+      vehicleLightsGfx.moveTo(t[i - 1].x, t[i - 1].y).lineTo(t[i].x, t[i].y)
+        .stroke({ color: WAKE.plane.color, alpha: WAKE.plane.alpha * f * f,
+                  width: 0.3 + WAKE.plane.width * f, cap: 'round' });
+    }
     // Aircraft carry a cold strobe rather than a warm lamp.
     dot(pl.x, pl.y, 0xdfefff, 0.75, 0.9);
   }
