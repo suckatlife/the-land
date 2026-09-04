@@ -1461,6 +1461,34 @@ turnoverGfx.visible = false;
 const wipeMask = new Graphics();
 wipeMask.eventMode = 'none';
 app.stage.addChild(wipeMask);
+// The wipe's mask. A Graphics mask is a STENCIL -- every pixel is either in or
+// out -- so the old world was cut off at a hard vertical line and the "soft
+// light" along it was only paint sitting on a knife edge. A Sprite mask is an
+// ALPHA mask, so the old world can actually fade out across a band.
+//
+// The texture is one pixel tall: a horizontal ramp from transparent to opaque
+// over the first eighth, opaque for the rest. Scaling it sets how wide the
+// fade is; the long opaque tail is what keeps the rest of the old world
+// covered while the band is still near the left edge.
+const WIPE_SOFT = 0.22;      // fade band, as a fraction of screen width
+const WIPE_RAMP_FRAC = 0.125; // ...and how much of the texture that band is
+function makeWipeRamp(): Texture {
+  const c = document.createElement('canvas');
+  c.width = 1024; c.height = 1;
+  const ctx = c.getContext('2d')!;
+  const g = ctx.createLinearGradient(0, 0, 1024 * WIPE_RAMP_FRAC, 0);
+  g.addColorStop(0, 'rgba(255,255,255,0)');
+  g.addColorStop(1, 'rgba(255,255,255,1)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, Math.ceil(1024 * WIPE_RAMP_FRAC), 1);
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(Math.ceil(1024 * WIPE_RAMP_FRAC), 0, 1024, 1);
+  return Texture.from(c);
+}
+const wipeRamp = new Sprite(makeWipeRamp());
+wipeRamp.eventMode = 'none';
+wipeRamp.visible = false;
+app.stage.addChild(wipeRamp);
 // The horizon, rebuilt for the farewell plane. `worldPlane` is already clipped
 // by the atmosphere's own limb mask, and a Graphics can only mask one target --
 // so without this the dying world draws straight past the horizon and hangs in
@@ -1534,6 +1562,7 @@ function endTurnover(): void {
   turnoverGfx.clear();
   turnoverGfx.visible = false;
   wipeMask.clear();
+  wipeRamp.visible = false;
   farewellHolder.mask = null;
   farewellHolder.visible = false;
   farewellLimb.clear();
@@ -1617,16 +1646,26 @@ function updateTurnover(realDt: number): void {
     // side and the new one is simply there behind it. Deliberately the least
     // eventful of the three -- most worlds end quietly, and a spectacle every
     // ten minutes would be exhausting.
-    const edge = -0.15 * W + u * 1.3 * W;
-    wipeMask.clear();
-    wipeMask.rect(edge, 0, W * 1.3, H).fill({ color: 0xffffff });
-    farewellHolder.mask = wipeMask;
+    // The band has to clear the screen at both ends, so the sweep starts with
+    // the whole fade off the left edge and finishes with it off the right.
+    const soft = WIPE_SOFT * W;
+    const edge = -0.15 * W - soft + u * (1.3 * W + soft * 2);
+    wipeRamp.visible = true;
+    wipeRamp.width = soft / WIPE_RAMP_FRAC;   // the ramp is this fraction of it
+    wipeRamp.height = H;
+    wipeRamp.x = edge - soft;                 // transparent end leads, opaque follows
+    wipeRamp.y = 0;
+    farewellHolder.mask = wipeRamp;
     farewellHolder.visible = u < 0.995;
-    // A soft light along the leading edge so it reads as something passing
-    // over the world rather than the image being cropped.
-    for (let k = 0; k < 5; k++) {
-      turnoverGfx.rect(edge - k * 13, 0, 13, H)
-        .fill({ color: 0xf2ead8, alpha: (0.16 - k * 0.03) * Math.sin(Math.PI * u) });
+    // A light along the leading edge so it reads as something passing over the
+    // world rather than the image being cropped. Spread across the same band
+    // the fade uses and kept faint -- with a soft edge underneath it, this is
+    // a suggestion of light rather than the thing hiding the seam.
+    const bands = 9;
+    for (let k = 0; k < bands; k++) {
+      const f = k / bands;
+      turnoverGfx.rect(edge - soft * f - soft / bands, 0, soft / bands + 1, H)
+        .fill({ color: 0xf2ead8, alpha: 0.085 * (1 - f) * Math.sin(Math.PI * u) });
     }
   }
 
