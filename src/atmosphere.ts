@@ -272,7 +272,17 @@ export const ATMOS = {
   // Traveling storms: one cell at a time crosses the world on the wind —
   // dark cloud cluster, rain streaks, lightning flickers at night.
   storm: {
-    meanSec: 420,
+    // Weather is present for durationSec out of every (meanSec + durationSec),
+    // so at 420 a storm was on screen about 19% of the time -- and since only
+    // ONE cell exists at a time, a short world could pass without any weather
+    // at all. At 210 it is about a third of the time, which is enough for the
+    // day to have something crossing it without a thunderhead becoming the
+    // permanent state of the world.
+    //
+    // This is frequency only. More than one cell at once would mean pooling
+    // sprites per storm rather than the single fixed set here, which is a real
+    // change to a system that already looks right.
+    meanSec: 210,
     durationSec: 100,
     alpha: 0.34,        // the SHADOW the cluster throws on the ground
     bodyAlpha: 0.62,    // the cloud itself, seen from above
