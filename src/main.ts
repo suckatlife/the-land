@@ -4860,6 +4860,17 @@ function rebuildRigs() {
     reset: () => { prev = new Set(); vanished = appeared = checks = 0; first = true; },
   };
 })();
+// Where the traffic is, on SCREEN. Same projection the rigs need: gridToScreen
+// gives world coordinates, and the world is scaled, offset, rendered to a
+// texture and bent through a curved mesh before it reaches the viewer.
+(window as any).__vehiclePos = () => {
+  const proj = (w: { x: number; y: number }) =>
+    atmos.project(w.x * captureScale + world.x, w.y * captureScale + world.y);
+  return {
+    boats: boats.filter((b) => b.fade >= 1 && b.idx > 1).map((b) => ({ kind: 'boat', ...proj(pathAt(b.pts, b.idx)) })),
+    land: caravans.map((c) => ({ kind: c.kind, ...proj(pathAt(c.pts, c.idx)) })),
+  };
+};
 (window as any).__rigs = () => rigs.map((r) => {
   // gridToScreen gives WORLD coordinates. The world is scaled, offset, rendered
   // to a texture and then bent through a curved mesh, so world coordinates are
@@ -7113,6 +7124,29 @@ function pathAt(pts: Array<{ x: number; y: number }>, t: number): { x: number; y
   return { x: pts[k].x + (pts[k + 1].x - pts[k].x) * u, y: pts[k].y + (pts[k + 1].y - pts[k].y) * u };
 }
 
+// What a vehicle disturbs in DAYLIGHT. The night wake is light the vehicle
+// carries; this is water it has churned and dust it has kicked up, so it is lit
+// by the sun and goes away after dark -- the two are complementary rather than
+// the same effect twice.
+//
+// A boat had a single foam dot astern, one circle of radius 1, which at this
+// distance is not a wake at all; only expedition ships had a real spreading V.
+// Land vehicles had nothing.
+const DAY_TRAIL = {
+  foamColor: 0xffffff,
+  foamLen: 6.5,      // churned water behind a ship, in tiles
+  // Widened after looking at it: the world is rendered at 0.72 resolution and
+  // scaled by 0.68, so anything under about 4 world-units is thinner than a
+  // screen pixel by the time it is seen. Same trap the coast foam fell into.
+  foamAlpha: 0.23,
+  foamWidth: 3.4,
+  vShort: 3.2, vLong: 9.0, vBeam: 5.2, vAlpha: 0.15,   // the spreading stern V
+  dustColor: 0xc9b394,   // a road in dry weather
+  smokeColor: 0x70737a,  // a locomotive
+  dustPuffs: 7,
+  dustAlpha: 0.19,
+};
+
 // The wake each vehicle drags behind it at night. `len` is measured in path
 // index units, which are tiles, so these are lengths in tiles.
 const WAKE = {
@@ -7122,8 +7156,13 @@ const WAKE = {
   plane:   { pts: 46,  alpha: 0.58, width: 1.3, color: 0xdfefff },
 };
 
-/** A bright head fading back along the path the vehicle actually travelled. */
-function drawWake(pts: Array<{ x: number; y: number }>, idx: number,
+/** A head fading back along the path the vehicle actually travelled.
+ *
+ *  Shared by the night wake (emissive, bright) and the daylight one (foam and
+ *  dust, drawn into the world). Same geometry, different target and colour --
+ *  what a vehicle disturbs behind it does not change when the sun goes down,
+ *  only how it is lit. */
+function drawWake(g: Graphics, pts: Array<{ x: number; y: number }>, idx: number,
                   color: number, len: number, peakA: number, peakW: number): void {
   if (pts.length < 2 || peakA <= 0.004) return;
   const tail = Math.max(0, idx - len);
@@ -7136,7 +7175,7 @@ function drawWake(pts: Array<{ x: number; y: number }>, idx: number,
     const p = pathAt(pts, tail + span * f);
     // Squared, so the wake is bright at the vehicle and gone a few tiles back
     // rather than being a uniform bar dragged along behind it.
-    vehicleLightsGfx.moveTo(prev.x, prev.y).lineTo(p.x, p.y)
+    g.moveTo(prev.x, prev.y).lineTo(p.x, p.y)
       .stroke({ color, alpha: peakA * f * f, width: 0.3 + peakW * f, cap: 'round' });
     prev = p;
   }
@@ -7165,13 +7204,13 @@ function drawVehicleLights(): void {
     // their own x/y, ever drew. Interpolating is both the fix and what the
     // wake needs anyway.
     const f = Math.min(1, b.fade);
-    drawWake(b.pts, b.idx, WAKE.boat.color, WAKE.boat.len, WAKE.boat.alpha * f, WAKE.boat.width);
+    drawWake(vehicleLightsGfx, b.pts, b.idx, WAKE.boat.color, WAKE.boat.len, WAKE.boat.alpha * f, WAKE.boat.width);
     const p = pathAt(b.pts, b.idx);
     dot(p.x, p.y, 0xfff0cf, 0.85, 0.85 * f);
   }
   for (const c of caravans) {
     const w = c.kind === 'caravan' ? WAKE.caravan : WAKE.train;
-    drawWake(c.pts, c.idx, w.color, w.len, w.alpha, w.width);
+    drawWake(vehicleLightsGfx, c.pts, c.idx, w.color, w.len, w.alpha, w.width);
     const p = pathAt(c.pts, c.idx);
     // A train is lit along its length; a caravan is one lamp.
     dot(p.x, p.y, c.kind === 'caravan' ? 0xffd9a0 : 0xfff4de, c.kind === 'caravan' ? 0.7 : 1.0, 0.8);
@@ -7553,8 +7592,26 @@ function updateWater(dt: number, nowSec: number, night: number) {
       wrecks.push({ x, y, fx, fy, color: b.color, era: b.era, t: 0 });
       boats.splice(i, 1); continue;
     }
-    // a little foam wake trailing astern (only while under way)
-    if (b.fade >= 1 && k > 1) boatsGfx.circle(x - fx * 4 * S, y - fy * 4 * S, 1.0 * S).fill({ color: 0xffffff, alpha: 0.16 });
+    // The wake, only while under way. Foam is sunlit, so it fades out after
+    // dark and hands over to the emissive wake in drawVehicleLights.
+    const foamLit = 1 - 0.8 * night;
+    if (b.fade >= 1 && k > 1 && foamLit > 0.02) {
+      // Churned water back along the route already sailed.
+      drawWake(boatsGfx, b.pts, b.idx, DAY_TRAIL.foamColor, DAY_TRAIL.foamLen,
+               DAY_TRAIL.foamAlpha * foamLit, DAY_TRAIL.foamWidth * S);
+      // And the spreading V at the stern, which is what reads as speed. Same
+      // construction as the expedition ship, which already had one.
+      const wx = -fy, wy = fx;
+      const sx = x - fx * DAY_TRAIL.vShort * S, sy = y - fy * DAY_TRAIL.vShort * S;
+      const bx = x - fx * DAY_TRAIL.vLong * S, by2 = y - fy * DAY_TRAIL.vLong * S;
+      for (const side of [-1, 1]) {
+        boatsGfx.poly([
+          sx, sy,
+          bx + wx * DAY_TRAIL.vBeam * S * side, by2 + wy * DAY_TRAIL.vBeam * S * side,
+          x - fx * (DAY_TRAIL.vLong - 1.6) * S, y - fy * (DAY_TRAIL.vLong - 1.6) * S,
+        ]).fill({ color: DAY_TRAIL.foamColor, alpha: DAY_TRAIL.vAlpha * foamLit });
+      }
+    }
     drawBoat(boatsGfx, x, y, fx, fy, b.color, S, night, b.era, Math.min(1, b.fade));
   }
   // The bottom first, so a fresh wreck sinks over the hulks already there.
@@ -8122,6 +8179,29 @@ function updateNomads(nowSec: number, dt: number, night: number) {
     // caravan is a few foot-and-wagon travellers.
     const cars = cv.kind === 'train' ? 6 : 3;
     const gap = cv.kind === 'train' ? 0.32 : cv.kind === 'car' ? 0.85 : 0.5;
+    // Dust off the road behind the last vehicle, and coal smoke off a
+    // locomotive. Sunlit like the foam, so it fades after dark. Derived from
+    // the path rather than kept as particles: the road is already a list of
+    // points, and a puff that has to be stored and aged is state to no visible
+    // benefit at this size.
+    const dustLit = 1 - 0.8 * night;
+    const tailIdx = cv.idx - (cars - 1) * gap;
+    if (dustLit > 0.02 && tailIdx > 0.6) {
+      const isTrain = cv.kind === 'train';
+      for (let d = 1; d <= DAY_TRAIL.dustPuffs; d++) {
+        const t = tailIdx - d * 0.3;
+        if (t < 0) break;
+        const p = pathAt(cv.pts, t);
+        const f = 1 - d / (DAY_TRAIL.dustPuffs + 1);
+        // Smoke rises and spreads; dust stays low and settles.
+        const rise = isTrain ? d * 0.55 * S : d * 0.12 * S;
+        nomadGfx.circle(p.x, p.y - rise, (0.45 + d * (isTrain ? 0.5 : 0.36)) * S)
+          .fill({
+            color: isTrain ? DAY_TRAIL.smokeColor : DAY_TRAIL.dustColor,
+            alpha: DAY_TRAIL.dustAlpha * f * f * dustLit,
+          });
+      }
+    }
     for (let m = 0; m < cars; m++) {
       const bi = cv.idx - m * gap;
       if (bi < 0) continue;
