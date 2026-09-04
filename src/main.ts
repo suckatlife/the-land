@@ -3985,8 +3985,22 @@ function exitFade(row: number, col: number, dirRow: number, dirCol: number, h: n
   return k * k * (3 - 2 * k);   // smoothstep: no hard corner at either end
 }
 
+/** An expedition's wake as screen points, oldest first, ship last.
+ *
+ *  Expeditions do not travel a `pts` route with a fractional index the way
+ *  boats and caravans do -- the sim walks them tile by tile and keeps the last
+ *  twelve tiles in `trail` -- so the polyline is built from that instead. */
+function expeditionPath(exp: { row: number; col: number; trail: Array<{ row: number; col: number }> }) {
+  const pts = exp.trail.map((t) => gridToScreen(t.col, t.row));
+  pts.push(gridToScreen(exp.col, exp.row));   // the ship itself is the head
+  return pts;
+}
+
 let expWasEmpty = true;
 function drawExpeditions() {
+  // Read straight from the atmosphere rather than threaded through the call:
+  // this runs deep inside the frame and the caller has no nightness in scope.
+  const expNight = atmos.light().nightness;
   const g = expeditionGfx;
   if (simWorld.expeditions.length === 0) {
     if (!expWasEmpty) { g.clear(); expWasEmpty = true; }
@@ -4009,12 +4023,25 @@ function drawExpeditions() {
     const fade = exitFade(exp.row, exp.col, exp.dirRow, exp.dirCol, simWorld.height, simWorld.width);
     if (fade <= 0.01) continue;
 
+    // The trail used to be the whole story: twelve civ-coloured discs, one per
+    // tile, which reads as a dotted line rather than as a ship's wake -- and
+    // when every other vessel got churned water, the exploration ships were
+    // the ones still leaving dots.
+    //
+    // Foam first, then a much lighter civ-coloured trace on top. The white
+    // says a ship went through here; the colour says whose.
+    const path = expeditionPath(exp);
+    const foamLit = 1 - 0.8 * expNight;
+    if (path.length >= 2 && foamLit > 0.02) {
+      drawWake(g, path, path.length - 1, DAY_TRAIL.foamColor, path.length - 1,
+               DAY_TRAIL.foamAlpha * fade * foamLit, DAY_TRAIL.foamWidth);
+    }
     const n = exp.trail.length;
     for (let i = 0; i < n; i++) {
       const t = exp.trail[i];
-      const alpha = ((i + 1) / n) * 0.7 * fade;
+      const alpha = ((i + 1) / n) * 0.30 * fade;
       const { x, y } = gridToScreen(t.col, t.row);
-      g.circle(x, y, 2.5).fill({ color: civ.color, alpha });
+      g.circle(x, y, 1.5).fill({ color: civ.color, alpha });
     }
 
     // A lean exploration longship — raked bow, bare mast with a streaming
@@ -7214,6 +7241,21 @@ function drawVehicleLights(): void {
     const p = pathAt(c.pts, c.idx);
     // A train is lit along its length; a caravan is one lamp.
     dot(p.x, p.y, c.kind === 'caravan' ? 0xffd9a0 : 0xfff4de, c.kind === 'caravan' ? 0.7 : 1.0, 0.8);
+  }
+  for (const exp of simWorld.expeditions) {
+    // Exploration ships were the one vessel with no night wake at all: they
+    // live in `world` rather than `emissiveWorld`, and this function only knew
+    // about boats, caravans and planes.
+    const civ = simWorld.civs.get(exp.civId);
+    if (!civ || (civ.phase === 'dead' && !exp.desperate)) continue;
+    const fade = exitFade(exp.row, exp.col, exp.dirRow, exp.dirCol, simWorld.height, simWorld.width);
+    if (fade <= 0.01) continue;
+    const path = expeditionPath(exp);
+    if (path.length < 2) continue;
+    drawWake(vehicleLightsGfx, path, path.length - 1, WAKE.boat.color, path.length - 1,
+             WAKE.boat.alpha * fade, WAKE.boat.width);
+    const head = path[path.length - 1];
+    dot(head.x, head.y, 0xfff0cf, 0.85, 0.85 * fade);
   }
   for (const pl of planes) {
     // Aircraft keep their own history rather than a route, so the wake is read
